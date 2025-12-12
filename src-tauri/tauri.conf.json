@@ -1,0 +1,61 @@
+{
+  "productName": "MissionAI",
+  "version": "2.1.2",
+  "identifier": "com.missionai.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:3010",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../out"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "MissionAI",
+        "width": 1400,
+        "height": 900,
+        "resizable": true,
+        "fullscreen": false,
+        "devtools": true,
+        "url": "http://localhost:3010"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' tauri://localhost; connect-src 'self' tauri://localhost http://localhost:3011 http://127.0.0.1:3011 ws://localhost:* ws://127.0.0.1:* https://api.openai.com https://api.anthropic.com https://*.ollama.ai; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: file: tauri://localhost; font-src 'self' data: tauri://localhost;"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "template-data.json",
+      "../out"
+    ],
+    "externalBin": [],
+    "copyright": "© 2025 MissionAI",
+    "category": "Utility",
+    "shortDescription": "MissionAI - AI-powered mission management",
+    "longDescription": "MissionAI is an AI-powered desktop application for mission management with tab bar, sidebar, and AI assistant UI. Features include organization management, knowledge graph, and AI assistant integration.",
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    },
+    "macOS": {
+      "frameworks": [],
+      "minimumSystemVersion": "10.13",
+      "exceptionDomain": "",
+      "signingIdentity": null,
+      "entitlements": null
+    }
+  }
+}
+

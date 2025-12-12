@@ -1,0 +1,700 @@
+:root {
+  /* カラーパレット */
+  --color-background-main: #F9FAFB;
+  --color-text-main: #111827;
+  --color-text-sub: #6B7280;
+  --color-border: #E5E7EB;
+  
+  /* アクセント色（選択） */
+  --color-accent-navy: #1F2933;
+  --color-accent-deep-green: #1F3D2B;
+  --color-accent-charcoal-blue: #2E3440;
+  
+  /* セマンティックカラー */
+  --color-primary: var(--color-accent-navy);
+  --color-secondary: var(--color-accent-charcoal-blue);
+  --color-accent: var(--color-accent-deep-green);
+  --color-background: var(--color-background-main);
+  --color-surface: #FFFFFF;
+  --color-text: var(--color-text-main);
+  --color-text-light: var(--color-text-sub);
+  --color-border-color: var(--color-border);
+  
+  /* タイトルカラー（ロゴと同じブルー/シアン系） */
+  --color-title-blue: #0066CC;
+  --color-title-cyan: #00BFFF;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  background-color: var(--color-background);
+}
+
+body {
+  color: var(--color-text);
+  font-family: var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  font-weight: 400;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: 0.01em;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.container {
+  width: 100%;
+  padding: 48px 64px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* サイドバー用のレイアウト調整 */
+main {
+  min-height: 100vh;
+}
+
+/* タイポグラフィ */
+h1 {
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  margin-bottom: 12px;
+  color: var(--color-text);
+}
+
+h2 {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+  margin-bottom: 12px;
+  color: var(--color-text);
+}
+
+h3 {
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+/* ============================================
+   ページコンポーネント内のホバーエフェクト
+   ============================================ */
+
+/* アイコンコンテナのホバーエフェクト */
+.challenge-icon-container {
+  transition: transform 0.2s ease, background-color 0.2s ease !important;
+  cursor: pointer !important;
+}
+
+.challenge-icon-container:hover {
+  transform: scale(1.1) !important;
+  background-color: #0066CC !important;
+}
+
+/* アイコン全体のコンテナ（アイコン+テキスト）のホバーエフェクト */
+.challenge-item {
+  transition: transform 0.2s ease !important;
+  cursor: pointer !important;
+}
+
+.challenge-item:hover {
+  transform: translateY(-4px) !important;
+}
+
+/* 理由カードのホバーエフェクト */
+.reason-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease !important;
+  cursor: pointer !important;
+}
+
+.reason-card:hover {
+  transform: translateY(-4px) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
+  border-color: var(--color-primary) !important;
+}
+
+h4 {
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.5;
+  margin-bottom: 6px;
+  color: var(--color-text);
+}
+
+p {
+  font-size: 15px;
+  line-height: 1.7;
+  margin-bottom: 12px;
+  color: var(--color-text-light);
+}
+
+.card {
+  background: var(--color-surface);
+  border-radius: 6px;
+  padding: 40px 48px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  margin-bottom: 32px;
+  border: none;
+  transition: box-shadow 0.2s ease;
+}
+
+.card:hover {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
+}
+
+.button {
+  background-color: var(--color-primary);
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  transition: background-color 0.2s ease;
+  box-shadow: none;
+}
+
+.button:hover {
+  background-color: var(--color-secondary);
+}
+
+.button:active {
+  opacity: 0.9;
+}
+
+.button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--color-border-color);
+  border-radius: 4px;
+  font-size: 14px;
+  transition: border-color 0.2s ease;
+  background-color: var(--color-surface);
+  color: var(--color-text);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: none;
+}
+
+.textarea {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--color-border-color);
+  border-radius: 4px;
+  font-size: 14px;
+  min-height: 120px;
+  resize: vertical;
+  transition: border-color 0.2s ease;
+  background-color: var(--color-surface);
+  font-family: inherit;
+  line-height: 1.7;
+  color: var(--color-text);
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: none;
+}
+
+.label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--color-text);
+  letter-spacing: 0.01em;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+/* セクション区切り */
+.section {
+  margin-bottom: 48px;
+}
+
+.section-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 20px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border-color);
+}
+
+/* データ表示用スタイル */
+.stat-card {
+  background: var(--color-surface);
+  border-radius: 6px;
+  padding: 24px 32px;
+  box-shadow: none;
+  border: 1px solid var(--color-border-color);
+  border-left: 2px solid var(--color-primary);
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.2;
+  margin-bottom: 4px;
+}
+
+.stat-label {
+  font-size: 13px;
+  color: var(--color-text-light);
+  font-weight: 400;
+}
+
+/* グリッドシステム */
+.grid {
+  display: grid;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+/* 1段目：2カラム（50% + 50%） */
+.grid-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+/* 2段目：3カラム（KPI / KPI / KPI） */
+.grid-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+/* 3段目：1カラム（AI提案など） */
+.grid-1 {
+  grid-template-columns: 1fr;
+}
+
+/* レスポンシブ対応 */
+@media (max-width: 1024px) {
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+  
+  .grid-3 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Mermaid図のフォントサイズ調整 */
+#specification-diagram svg {
+  font-size: 14px;
+  overflow: visible;
+}
+
+/* ノード内のテキストが見切れないように調整 */
+#specification-diagram .node-label,
+#specification-diagram .node text,
+#specification-diagram .edgeLabel {
+  font-size: 13px !important;
+  font-family: var(--font-inter), var(--font-noto), sans-serif;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: normal !important;
+}
+
+/* ノードのサイズを調整（テキストが収まるように） */
+#specification-diagram .node rect,
+#specification-diagram .node polygon,
+#specification-diagram .node ellipse {
+  font-size: 13px;
+  min-width: 120px !important;
+  min-height: 60px !important;
+}
+
+/* 提供機能ページのMermaidシーケンス図のサイズ調整 */
+#features-diagram svg {
+  font-size: 14px;
+  overflow: visible;
+  max-width: 100%;
+  height: auto;
+  width: 100% !important;
+}
+
+#features-diagram .actor text,
+#features-diagram .note text,
+#features-diagram .messageText,
+#features-diagram .labelText {
+  font-size: 12px !important;
+  font-family: var(--font-inter), var(--font-noto), sans-serif !important;
+}
+
+/* ノード内のテキストコンテナ */
+#specification-diagram .node .label {
+  padding: 8px 12px !important;
+  box-sizing: border-box;
+  overflow: visible !important;
+}
+
+/* サブグラフのタイトル */
+#specification-diagram .cluster-label {
+  font-size: 13px !important;
+  font-weight: 600;
+  padding: 4px 16px !important;
+  overflow: visible !important;
+  white-space: nowrap !important;
+  min-width: 300px !important;
+  width: auto !important;
+  max-width: none !important;
+}
+
+/* サブグラフのタイトルテキスト */
+#specification-diagram .cluster-label text {
+  font-size: 13px !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  dominant-baseline: middle !important;
+}
+
+/* サブグラフのタイトル背景（rect要素） */
+#specification-diagram .cluster-label rect {
+  width: auto !important;
+  min-width: 300px !important;
+  overflow: visible !important;
+}
+
+/* サブグラフのコンテナ */
+#specification-diagram .cluster {
+  padding: 25px !important;
+  overflow: visible !important;
+}
+
+/* サブグラフのタイトル領域を広げる（より強力な設定） */
+#specification-diagram .cluster .cluster-label {
+  min-width: 300px !important;
+  width: auto !important;
+  max-width: 1000px !important;
+}
+
+/* サブグラフのタイトル背景（領域を広げるため） */
+#specification-diagram .cluster rect {
+  overflow: visible !important;
+}
+
+/* SVG全体のオーバーフローを許可 */
+#specification-diagram svg {
+  overflow: visible !important;
+}
+
+/* サブグラフのグループ全体 */
+#specification-diagram .cluster g {
+  overflow: visible !important;
+}
+
+/* Markdownレンダラー用スタイル */
+.markdown-content {
+  color: #374151;
+  line-height: 1.8;
+}
+
+.markdown-content h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin-top: 24px;
+  margin-bottom: 16px;
+  color: #1F2937;
+  border-bottom: 2px solid #E5E7EB;
+  padding-bottom: 8px;
+}
+
+.markdown-content h2 {
+  font-size: 24px;
+  font-weight: 600;
+  margin-top: 20px;
+  margin-bottom: 12px;
+  color: #1F2937;
+  border-bottom: 1px solid #E5E7EB;
+  padding-bottom: 8px;
+}
+
+.markdown-content {
+  counter-reset: h3-counter;
+}
+
+.markdown-content h3 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-top: 16px;
+  margin-bottom: 10px;
+  color: #1F2937;
+  counter-increment: h3-counter;
+}
+
+.markdown-content h3::before {
+  content: counter(h3-counter) ". ";
+}
+
+.markdown-content h4 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-top: 14px;
+  margin-bottom: 8px;
+  color: #1F2937;
+}
+
+.markdown-content h5,
+.markdown-content h6 {
+  font-weight: 600;
+  color: #1F2937;
+}
+
+.markdown-content p {
+  margin-bottom: 12px;
+  color: #374151;
+}
+
+.markdown-content ul {
+  margin-bottom: 12px;
+  padding-left: 32px;
+  list-style-type: disc;
+}
+
+.markdown-content ol {
+  margin-bottom: 12px;
+  padding-left: 32px;
+}
+
+.markdown-content li {
+  margin-bottom: 6px;
+}
+
+.markdown-content code {
+  background-color: #F3F4F6;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: monospace;
+  color: #DC2626;
+}
+
+.markdown-content pre {
+  background-color: #F9FAFB;
+  padding: 16px;
+  border-radius: 6px;
+  overflow: auto;
+  margin-bottom: 12px;
+  border: 1px solid #E5E7EB;
+}
+
+.markdown-content pre code {
+  background-color: transparent;
+  padding: 0;
+  font-family: monospace;
+  font-size: 14px;
+  color: #374151;
+}
+
+.markdown-content blockquote {
+  border-left: 4px solid #3B82F6;
+  padding-left: 16px;
+  margin-left: 0;
+  margin-right: 0;
+  margin-bottom: 12px;
+  color: #6B7280;
+  font-style: italic;
+}
+
+.markdown-content table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid #E5E7EB;
+  margin-bottom: 12px;
+}
+
+.markdown-content th {
+  padding: 8px 12px;
+  background-color: #F9FAFB;
+  border: 1px solid #E5E7EB;
+  font-weight: 600;
+  text-align: left;
+}
+
+.markdown-content td {
+  padding: 8px 12px;
+  border: 1px solid #E5E7EB;
+  text-align: left;
+}
+
+.markdown-content a {
+  color: #3B82F6;
+  text-decoration: underline;
+}
+
+.markdown-content a:hover {
+  text-decoration: underline;
+}
+
+.markdown-content strong {
+  font-weight: 600;
+  color: #1F2937;
+}
+
+.markdown-content em {
+  font-style: italic;
+}
+
+.markdown-content hr {
+  border: none;
+  border-top: 1px solid #E5E7EB;
+  margin: 24px 0;
+}
+
+/* インラインコード */
+.markdown-content :not(pre) > code {
+  background-color: #F3F4F6;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: monospace;
+  color: #DC2626;
+}
+
+/* ブロックコード（pre内のcodeは別スタイル） */
+.markdown-content pre code {
+  background-color: transparent;
+  padding: 0;
+  font-family: monospace;
+  font-size: 14px;
+  color: #374151;
+}
+
+.markdown-content h6 + ul,
+.markdown-content h6 + ol {
+  padding-left: 32px !important;
+  margin-left: 0 !important;
+}
+
+/* ネストされたリストは標準的なインデントを追加 */
+.markdown-content ul ul,
+.markdown-content ul ol,
+.markdown-content ol ul,
+.markdown-content ol ol {
+  padding-left: 40px !important;
+}
+
+/* Vega-Liteグラフの横並びレイアウト */
+.markdown-content div[data-vega-chart] {
+  display: inline-block;
+  width: calc(50% - 12px);
+  vertical-align: top;
+  margin-right: 24px;
+  margin-bottom: 24px;
+}
+
+.markdown-content div[data-vega-chart]:nth-child(even) {
+  margin-right: 0;
+}
+
+/* Vega/Vega-Lite チャートのスタイル */
+.vega-embed {
+  width: 100%;
+}
+
+.vega-embed summary {
+  color: var(--color-text-light);
+  font-size: 12px;
+}
+
+.vega-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.vega-actions a {
+  color: var(--color-primary);
+  text-decoration: none;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border-color);
+  border-radius: 4px;
+  background: var(--color-surface);
+  transition: all 0.2s ease;
+}
+
+.vega-actions a:hover {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+
+/* プレゼンテーションモード用のアニメーション */
+@keyframes slideInFromRight {
+  from {
+    opacity: 0;
+    transform: translateX(50px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInFromLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-50px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* 構想ポップアップ用のアニメーション */
+@keyframes conceptPopupSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes conceptPopupSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+

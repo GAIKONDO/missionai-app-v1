@@ -1,0 +1,25 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:3010"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "MissionAI",
+        "width": 1400,
+        "height": 900,
+        "resizable": true,
+        "fullscreen": false,
+        "devtools": true,
+        "url": "http://localhost:3010"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' http://localhost:3010; connect-src 'self' http://localhost:3010 http://localhost:3011 http://127.0.0.1:3010 http://127.0.0.1:3011 ws://localhost:* ws://127.0.0.1:* https://api.openai.com https://api.anthropic.com https://*.ollama.ai; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:3010; style-src 'self' 'unsafe-inline' http://localhost:3010; img-src 'self' data: https: file: http://localhost:3010; font-src 'self' data: http://localhost:3010;"
+    }
+  },
+  "bundle": {
+    "resources": []
+  }
+}
