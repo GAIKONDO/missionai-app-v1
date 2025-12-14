@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useTransition } from 'react';
-import { DashboardIcon, LineChartIcon, BarChartIcon, DocumentIcon, SettingsIcon, OrganizationIcon, CompanyIcon, KnowledgeGraphIcon, RAGSearchIcon, DesignIcon, MenuIcon, CloseIcon } from './Icons';
+import { DashboardIcon, LineChartIcon, BarChartIcon, DocumentIcon, SettingsIcon, OrganizationIcon, CompanyIcon, KnowledgeGraphIcon, RAGSearchIcon, DesignIcon, TargetIcon, MenuIcon, CloseIcon } from './Icons';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -19,6 +19,7 @@ export default function Sidebar({ isOpen, onToggle, currentPage }: SidebarProps)
   const menuItems = [
     { icon: DashboardIcon, label: 'ダッシュボード', id: 'dashboard', path: '/' },
     { icon: LineChartIcon, label: '分析', id: 'analytics', path: '/analytics' },
+    { icon: TargetIcon, label: 'A to C 100', id: 'a2c100', path: '/a2c100' },
     { icon: KnowledgeGraphIcon, label: 'ナレッジグラフ', id: 'knowledge-graph', path: '/knowledge-graph' },
     { icon: RAGSearchIcon, label: 'RAG検索', id: 'rag-search', path: '/rag-search' },
     { icon: BarChartIcon, label: 'レポート', id: 'reports', path: '/reports' },
@@ -37,6 +38,7 @@ export default function Sidebar({ isOpen, onToggle, currentPage }: SidebarProps)
     if (pathname === '/') return 'dashboard';
     if (pathname.startsWith('/knowledge-graph')) return 'knowledge-graph';
     if (pathname.startsWith('/rag-search')) return 'rag-search';
+    if (pathname.startsWith('/a2c100')) return 'a2c100';
     if (pathname.startsWith('/design')) return 'design';
     if (pathname.startsWith('/test-knowledge-graph')) return 'test-knowledge-graph';
     const pathWithoutSlash = pathname.replace('/', '');

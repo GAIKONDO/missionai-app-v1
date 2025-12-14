@@ -22,6 +22,7 @@ const ALLOWED_TABLES: &[&str] = &[
     "entities",
     "relations", // topicRelationsからリネーム
     "companies",
+    "themeHierarchyConfigs", // A2C100用のテーマ階層設定テーブル
 ];
 
 // テーブル名の検証関数
@@ -99,12 +100,18 @@ pub fn get_doc(collection_name: &str, doc_id: &str) -> SqlResult<HashMap<String,
         Ok(map)
     })?;
     
-    // タイムスタンプを変換
-    if let Some(created_at) = row.get("createdAt").and_then(|v| v.as_str()) {
-        row.insert("createdAt".to_string(), json!(to_firestore_timestamp(created_at)));
+    // タイムスタンプを変換（文字列または数値の両方に対応）
+    if let Some(created_at_value) = row.get("createdAt") {
+        if let Some(timestamp_str) = created_at_value.as_str().map(|s| s.to_string())
+            .or_else(|| created_at_value.as_i64().map(|n| n.to_string())) {
+            row.insert("createdAt".to_string(), json!(to_firestore_timestamp(&timestamp_str)));
+        }
     }
-    if let Some(updated_at) = row.get("updatedAt").and_then(|v| v.as_str()) {
-        row.insert("updatedAt".to_string(), json!(to_firestore_timestamp(updated_at)));
+    if let Some(updated_at_value) = row.get("updatedAt") {
+        if let Some(timestamp_str) = updated_at_value.as_str().map(|s| s.to_string())
+            .or_else(|| updated_at_value.as_i64().map(|n| n.to_string())) {
+            row.insert("updatedAt".to_string(), json!(to_firestore_timestamp(&timestamp_str)));
+        }
     }
     
     Ok(row)
@@ -235,6 +242,7 @@ pub fn set_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Value>
         "themeIds", // 注力施策のテーマIDリスト
         "topicIds", // 注力施策のトピックIDリスト
         "containerData", // ページコンテナのデータ
+        "levels", // テーマ階層設定のレベル配列
     ];
     
     // INTEGER型のフィールドのリスト
@@ -467,6 +475,7 @@ pub fn update_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Val
         "themeIds", // 注力施策のテーマIDリスト
         "topicIds", // 注力施策のトピックIDリスト
         "containerData", // ページコンテナのデータ
+        "levels", // テーマ階層設定のレベル配列
     ];
     
     // INTEGER型のフィールドのリスト

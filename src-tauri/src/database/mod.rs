@@ -522,6 +522,18 @@ impl Database {
             [],
         )?;
 
+        // テーマ階層設定テーブル（A2C100用）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS themeHierarchyConfigs (
+                id TEXT PRIMARY KEY,
+                maxLevels INTEGER NOT NULL,
+                levels TEXT NOT NULL,
+                createdAt TEXT,
+                updatedAt TEXT
+            )",
+            [],
+        )?;
+
         // エンティティテーブル（ナレッジグラフ用、ChromaDB同期状態カラムを含む）
         conn.execute(
             "CREATE TABLE IF NOT EXISTS entities (
@@ -640,16 +652,24 @@ impl Database {
         conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_chromaSynced ON entities(chromaSynced)", [])?;
+        // 複合インデックス: organizationId + chromaSynced（RAG検索のパフォーマンス向上）
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_org_chroma ON entities(organizationId, chromaSynced)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_topicId ON relations(topicId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_sourceEntityId ON relations(sourceEntityId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_targetEntityId ON relations(targetEntityId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_relationType ON relations(relationType)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_organizationId ON relations(organizationId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_chromaSynced ON relations(chromaSynced)", [])?;
+        // 複合インデックス: organizationId + chromaSynced（RAG検索のパフォーマンス向上）
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_org_chroma ON relations(organizationId, chromaSynced)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_meetingNoteId ON topics(meetingNoteId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_organizationId ON topics(organizationId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_chromaSynced ON topics(chromaSynced)", [])?;
+        // 複合インデックス: organizationId + chromaSynced（RAG検索のパフォーマンス向上）
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_org_chroma ON topics(organizationId, chromaSynced)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_meetingNotes_chromaSynced ON meetingNotes(chromaSynced)", [])?;
+        // 複合インデックス: organizationId + chromaSynced（RAG検索のパフォーマンス向上）
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_meetingNotes_org_chroma ON meetingNotes(organizationId, chromaSynced)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_code ON companies(code)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_organizationId ON companies(organizationId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_category ON companies(category)", [])?;
