@@ -5,6 +5,20 @@ import type { Theme } from '@/lib/orgApi';
 import type { ThemeHierarchyConfig, ThemeHierarchyLevel } from '@/lib/themeHierarchy';
 import { loadHierarchyConfig, saveHierarchyConfig, validateHierarchyConfig, getDefaultHierarchyConfig } from '@/lib/themeHierarchy';
 
+// 階層ごとの色設定（ThemeHierarchyChartと同じ）
+const LEVEL_COLORS = [
+  '#1A1A1A', // 階層1（中心）- 黒
+  '#4262FF', // 階層2 - 青
+  '#10B981', // 階層3 - 緑
+  '#F59E0B', // 階層4 - オレンジ
+  '#8B5CF6', // 階層5 - 紫
+  '#EC4899', // 階層6 - ピンク
+  '#06B6D4', // 階層7 - シアン
+  '#84CC16', // 階層8 - ライム
+  '#F97316', // 階層9 - オレンジ
+  '#6366F1', // 階層10 - インディゴ
+];
+
 interface ThemeHierarchyEditorProps {
   themes: Theme[];
   config: ThemeHierarchyConfig;
@@ -147,47 +161,72 @@ export default function ThemeHierarchyEditor({
   };
 
   return (
-    <div style={{ 
-      padding: '20px',
-      backgroundColor: '#FFFFFF',
-      borderRadius: '8px',
-      border: '1px solid #E0E0E0',
-      minWidth: '300px',
+    <div className="card" style={{ 
+      minWidth: '320px',
       maxHeight: 'calc(100vh - 200px)',
       overflowY: 'auto',
+      position: 'sticky',
+      top: '24px',
+      padding: '32px',
     }}>
-      <h3 style={{ 
-        fontSize: '18px', 
-        fontWeight: 600, 
-        marginBottom: '16px',
-        color: 'var(--color-text)',
+      {/* ヘッダー */}
+      <div style={{
+        marginBottom: '32px',
       }}>
-        階層設定
-      </h3>
+        <h3 style={{ 
+          fontSize: '20px', 
+          fontWeight: 600, 
+          margin: 0,
+          marginBottom: '8px',
+          color: '#1A1A1A',
+        }}>
+          階層設定
+        </h3>
+        <p style={{
+          fontSize: '13px',
+          color: '#6B7280',
+          margin: 0,
+        }}>
+          テーマを階層ごとに配置します
+        </p>
+      </div>
 
       {/* 階層数選択 */}
-      <div style={{ marginBottom: '24px' }}>
+      <div style={{
+        marginBottom: '32px',
+      }}>
         <label style={{ 
           display: 'block',
-          fontSize: '14px',
-          fontWeight: 500,
-          marginBottom: '8px',
-          color: 'var(--color-text)',
+          fontSize: '13px',
+          fontWeight: '500',
+          letterSpacing: '0.02em',
+          textTransform: 'uppercase',
+          marginBottom: '12px',
+          color: '#6B7280',
         }}>
-          階層数
+          使用する階層数
         </label>
         <select
           value={localConfig.maxLevels}
           onChange={(e) => handleMaxLevelsChange(Number(e.target.value))}
           style={{
             width: '100%',
-            padding: '8px 12px',
+            padding: '10px 14px',
             fontSize: '14px',
-            border: '1px solid #E0E0E0',
-            borderRadius: '6px',
+            border: '1px solid #E5E7EB',
+            borderRadius: '8px',
             backgroundColor: '#FFFFFF',
-            color: 'var(--color-text)',
+            color: '#1A1A1A',
             cursor: 'pointer',
+            transition: 'all 0.2s ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = '#4262FF';
+            e.currentTarget.style.boxShadow = '0 0 0 3px rgba(66, 98, 255, 0.1)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = '#E5E7EB';
+            e.currentTarget.style.boxShadow = 'none';
           }}
         >
           {Array.from({ length: 10 }, (_, i) => i + 1).map(num => (
@@ -196,90 +235,196 @@ export default function ThemeHierarchyEditor({
             </option>
           ))}
         </select>
+        <p style={{ 
+          marginTop: '8px',
+          fontSize: '13px',
+          color: '#9CA3AF',
+        }}>
+          最大10階層まで設定可能です
+        </p>
       </div>
 
       {/* 各階層の設定 */}
-      <div style={{ marginBottom: '24px' }}>
+      <div style={{ marginBottom: '32px' }}>
         {localConfig.levels.map((level) => {
           const levelThemes = themes.filter(t => level.themeIds.includes(t.id));
           const availableThemes = getAvailableThemes(level.level);
+          const levelColor = LEVEL_COLORS[level.level - 1] || '#808080';
+
+          // 階層ごとのグラデーション背景色を生成
+          const getGradientColor = (color: string) => {
+            const colorMap: Record<string, string> = {
+              '#1A1A1A': 'linear-gradient(135deg, #F5F5F5 0%, #E5E5E5 100%)',
+              '#4262FF': 'linear-gradient(135deg, #F0F4FF 0%, #E0E8FF 100%)',
+              '#10B981': 'linear-gradient(135deg, #F0FDF4 0%, #DCFCE7 100%)',
+              '#F59E0B': 'linear-gradient(135deg, #FFFBEB 0%, #FEF3C7 100%)',
+              '#8B5CF6': 'linear-gradient(135deg, #F5F3FF 0%, #EDE9FE 100%)',
+              '#EC4899': 'linear-gradient(135deg, #FDF2F8 0%, #FCE7F3 100%)',
+              '#06B6D4': 'linear-gradient(135deg, #ECFEFF 0%, #CFFAFE 100%)',
+              '#84CC16': 'linear-gradient(135deg, #F7FEE7 0%, #ECFCCB 100%)',
+              '#F97316': 'linear-gradient(135deg, #FFF7ED 0%, #FFEDD5 100%)',
+              '#6366F1': 'linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%)',
+            };
+            return colorMap[color] || 'linear-gradient(135deg, #F9FAFB 0%, #F3F4F6 100%)';
+          };
 
           return (
             <div
               key={level.level}
               style={{
                 marginBottom: '20px',
-                padding: '16px',
-                backgroundColor: '#FAFAFA',
-                borderRadius: '6px',
-                border: '1px solid #E0E0E0',
+                padding: '24px',
+                backgroundColor: '#FFFFFF',
+                border: '1px solid #E5E7EB',
+                borderRadius: '12px',
+                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
+                transition: 'all 0.2s ease',
+                position: 'relative',
+                overflow: 'hidden',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.08)';
+                e.currentTarget.style.transform = 'translateY(-2px)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.04)';
+                e.currentTarget.style.transform = 'translateY(0)';
               }}
             >
+              {/* 右上の装飾要素（統計カード風） */}
+              <div style={{
+                position: 'absolute',
+                top: 0,
+                right: 0,
+                width: '60px',
+                height: '60px',
+                background: getGradientColor(levelColor),
+                borderRadius: '0 12px 0 60px',
+                opacity: 0.5,
+              }} />
+              
+              {/* 階層ヘッダー */}
               <div style={{
                 display: 'flex',
                 justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: '12px',
+                alignItems: 'flex-start',
+                marginBottom: '16px',
+                position: 'relative',
+                zIndex: 1,
               }}>
-                <h4 style={{
+                <div>
+                  <div style={{
+                    fontSize: '13px',
+                    color: '#6B7280',
+                    marginBottom: '8px',
+                    fontWeight: '500',
+                    letterSpacing: '0.02em',
+                    textTransform: 'uppercase',
+                  }}>
+                    階層{level.level}
+                    {level.level === 1 && (
+                      <span style={{
+                        fontSize: '11px',
+                        marginLeft: '6px',
+                        color: '#9CA3AF',
+                      }}>
+                        （中心）
+                      </span>
+                    )}
+                  </div>
+                  <div style={{
+                    fontSize: '32px',
+                    fontWeight: '700',
+                    color: '#1A1A1A',
+                    lineHeight: '1',
+                    marginBottom: '4px',
+                    fontFamily: 'var(--font-inter), -apple-system, BlinkMacSystemFont, sans-serif',
+                  }}>
+                    {levelThemes.length}
+                  </div>
+                  <div style={{
+                    fontSize: '13px',
+                    color: '#9CA3AF',
+                    fontWeight: '400',
+                  }}>
+                    件のテーマ
+                  </div>
+                </div>
+                <div style={{
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '50%',
+                  backgroundColor: levelColor,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                   fontSize: '16px',
-                  fontWeight: 600,
-                  color: 'var(--color-text)',
+                  fontWeight: 700,
+                  color: '#FFFFFF',
+                  flexShrink: 0,
                 }}>
-                  階層{level.level}
-                  {level.level === 1 && (
-                    <span style={{
-                      fontSize: '12px',
-                      fontWeight: 400,
-                      color: 'var(--color-text-light)',
-                      marginLeft: '8px',
-                    }}>
-                      （中心）
-                    </span>
-                  )}
-                </h4>
-                <span style={{
-                  fontSize: '12px',
-                  color: 'var(--color-text-light)',
-                }}>
-                  {levelThemes.length}件
-                </span>
+                  {level.level}
+                </div>
               </div>
 
               {/* 選択されたテーマ */}
               {levelThemes.length > 0 && (
-                <div style={{ marginBottom: '12px' }}>
-                  {levelThemes.map(theme => (
+                <div style={{ marginBottom: '16px', position: 'relative', zIndex: 1 }}>
+                  {levelThemes.map((theme, index) => (
                     <div
                       key={theme.id}
                       style={{
                         display: 'flex',
                         justifyContent: 'space-between',
                         alignItems: 'center',
-                        padding: '8px 12px',
-                        marginBottom: '4px',
-                        backgroundColor: '#FFFFFF',
-                        borderRadius: '4px',
-                        border: '1px solid #E0E0E0',
+                        padding: '12px 14px',
+                        marginBottom: index < levelThemes.length - 1 ? '8px' : '0',
+                        backgroundColor: '#F9FAFB',
+                        borderRadius: '8px',
+                        border: '1px solid #E5E7EB',
+                        transition: 'all 0.2s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = '#FFFFFF';
+                        e.currentTarget.style.borderColor = levelColor;
+                        e.currentTarget.style.boxShadow = `0 0 0 3px ${levelColor}15`;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = '#F9FAFB';
+                        e.currentTarget.style.borderColor = '#E5E7EB';
+                        e.currentTarget.style.boxShadow = 'none';
                       }}
                     >
                       <span style={{
                         fontSize: '14px',
-                        color: 'var(--color-text)',
+                        color: '#1A1A1A',
                         flex: 1,
+                        fontWeight: 500,
+                        lineHeight: 1.5,
                       }}>
                         {theme.title}
                       </span>
                       <button
                         onClick={() => handleRemoveThemeFromLevel(level.level, theme.id)}
                         style={{
-                          padding: '4px 8px',
+                          padding: '6px 12px',
                           fontSize: '12px',
                           color: '#DC2626',
                           backgroundColor: 'transparent',
                           border: '1px solid #DC2626',
-                          borderRadius: '4px',
+                          borderRadius: '6px',
                           cursor: 'pointer',
+                          fontWeight: 500,
+                          transition: 'all 0.2s ease',
+                          marginLeft: '10px',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.backgroundColor = '#DC2626';
+                          e.currentTarget.style.color = '#FFFFFF';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.backgroundColor = 'transparent';
+                          e.currentTarget.style.color = '#DC2626';
                         }}
                       >
                         削除
@@ -301,16 +446,27 @@ export default function ThemeHierarchyEditor({
                   }}
                   style={{
                     width: '100%',
-                    padding: '8px 12px',
+                    padding: '10px 14px',
                     fontSize: '14px',
-                    border: '1px solid #E0E0E0',
-                    borderRadius: '6px',
+                    border: '1px solid #E5E7EB',
+                    borderRadius: '8px',
                     backgroundColor: '#FFFFFF',
-                    color: 'var(--color-text)',
+                    color: '#1A1A1A',
                     cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    position: 'relative',
+                    zIndex: 1,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = levelColor;
+                    e.currentTarget.style.boxShadow = `0 0 0 3px ${levelColor}15`;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = '#E5E7EB';
+                    e.currentTarget.style.boxShadow = 'none';
                   }}
                 >
-                  <option value="">テーマを追加...</option>
+                  <option value="">+ テーマを追加...</option>
                   {availableThemes.map(theme => (
                     <option key={theme.id} value={theme.id}>
                       {theme.title}
@@ -321,10 +477,15 @@ export default function ThemeHierarchyEditor({
 
               {availableThemes.length === 0 && levelThemes.length === 0 && (
                 <div style={{
-                  padding: '8px',
-                  fontSize: '12px',
-                  color: 'var(--color-text-light)',
+                  padding: '16px',
+                  fontSize: '13px',
+                  color: '#9CA3AF',
                   textAlign: 'center',
+                  backgroundColor: '#F9FAFB',
+                  borderRadius: '8px',
+                  border: '1px dashed #E5E7EB',
+                  position: 'relative',
+                  zIndex: 1,
                 }}>
                   追加可能なテーマがありません
                 </div>
@@ -335,32 +496,59 @@ export default function ThemeHierarchyEditor({
       </div>
 
       {/* 保存ボタン */}
-      <div>
+      <div style={{
+        position: 'sticky',
+        bottom: 0,
+        paddingTop: '16px',
+        borderTop: '1px solid #E5E7EB',
+        marginTop: '24px',
+      }}>
         <button
           onClick={handleSave}
           disabled={isSaving}
           style={{
             width: '100%',
-            padding: '12px',
-            fontSize: '14px',
+            padding: '14px',
+            fontSize: '15px',
             fontWeight: 600,
             color: '#FFFFFF',
             backgroundColor: isSaving ? '#9CA3AF' : '#4262FF',
             border: 'none',
-            borderRadius: '6px',
+            borderRadius: '8px',
             cursor: isSaving ? 'not-allowed' : 'pointer',
-            transition: 'background-color 0.2s',
+            transition: 'all 0.2s ease',
+            boxShadow: isSaving ? 'none' : '0 2px 8px rgba(66, 98, 255, 0.3)',
+          }}
+          onMouseEnter={(e) => {
+            if (!isSaving) {
+              e.currentTarget.style.backgroundColor = '#2E4ED8';
+              e.currentTarget.style.boxShadow = '0 4px 12px rgba(66, 98, 255, 0.4)';
+              e.currentTarget.style.transform = 'translateY(-1px)';
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!isSaving) {
+              e.currentTarget.style.backgroundColor = '#4262FF';
+              e.currentTarget.style.boxShadow = '0 2px 8px rgba(66, 98, 255, 0.3)';
+              e.currentTarget.style.transform = 'translateY(0)';
+            }
           }}
         >
-          {isSaving ? '保存中...' : '保存'}
+          {isSaving ? '保存中...' : '💾 設定を保存'}
         </button>
         {saveMessage && (
           <div style={{
-            marginTop: '8px',
-            padding: '8px',
-            fontSize: '12px',
+            marginTop: '12px',
+            padding: '10px 12px',
+            fontSize: '13px',
             color: saveMessage.includes('エラー') || saveMessage.includes('失敗') ? '#DC2626' : '#10B981',
+            backgroundColor: saveMessage.includes('エラー') || saveMessage.includes('失敗') 
+              ? '#FEE2E2' 
+              : '#D1FAE5',
             textAlign: 'center',
+            borderRadius: '6px',
+            fontWeight: 500,
+            border: `1px solid ${saveMessage.includes('エラー') || saveMessage.includes('失敗') ? '#DC2626' : '#10B981'}30`,
           }}>
             {saveMessage}
           </div>

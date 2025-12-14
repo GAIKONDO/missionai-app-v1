@@ -15,6 +15,25 @@ export default function A2C100Page() {
   const [selectedTheme, setSelectedTheme] = useState<Theme | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [windowSize, setWindowSize] = useState({ width: 0, height: 0 });
+  const [showHierarchyEditor, setShowHierarchyEditor] = useState(false);
+  const [orgTree, setOrgTree] = useState<any>(null);
+
+  // ウィンドウサイズを監視
+  useEffect(() => {
+    const handleResize = () => {
+      setWindowSize({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+    };
+
+    // 初回設定
+    handleResize();
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // テーマと注力施策を読み込み
   useEffect(() => {
@@ -32,15 +51,16 @@ export default function A2C100Page() {
         setThemes(loadedThemes);
 
         // 全組織の注力施策を読み込み
-        const orgTree = await getOrgTreeFromDb();
-        if (!orgTree) {
+        const orgTreeData = await getOrgTreeFromDb();
+        if (!orgTreeData) {
           console.warn('組織データが取得できませんでした');
           setInitiatives([]);
           setLoading(false);
           return;
         }
 
-        const allOrgs = getAllOrganizationsFromTree(orgTree);
+        setOrgTree(orgTreeData);
+        const allOrgs = getAllOrganizationsFromTree(orgTreeData);
         console.log('📖 [A2C100] 全組織数:', allOrgs.length);
 
         // 並列で各組織の施策を取得
@@ -104,56 +124,139 @@ export default function A2C100Page() {
 
   return (
     <Layout>
-      <div style={{ padding: '24px' }}>
-        <div style={{ marginBottom: '24px' }}>
-          <h2 style={{ marginBottom: '8px', fontSize: '24px', fontWeight: 600, color: 'var(--color-text)' }}>
-            A to C 100
-          </h2>
+      <div className="card" style={{ marginBottom: '20px' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+            <h2 style={{ marginBottom: 0 }}>A to C 100</h2>
+            <button
+              onClick={() => setShowHierarchyEditor(!showHierarchyEditor)}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: 'none',
+                backgroundColor: showHierarchyEditor ? '#1E40AF' : '#E5E7EB',
+                color: showHierarchyEditor ? '#ffffff' : '#6B7280',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: showHierarchyEditor ? '600' : '400',
+                transition: 'all 0.2s',
+                fontFamily: "'Inter', 'Noto Sans JP', -apple-system, sans-serif",
+              }}
+              onMouseEnter={(e) => {
+                if (!showHierarchyEditor) {
+                  e.currentTarget.style.backgroundColor = '#D1D5DB';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!showHierarchyEditor) {
+                  e.currentTarget.style.backgroundColor = '#E5E7EB';
+                }
+              }}
+            >
+              {showHierarchyEditor ? '階層設定を閉じる' : '階層設定'}
+            </button>
+          </div>
           <p style={{ marginBottom: 0, fontSize: '14px', color: 'var(--color-text-light)' }}>
             テーマを階層構造で表示し、各テーマに紐づく注力施策を確認できます
           </p>
         </div>
+      </div>
 
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: '300px 1fr 300px',
-          gap: '24px',
-          minHeight: 'calc(100vh - 200px)',
-        }}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: showHierarchyEditor && windowSize.width > 1400 
+          ? '320px 1fr 480px' 
+          : showHierarchyEditor && windowSize.width > 1024 
+          ? '280px 1fr 450px'
+          : windowSize.width > 1024
+          ? '1fr 480px'
+          : '1fr',
+        gap: windowSize.width > 1024 ? '24px' : '16px',
+        minHeight: 'calc(100vh - 200px)',
+      }}>
           {/* 左側: 階層設定エディタ */}
-          <div>
-            <ThemeHierarchyEditor
-              themes={themes}
-              config={config}
-              onConfigChange={handleConfigChange}
-            />
-          </div>
+          {showHierarchyEditor && (
+            <div>
+              <ThemeHierarchyEditor
+                themes={themes}
+                config={config}
+                onConfigChange={handleConfigChange}
+              />
+            </div>
+          )}
 
           {/* 中央: 階層構造チャート */}
           <div style={{
             display: 'flex',
             flexDirection: 'column',
-            minHeight: '600px',
+            justifyContent: 'center',
+            alignItems: 'center',
+            minHeight: windowSize.width > 1024 ? '600px' : '400px',
+            width: '100%',
+            overflow: 'auto',
           }}>
             <ThemeHierarchyChart
               config={config}
               themes={themes}
               initiatives={initiatives}
-              width={800}
-              height={800}
+              width={(() => {
+                // 階層設定エディタの表示状態を考慮したサイズ計算
+                if (windowSize.width > 1400) {
+                  // 大画面
+                  if (showHierarchyEditor) {
+                    // 階層設定表示時: 左320px + 右480px + gap 24px * 2 = 848px
+                    return Math.min(800, windowSize.width - 848);
+                  } else {
+                    // 階層設定非表示時: 右480px + gap 24px = 504px
+                    return Math.min(1000, windowSize.width - 504);
+                  }
+                } else if (windowSize.width > 1024) {
+                  // 中画面
+                  if (showHierarchyEditor) {
+                    // 階層設定表示時: 左280px + 右450px + gap 24px * 2 = 778px
+                    return Math.min(700, windowSize.width - 778);
+                  } else {
+                    // 階層設定非表示時: 右450px + gap 24px = 474px
+                    return Math.min(900, windowSize.width - 474);
+                  }
+                } else {
+                  // 小画面
+                  return Math.min(600, windowSize.width - 48);
+                }
+              })()}
+              height={(() => {
+                // 階層設定エディタの表示状態を考慮したサイズ計算
+                if (windowSize.width > 1400) {
+                  if (showHierarchyEditor) {
+                    return Math.min(800, windowSize.height - 300);
+                  } else {
+                    return Math.min(1000, windowSize.height - 300);
+                  }
+                } else if (windowSize.width > 1024) {
+                  if (showHierarchyEditor) {
+                    return Math.min(700, windowSize.height - 300);
+                  } else {
+                    return Math.min(900, windowSize.height - 300);
+                  }
+                } else {
+                  return Math.min(600, windowSize.height - 250);
+                }
+              })()}
               onThemeClick={handleThemeClick}
             />
           </div>
 
           {/* 右側: 注力施策リスト */}
-          <div>
-            <InitiativeList
-              theme={selectedTheme}
-              initiatives={initiatives}
-            />
-          </div>
+          {windowSize.width > 1024 && (
+            <div>
+              <InitiativeList
+                theme={selectedTheme}
+                initiatives={initiatives}
+                orgTree={orgTree}
+              />
+            </div>
+          )}
         </div>
-      </div>
     </Layout>
   );
 }

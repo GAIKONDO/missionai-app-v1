@@ -42,6 +42,30 @@ export default function ThemeHierarchyChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoveredThemeId, setHoveredThemeId] = useState<string | null>(null);
   const [selectedThemeId, setSelectedThemeId] = useState<string | null>(null);
+  const [actualSize, setActualSize] = useState({ width, height });
+
+  // コンテナサイズに合わせてSVGサイズを調整
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const updateSize = () => {
+      const container = containerRef.current;
+      if (!container) return;
+
+      const containerWidth = container.clientWidth;
+      const containerHeight = container.clientHeight || window.innerHeight - 300;
+
+      // コンテナサイズに合わせて調整（余白を考慮）
+      const newWidth = Math.min(width, containerWidth - 20);
+      const newHeight = Math.min(height, containerHeight - 20);
+
+      setActualSize({ width: newWidth, height: newHeight });
+    };
+
+    updateSize();
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, [width, height]);
 
   // 階層データを構築（階層1を中心に、階層2以降をその子として配置）
   const hierarchyData = useMemo(() => {
@@ -187,9 +211,9 @@ export default function ThemeHierarchyChart({
   // Packレイアウトを計算
   const packLayout = useMemo(() => {
     return pack()
-      .size([width - 80, height - 80])
+      .size([actualSize.width - 80, actualSize.height - 80])
       .padding(5);
-  }, [width, height]);
+  }, [actualSize]);
 
   const packedData = useMemo(() => {
     return packLayout(root as any);
@@ -436,17 +460,19 @@ export default function ThemeHierarchyChart({
         justifyContent: 'center',
         alignItems: 'center',
         backgroundColor: '#FAFAFA',
-        borderRadius: '8px',
-        border: '1px solid #E0E0E0',
       }}
     >
       <svg
         ref={svgRef}
-        width={width}
-        height={height}
+        width={actualSize.width}
+        height={actualSize.height}
         style={{
           display: 'block',
+          maxWidth: '100%',
+          height: 'auto',
         }}
+        viewBox={`0 0 ${actualSize.width} ${actualSize.height}`}
+        preserveAspectRatio="xMidYMid meet"
       >
         <g transform={`translate(40, 40)`}></g>
       </svg>
