@@ -7,6 +7,8 @@ interface VegaChartProps {
   language?: 'vega' | 'vega-lite';
   title?: string;
   noBorder?: boolean; // 枠線なしオプション
+  onSignal?: (signalName: string, value: any) => void; // シグナルイベントのコールバック
+  chartData?: any[]; // チャートデータ（クリックイベント処理用）
 }
 
 // vega-embedモジュールを一度だけインポートしてキャッシュ
@@ -19,7 +21,7 @@ const getVegaEmbed = () => {
   return vegaEmbedPromise;
 };
 
-const VegaChart = memo(function VegaChart({ spec, language = 'vega-lite', title, noBorder = false }: VegaChartProps) {
+const VegaChart = memo(function VegaChart({ spec, language = 'vega-lite', title, noBorder = false, onSignal, chartData }: VegaChartProps) {
   const chartRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<any>(null);
 
@@ -73,6 +75,62 @@ const VegaChart = memo(function VegaChart({ spec, language = 'vega-lite', title,
         // viewを保存してクリーンアップ時に使用
         if (result && result.view) {
           viewRef.current = result.view;
+          
+          // クリックイベントのリスナーを追加
+          if (onSignal) {
+            // viewのDOM要素にクリックイベントリスナーを追加
+            const viewElement = viewRef.current.container();
+            if (viewElement) {
+              const clickHandler = async (event: MouseEvent) => {
+                try {
+                  // クリック位置を取得
+                  const rect = viewElement.getBoundingClientRect();
+                  const x = event.clientX - rect.left;
+                  const y = event.clientY - rect.top;
+                  
+                  // Vega-Liteのviewからクリック位置のデータを取得
+                  // scaleを使って座標を変換
+                  const scales = viewRef.current.scale('x');
+                  if (scales) {
+                    // x座標からテーマを逆引き
+                    const theme = scales.invert(x);
+                    if (theme) {
+                      // chartDataから該当するテーマIDを取得
+                      const themeData = chartData.find((d: any) => d.theme === theme);
+                      if (themeData && themeData.themeId) {
+                        onSignal('clicked_theme', { themeId: themeData.themeId });
+                        return;
+                      }
+                    }
+                  }
+                  
+                  // chartDataからx座標に最も近いテーマを探す
+                  // 各テーマの棒グラフの位置を計算
+                  if (chartData && chartData.length > 0) {
+                    const uniqueThemes = Array.from(new Set(chartData.map((d: any) => d.theme)));
+                    const themeWidth = rect.width / uniqueThemes.length;
+                    const clickedThemeIndex = Math.floor(x / themeWidth);
+                    
+                    if (clickedThemeIndex >= 0 && clickedThemeIndex < uniqueThemes.length) {
+                      const clickedTheme = uniqueThemes[clickedThemeIndex];
+                      const themeData = chartData.find((d: any) => d.theme === clickedTheme);
+                      if (themeData && themeData.themeId) {
+                        onSignal('clicked_theme', { themeId: themeData.themeId });
+                      }
+                    }
+                  }
+                } catch (e) {
+                  console.warn('Failed to get clicked item:', e);
+                }
+              };
+              
+              viewElement.addEventListener('click', clickHandler);
+              
+              // クリーンアップ時にイベントリスナーを削除するための参照を保存
+              (viewRef.current as any)._clickHandler = clickHandler;
+              (viewRef.current as any)._viewElement = viewElement;
+            }
+          }
         }
         return result;
       });
@@ -95,6 +153,13 @@ const VegaChart = memo(function VegaChart({ spec, language = 'vega-lite', title,
       // クリーンアップ
       if (viewRef.current) {
         try {
+          // イベントリスナーを削除
+          const viewElement = (viewRef.current as any)._viewElement;
+          const clickHandler = (viewRef.current as any)._clickHandler;
+          if (viewElement && clickHandler) {
+            viewElement.removeEventListener('click', clickHandler);
+          }
+          
           viewRef.current.finalize();
         } catch (e) {
           // エラーは無視
