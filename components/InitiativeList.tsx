@@ -2,7 +2,63 @@
 
 import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { Theme, FocusInitiative, OrgNodeData } from '@/lib/orgApi';
+
+// ReactMarkdown用の共通コンポーネント設定（カード内の説明文用 - 一律小さな文字）
+const markdownComponents = {
+  a: ({ node, ...props }: any) => (
+    <a
+      {...props}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{ color: '#4262FF', textDecoration: 'underline', fontSize: 'inherit' }}
+    />
+  ),
+  p: ({ node, ...props }: any) => (
+    <p {...props} style={{ margin: 0, marginBottom: 0, fontSize: 'inherit', display: 'inline' }} />
+  ),
+  h1: ({ node, ...props }: any) => (
+    <span {...props} style={{ fontSize: 'inherit', fontWeight: 600 }} />
+  ),
+  h2: ({ node, ...props }: any) => (
+    <span {...props} style={{ fontSize: 'inherit', fontWeight: 600 }} />
+  ),
+  h3: ({ node, ...props }: any) => (
+    <span {...props} style={{ fontSize: 'inherit', fontWeight: 600 }} />
+  ),
+  h4: ({ node, ...props }: any) => (
+    <span {...props} style={{ fontSize: 'inherit', fontWeight: 600 }} />
+  ),
+  h5: ({ node, ...props }: any) => (
+    <span {...props} style={{ fontSize: 'inherit', fontWeight: 600 }} />
+  ),
+  h6: ({ node, ...props }: any) => (
+    <span {...props} style={{ fontSize: 'inherit', fontWeight: 600 }} />
+  ),
+  strong: ({ node, ...props }: any) => (
+    <strong {...props} style={{ fontSize: 'inherit', fontWeight: 600 }} />
+  ),
+  em: ({ node, ...props }: any) => (
+    <em {...props} style={{ fontSize: 'inherit', fontStyle: 'italic' }} />
+  ),
+  ul: ({ node, ...props }: any) => (
+    <span {...props} style={{ fontSize: 'inherit' }} />
+  ),
+  ol: ({ node, ...props }: any) => (
+    <span {...props} style={{ fontSize: 'inherit' }} />
+  ),
+  li: ({ node, ...props }: any) => (
+    <span {...props} style={{ fontSize: 'inherit' }} />
+  ),
+  code: ({ node, ...props }: any) => (
+    <code {...props} style={{ fontSize: 'inherit', backgroundColor: '#F3F4F6', padding: '2px 4px', borderRadius: '3px' }} />
+  ),
+  blockquote: ({ node, ...props }: any) => (
+    <span {...props} style={{ fontSize: 'inherit' }} />
+  ),
+};
 
 interface InitiativeListProps {
   theme: Theme | null;
@@ -160,17 +216,22 @@ export default function InitiativeList({ theme, initiatives, orgTree }: Initiati
                 </span>
               </div>
               {initiative.description && (
-                <p style={{
-                  fontSize: '12px',
+                <div style={{
+                  fontSize: '11px',
                   color: 'var(--color-text-light)',
                   marginBottom: 0,
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
+                  lineHeight: '1.4',
                   overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
                 }}>
-                  {initiative.description}
-                </p>
+                  <ReactMarkdown 
+                    remarkPlugins={[remarkGfm]} 
+                    components={markdownComponents}
+                  >
+                    {initiative.description.replace(/\n/g, ' ').replace(/\s+/g, ' ')}
+                  </ReactMarkdown>
+                </div>
               )}
             </div>
           ))}
