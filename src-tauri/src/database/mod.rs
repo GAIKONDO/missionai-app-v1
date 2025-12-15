@@ -820,12 +820,39 @@ impl Database {
                 companyId TEXT NOT NULL,
                 introduction TEXT,
                 focusBusinesses TEXT,
+                capitalStructure TEXT,
+                capitalStructureDiagram TEXT,
                 createdAt TEXT,
                 updatedAt TEXT,
                 FOREIGN KEY (companyId) REFERENCES companies(id)
             )",
             [],
         )?;
+        
+        // companyContentsテーブルにcapitalStructureとcapitalStructureDiagramカラムを追加（マイグレーション）
+        if let Err(e) = (|| -> SqlResult<()> {
+            // capitalStructureカラムの存在確認
+            let mut stmt = conn.prepare("PRAGMA table_info(companyContents)")?;
+            let columns: Vec<String> = stmt.query_map([], |row| {
+                Ok(row.get::<_, String>(1)?)
+            })?.collect::<Result<Vec<_>, _>>()?;
+            
+            if !columns.contains(&"capitalStructure".to_string()) {
+                init_log!("📝 companyContentsテーブルにcapitalStructureカラムを追加します");
+                conn.execute("ALTER TABLE companyContents ADD COLUMN capitalStructure TEXT", [])?;
+                init_log!("✅ capitalStructureカラムを追加しました");
+            }
+            
+            if !columns.contains(&"capitalStructureDiagram".to_string()) {
+                init_log!("📝 companyContentsテーブルにcapitalStructureDiagramカラムを追加します");
+                conn.execute("ALTER TABLE companyContents ADD COLUMN capitalStructureDiagram TEXT", [])?;
+                init_log!("✅ capitalStructureDiagramカラムを追加しました");
+            }
+            
+            Ok(())
+        })() {
+            init_log!("⚠️  companyContentsテーブルのマイグレーションでエラーが発生しました（続行します）: {}", e);
+        }
 
         // テーマテーブル（新規追加）
         conn.execute(

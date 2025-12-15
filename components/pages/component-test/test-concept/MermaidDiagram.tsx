@@ -18,6 +18,7 @@ export default function MermaidDiagram({
   const containerRef = useRef<HTMLDivElement>(null);
   const [mermaidLoaded, setMermaidLoaded] = useState(false);
   const renderedRef = useRef(false);
+  const previousDiagramCodeRef = useRef<string>('');
 
   // Mermaidの読み込み状態をチェック
   useEffect(() => {
@@ -56,6 +57,7 @@ export default function MermaidDiagram({
               wrap: true,
               paddingX: 20, // 横方向のパディング
               paddingY: 20, // 縦方向のパディング
+              curve: 'stepAfter', // 直角（ステップ）な線を使用
             }
           });
         }
@@ -76,8 +78,21 @@ export default function MermaidDiagram({
     if (checkMermaid()) {
       setMermaidLoaded(true);
     } else {
-      if (typeof window !== 'undefined') {
-        window.addEventListener('mermaidloaded', handleMermaidLoaded);
+      // Mermaidが読み込まれていない場合は、スクリプトを動的に読み込む
+      if (typeof window !== 'undefined' && !document.querySelector('script[src*="mermaid.min.js"]')) {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js';
+        script.async = true;
+        script.crossOrigin = 'anonymous';
+        script.onload = () => {
+          window.dispatchEvent(new Event('mermaidloaded'));
+          handleMermaidLoaded();
+        };
+        document.head.appendChild(script);
+      } else {
+        if (typeof window !== 'undefined') {
+          window.addEventListener('mermaidloaded', handleMermaidLoaded);
+        }
       }
     }
 
@@ -90,7 +105,26 @@ export default function MermaidDiagram({
 
   // Mermaid図のレンダリング
   useEffect(() => {
-    if (!mermaidLoaded || !containerRef.current || renderedRef.current) return;
+    if (!mermaidLoaded || !containerRef.current || !diagramCode || !diagramCode.trim()) {
+      // コードが空の場合はコンテナをクリア
+      if (containerRef.current) {
+        containerRef.current.innerHTML = '';
+      }
+      renderedRef.current = false;
+      previousDiagramCodeRef.current = '';
+      return;
+    }
+
+    // diagramCodeが変更された場合は、renderedRefをリセットしてコンテナをクリア
+    if (previousDiagramCodeRef.current !== diagramCode) {
+      if (containerRef.current) {
+        containerRef.current.innerHTML = '';
+      }
+      renderedRef.current = false;
+      previousDiagramCodeRef.current = diagramCode;
+    }
+
+    if (renderedRef.current) return;
 
     const renderDiagram = async () => {
       // Mermaidが利用可能になるまで待つ
@@ -103,9 +137,18 @@ export default function MermaidDiagram({
 
       const mermaid = (window as any).mermaid;
       if (!mermaid || typeof mermaid.render !== 'function') {
-        console.warn('Mermaidが利用できません');
+        console.warn('⚠️ [MermaidDiagram] Mermaidが利用できません', {
+          mermaidExists: !!mermaid,
+          renderExists: mermaid ? typeof mermaid.render : 'N/A'
+        });
         return;
       }
+
+      console.log('📊 [MermaidDiagram] レンダリング開始:', {
+        diagramId,
+        codeLength: diagramCode.length,
+        codePreview: diagramCode.substring(0, 100)
+      });
 
       try {
         // Mermaidコードをクリーンアップ（前後の空白のみ削除、HTMLタグは保持）
@@ -174,11 +217,14 @@ export default function MermaidDiagram({
         console.log('Mermaidコード（行数）:', cleanCode.split('\n').length);
         
         const id = `mermaid-${diagramId}-${Date.now()}`;
+        console.log('📊 [MermaidDiagram] render呼び出し:', { id, codeLength: cleanCode.length });
         const result = await mermaid.render(id, cleanCode);
         const svg = typeof result === 'string' ? result : result.svg;
+        console.log('✅ [MermaidDiagram] render成功:', { svgLength: svg?.length || 0 });
 
         if (containerRef.current) {
           containerRef.current.innerHTML = svg;
+          console.log('✅ [MermaidDiagram] SVGをコンテナに設定しました');
 
           // SVGがDOMに挿入された後にフォントサイズを変更
           setTimeout(() => {
@@ -291,7 +337,10 @@ export default function MermaidDiagram({
           }, 200);
         }
       } catch (err) {
-        console.error('Mermaidレンダリングエラー:', err);
+        console.error('❌ [MermaidDiagram] Mermaidレンダリングエラー:', err);
+        if (containerRef.current) {
+          containerRef.current.innerHTML = `<div style="padding: 20px; color: #EF4444;">Mermaid図のレンダリングに失敗しました: ${err instanceof Error ? err.message : String(err)}</div>`;
+        }
       }
     };
 

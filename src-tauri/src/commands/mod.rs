@@ -7,4 +7,5 @@ pub mod organization_company_display;
 pub mod fs;
 pub mod chromadb;
 pub mod design_doc;
+pub mod plantuml;
 

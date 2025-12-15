@@ -22,6 +22,7 @@ const ALLOWED_TABLES: &[&str] = &[
     "entities",
     "relations", // topicRelationsからリネーム
     "companies",
+    "companyContents", // 事業会社コンテンツテーブル
     "themeHierarchyConfigs", // A2C100用のテーマ階層設定テーブル
 ];
 

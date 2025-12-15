@@ -238,6 +238,9 @@ fn main() {
             commands::fs::write_file,
             commands::fs::file_exists,
             commands::fs::save_image_file,
+            // PlantUMLコマンド
+            commands::plantuml::render_plantuml,
+            commands::plantuml::check_java_installed,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -20,6 +20,197 @@ import {
   type CompanyFocusInitiative,
   type CompanyMeetingNote,
 } from '@/lib/companiesApi';
+import dynamic from 'next/dynamic';
+import MermaidLoader from '@/components/MermaidLoader';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import '@/components/pages/component-test/test-concept/pageStyles.css';
+
+// ReactMarkdown用の共通コンポーネント設定（ページセクション用）
+// 事業会社専用ページのフォントスタイルを適用
+const companyPageFontFamily = 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif';
+
+const markdownComponents = {
+  a: ({ node, ...props }: any) => (
+    <a
+      {...props}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{ color: '#3B82F6', textDecoration: 'underline', fontFamily: companyPageFontFamily }}
+    />
+  ),
+  p: ({ node, ...props }: any) => (
+    <p {...props} style={{ margin: '0 0 16px 0', color: '#111827', fontFamily: companyPageFontFamily }} />
+  ),
+  h1: ({ node, ...props }: any) => (
+    <h1 {...props} style={{ fontSize: '24px', fontWeight: 600, margin: '24px 0 12px 0', color: '#111827', fontFamily: companyPageFontFamily }} />
+  ),
+  h2: ({ node, ...props }: any) => (
+    <h2 {...props} style={{ fontSize: '20px', fontWeight: 600, margin: '20px 0 10px 0', color: '#111827', fontFamily: companyPageFontFamily }} />
+  ),
+  h3: ({ node, ...props }: any) => (
+    <h3 {...props} style={{ fontSize: '18px', fontWeight: 600, margin: '16px 0 8px 0', color: '#111827', fontFamily: companyPageFontFamily }} />
+  ),
+  h4: ({ node, ...props }: any) => (
+    <h4 {...props} style={{ fontSize: '16px', fontWeight: 600, margin: '14px 0 6px 0', color: '#111827', fontFamily: companyPageFontFamily }} />
+  ),
+  h5: ({ node, ...props }: any) => (
+    <h5 {...props} style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px', color: '#111827', borderLeft: '3px solid var(--color-primary)', paddingLeft: '8px', fontFamily: companyPageFontFamily }} />
+  ),
+  ul: ({ node, ...props }: any) => (
+    <ul {...props} style={{ margin: '8px 0', paddingLeft: '20px', color: '#111827', fontFamily: companyPageFontFamily }} />
+  ),
+  ol: ({ node, ...props }: any) => (
+    <ol {...props} style={{ margin: '8px 0', paddingLeft: '20px', color: '#111827', fontFamily: companyPageFontFamily }} />
+  ),
+  li: ({ node, ...props }: any) => (
+    <li {...props} style={{ margin: '4px 0', color: '#111827', fontFamily: companyPageFontFamily }} />
+  ),
+  code: ({ node, inline, ...props }: any) => (
+    <code
+      {...props}
+      style={{
+        backgroundColor: inline ? '#F3F4F6' : '#1F2937',
+        color: inline ? '#1F2937' : '#F9FAFB',
+        padding: inline ? '2px 6px' : '12px',
+        borderRadius: '4px',
+        fontSize: '13px',
+        fontFamily: 'monospace',
+        display: inline ? 'inline' : 'block',
+        overflowX: 'auto',
+      }}
+    />
+  ),
+  pre: ({ node, ...props }: any) => (
+    <pre {...props} style={{ margin: '8px 0', overflowX: 'auto', fontFamily: 'monospace' }} />
+  ),
+  blockquote: ({ node, ...props }: any) => (
+    <blockquote
+      {...props}
+      style={{
+        borderLeft: '3px solid var(--color-primary)',
+        paddingLeft: '12px',
+        margin: '8px 0',
+        color: 'var(--color-text-light)',
+        fontStyle: 'italic',
+        fontFamily: companyPageFontFamily,
+      }}
+    />
+  ),
+  hr: ({ node, ...props }: any) => (
+    <hr {...props} style={{ border: 'none', borderTop: '1px solid var(--color-border-color)', margin: '16px 0' }} />
+  ),
+  table: ({ node, ...props }: any) => (
+    <table {...props} style={{ borderCollapse: 'collapse', width: '100%', margin: '8px 0', fontFamily: companyPageFontFamily }} />
+  ),
+  th: ({ node, ...props }: any) => (
+    <th {...props} style={{ border: '1px solid var(--color-border-color)', padding: '8px', textAlign: 'left', backgroundColor: '#F9FAFB', fontWeight: 600, fontFamily: companyPageFontFamily }} />
+  ),
+  td: ({ node, ...props }: any) => (
+    <td {...props} style={{ border: '1px solid var(--color-border-color)', padding: '8px', color: '#111827', fontFamily: companyPageFontFamily }} />
+  ),
+  strong: ({ node, ...props }: any) => (
+    <strong {...props} style={{ fontWeight: 600, color: '#111827', fontFamily: companyPageFontFamily }} />
+  ),
+  em: ({ node, ...props }: any) => (
+    <em {...props} style={{ fontStyle: 'italic', color: '#111827', fontFamily: companyPageFontFamily }} />
+  ),
+};
+
+// Mermaid図を動的にインポート（SSRを無効化）
+const MermaidDiagram = dynamic(
+  () => import('@/components/pages/component-test/test-concept/MermaidDiagram'),
+  { ssr: false }
+);
+
+// PlantUML図を動的にインポート（SSRを無効化）
+const PlantUMLDiagram = dynamic(
+  () => import('@/components/pages/component-test/test-concept/PlantUMLDiagram'),
+  { ssr: false }
+);
+
+// AI API呼び出し関数（簡易版）
+async function callLLMAPI(
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  model: string = 'gpt-4o-mini'
+): Promise<string> {
+  const isLocalModel = model.startsWith('qwen') || 
+                       model.startsWith('llama') || 
+                       model.startsWith('mistral') ||
+                       model.includes(':latest') ||
+                       model.includes(':instruct');
+  
+  if (isLocalModel) {
+    // Ollama API呼び出し
+    const apiUrl = process.env.NEXT_PUBLIC_OLLAMA_API_URL || 'http://localhost:11434/api/chat';
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: model,
+        messages: messages.map(msg => ({
+          role: msg.role === 'system' ? 'system' : msg.role === 'assistant' ? 'assistant' : 'user',
+          content: msg.content,
+        })),
+        stream: false,
+        options: {
+          temperature: 0.7,
+          num_predict: 2000,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Ollama APIエラー: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.message?.content?.trim() || '';
+  } else {
+    // GPT API呼び出し
+    let apiKey: string | undefined;
+    if (typeof window !== 'undefined') {
+      try {
+        const { getAPIKey } = await import('@/lib/security');
+        apiKey = getAPIKey('openai') || undefined;
+      } catch (error) {
+        apiKey = localStorage.getItem('NEXT_PUBLIC_OPENAI_API_KEY') || undefined;
+      }
+    }
+    if (!apiKey) {
+      apiKey = process.env.NEXT_PUBLIC_OPENAI_API_KEY;
+    }
+    
+    if (!apiKey) {
+      throw new Error('OpenAI APIキーが設定されていません。設定ページ（/settings）でAPIキーを設定してください。');
+    }
+
+    const apiUrl = 'https://api.openai.com/v1/chat/completions';
+    const requestBody: any = {
+      model: model,
+      messages,
+      max_tokens: 2000,
+      temperature: 0.7,
+    };
+
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`GPT APIエラー: ${response.status} ${JSON.stringify(errorData)}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content?.trim() || '';
+  }
+}
 import {
   getOrganizationsByCompanyDisplay,
   createOrganizationCompanyDisplay,
@@ -81,6 +272,11 @@ function CompanyDetailPageContent() {
   const [introductionText, setIntroductionText] = useState('');
   const [editingFocusBusinesses, setEditingFocusBusinesses] = useState(false);
   const [focusBusinessesText, setFocusBusinessesText] = useState('');
+  const [editingCapitalStructure, setEditingCapitalStructure] = useState(false);
+  const [capitalStructureRows, setCapitalStructureRows] = useState<Array<{ name: string; ratio: string }>>([]);
+  const [editingCapitalStructureDiagram, setEditingCapitalStructureDiagram] = useState(false);
+  const [capitalStructureDiagramText, setCapitalStructureDiagramText] = useState('');
+  const [generatingDiagram, setGeneratingDiagram] = useState(false);
   const [savingContent, setSavingContent] = useState(false);
 
   // タブパラメータが変更されたときにactiveTabを更新
@@ -131,6 +327,25 @@ function CompanyDetailPageContent() {
         if (contentData) {
           setIntroductionText(contentData.introduction || '');
           setFocusBusinessesText(contentData.focusBusinesses || '');
+          // 資本構成データをパース（JSON文字列または空）
+          try {
+            if (contentData.capitalStructure) {
+              const parsed = JSON.parse(contentData.capitalStructure);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                setCapitalStructureRows(parsed);
+              } else {
+                setCapitalStructureRows([{ name: '', ratio: '' }]);
+              }
+            } else {
+              setCapitalStructureRows([{ name: '', ratio: '' }]);
+            }
+          } catch {
+            // JSONパースに失敗した場合は空の行を1つ追加
+            setCapitalStructureRows([{ name: '', ratio: '' }]);
+          }
+          setCapitalStructureDiagramText(contentData.capitalStructureDiagram || '');
+        } else {
+          setCapitalStructureRows([{ name: '', ratio: '' }]);
         }
       } catch (err: any) {
         console.error('事業会社データの取得に失敗しました:', err);
@@ -778,6 +993,8 @@ function CompanyDetailPageContent() {
       await saveCompanyContent(companyId, {
         introduction: introductionText.trim() || undefined,
         focusBusinesses: focusBusinessesText.trim() || undefined,
+        capitalStructure: JSON.stringify(capitalStructureRows.filter(row => row.name.trim() || row.ratio.trim())) || undefined,
+        capitalStructureDiagram: capitalStructureDiagramText.trim() || undefined,
       });
       
       // 再取得
@@ -806,6 +1023,8 @@ function CompanyDetailPageContent() {
       await saveCompanyContent(companyId, {
         introduction: introductionText.trim() || undefined,
         focusBusinesses: focusBusinessesText.trim() || undefined,
+        capitalStructure: JSON.stringify(capitalStructureRows.filter(row => row.name.trim() || row.ratio.trim())) || undefined,
+        capitalStructureDiagram: capitalStructureDiagramText.trim() || undefined,
       });
       
       // 再取得
@@ -819,6 +1038,122 @@ function CompanyDetailPageContent() {
       await tauriAlert(`保存に失敗しました: ${error?.message || '不明なエラー'}`);
     } finally {
       setSavingContent(false);
+    }
+  };
+
+  // 資本構成を保存
+  const handleSaveCapitalStructure = async () => {
+    if (!companyId) {
+      await tauriAlert('事業会社IDが取得できませんでした');
+      return;
+    }
+
+    try {
+      setSavingContent(true);
+      await saveCompanyContent(companyId, {
+        introduction: introductionText.trim() || undefined,
+        focusBusinesses: focusBusinessesText.trim() || undefined,
+        capitalStructure: JSON.stringify(capitalStructureRows.filter(row => row.name.trim() || row.ratio.trim())) || undefined,
+        capitalStructureDiagram: capitalStructureDiagramText.trim() || undefined,
+      });
+      
+      // 再取得
+      const contentData = await getCompanyContent(companyId);
+      setCompanyContent(contentData);
+      setEditingCapitalStructure(false);
+      setEditingCapitalStructureDiagram(false);
+      
+      await tauriAlert('資本構成を保存しました');
+    } catch (error: any) {
+      console.error('❌ 資本構成の保存に失敗しました:', error);
+      await tauriAlert(`保存に失敗しました: ${error?.message || '不明なエラー'}`);
+    } finally {
+      setSavingContent(false);
+    }
+  };
+
+  // AIでMermaid図を生成
+  const handleGenerateMermaidDiagram = async () => {
+    // 有効な株主データを取得
+    const validRows = capitalStructureRows.filter(row => row.name.trim() && row.ratio.trim());
+    
+    if (validRows.length === 0) {
+      await tauriAlert('株主データが入力されていません。まず株主情報を入力してください。');
+      return;
+    }
+
+    try {
+      setGeneratingDiagram(true);
+      
+      // 株主データをテキスト形式に変換
+      const shareholdersText = validRows
+        .map(row => `- ${row.name}: ${row.ratio}%`)
+        .join('\n');
+      
+      const systemPrompt = `あなたはMermaid図の専門家です。資本構成を表すMermaid図を作成してください。
+以下の要件を満たしてください：
+1. 事業会社を中心に配置
+2. 各株主から事業会社への出資関係を矢印で表現
+3. 出資比率をラベルに含める
+4. 見やすく整理された構造にする
+5. ノード間の線は必ず直角（オーソゴナル）にする（曲線ではなく、L字型や階段状の直線的な線を使用）
+6. flowchart TD構文を使用する
+7. 可能な限り直線的な接続を心がける
+8. Mermaidコードブロック（\`\`\`mermaid ... \`\`\`）で囲んで返す`;
+
+      const userPrompt = `以下の株主情報を元に、資本構成を表すMermaid図を作成してください。
+ノード間の線は必ず直角（直線的）にしてください。
+
+${shareholdersText}
+
+事業会社名: ${company?.name || '事業会社'}`;
+
+      console.log('🤖 [資本構成図生成] AI API呼び出し開始');
+      const generatedContent = await callLLMAPI(
+        [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        'gpt-4o-mini'
+      );
+
+      console.log('🤖 [資本構成図生成] AI生成結果:', generatedContent);
+
+      // Mermaidコードを抽出
+      let mermaidCode = '';
+      try {
+        // Mermaidコードブロックを抽出（複数のパターンを試す）
+        const mermaidMatch1 = generatedContent.match(/```mermaid\n([\s\S]*?)\n```/);
+        const mermaidMatch2 = generatedContent.match(/```mermaid\s*([\s\S]*?)```/);
+        const mermaidMatch3 = generatedContent.match(/mermaid\n([\s\S]*?)\n```/);
+        
+        if (mermaidMatch1) {
+          mermaidCode = mermaidMatch1[1].trim();
+        } else if (mermaidMatch2) {
+          mermaidCode = mermaidMatch2[1].trim();
+        } else if (mermaidMatch3) {
+          mermaidCode = mermaidMatch3[1].trim();
+        } else {
+          // コードブロックがない場合は、全体をMermaidコードとして扱う
+          mermaidCode = generatedContent.trim();
+        }
+      } catch (parseError: any) {
+        console.warn('⚠️ [資本構成図生成] Mermaidコード抽出エラー:', parseError);
+        // 抽出に失敗した場合は全体を使用
+        mermaidCode = generatedContent.trim();
+      }
+
+      if (mermaidCode) {
+        setCapitalStructureDiagramText(mermaidCode);
+        await tauriAlert('Mermaid図を生成しました');
+      } else {
+        await tauriAlert('Mermaid図の生成に失敗しました。生成結果が空でした。');
+      }
+    } catch (error: any) {
+      console.error('❌ Mermaid図の生成に失敗しました:', error);
+      await tauriAlert(`生成に失敗しました: ${error?.message || '不明なエラー'}`);
+    } finally {
+      setGeneratingDiagram(false);
     }
   };
 
@@ -857,6 +1192,7 @@ function CompanyDetailPageContent() {
 
   return (
     <Layout>
+      <MermaidLoader />
       <div className="card" style={{ padding: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
           <h1 style={{ fontSize: '24px', fontWeight: 600, color: 'var(--color-text)' }}>
@@ -1031,15 +1367,25 @@ function CompanyDetailPageContent() {
             ) : (
               <div>
                 {companyContent?.introduction ? (
-                  <div style={{ 
-                    padding: '16px', 
-                    backgroundColor: '#F9FAFB', 
-                    borderRadius: '8px',
-                    whiteSpace: 'pre-wrap',
-                    lineHeight: '1.6',
-                    color: 'var(--color-text)',
-                  }}>
-                    {companyContent.introduction}
+                  <div 
+                    className="page-section-content"
+                    style={{ 
+                      padding: '24px', 
+                      backgroundColor: '#FFFFFF', 
+                      borderRadius: '8px',
+                      border: '1px solid var(--color-border-color)',
+                      color: '#111827',
+                      lineHeight: '1.8',
+                      fontSize: '14px',
+                      fontFamily: companyPageFontFamily,
+                    }}
+                  >
+                    <ReactMarkdown 
+                      remarkPlugins={[remarkGfm]} 
+                      components={markdownComponents}
+                    >
+                      {companyContent.introduction}
+                    </ReactMarkdown>
                   </div>
                 ) : (
                   <p style={{ color: 'var(--color-text-light)', padding: '20px', textAlign: 'center' }}>
@@ -1182,6 +1528,554 @@ function CompanyDetailPageContent() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </div>
+
+          {/* 資本構成セクション */}
+          <div style={{ marginTop: '32px', gridColumn: '1 / -1' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--color-text)' }}>
+                資本構成
+              </h3>
+              {!editingCapitalStructure && !editingCapitalStructureDiagram && (
+                <button
+                  onClick={() => {
+                    // 既存データを読み込む
+                    try {
+                      if (companyContent?.capitalStructure) {
+                        const parsed = JSON.parse(companyContent.capitalStructure);
+                        if (Array.isArray(parsed) && parsed.length > 0) {
+                          setCapitalStructureRows(parsed);
+                        } else {
+                          setCapitalStructureRows([{ name: '', ratio: '' }]);
+                        }
+                      } else {
+                        setCapitalStructureRows([{ name: '', ratio: '' }]);
+                      }
+                    } catch {
+                      setCapitalStructureRows([{ name: '', ratio: '' }]);
+                    }
+                    setCapitalStructureDiagramText(companyContent?.capitalStructureDiagram || '');
+                    setEditingCapitalStructure(true);
+                    setEditingCapitalStructureDiagram(true);
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    backgroundColor: '#3B82F6',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                  }}
+                >
+                  編集
+                </button>
+              )}
+            </div>
+            
+            {editingCapitalStructure || editingCapitalStructureDiagram ? (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                {/* 左側: 資本構成テーブル */}
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 600, color: 'var(--color-text)' }}>
+                    主要株主 (出資比率)
+                  </label>
+                  <div style={{ border: '1px solid #E5E7EB', borderRadius: '6px', overflow: 'hidden', backgroundColor: '#FFFFFF' }}>
+                    {/* テーブルヘッダー */}
+                    <div style={{ 
+                      display: 'grid', 
+                      gridTemplateColumns: '1fr auto', 
+                      backgroundColor: '#DDEBF7',
+                      borderBottom: '1px solid #E5E7EB',
+                    }}>
+                      <div style={{ 
+                        padding: '12px 16px', 
+                        fontWeight: 600, 
+                        fontSize: '14px',
+                        textAlign: 'center',
+                        borderRight: '1px solid #E5E7EB',
+                      }}>
+                        主要株主 (出資比率)
+                      </div>
+                    </div>
+                    <div style={{ 
+                      display: 'grid', 
+                      gridTemplateColumns: '1fr 120px', 
+                      backgroundColor: '#DDEBF7',
+                      borderBottom: '1px solid #E5E7EB',
+                    }}>
+                      <div style={{ 
+                        padding: '10px 16px', 
+                        fontWeight: 600, 
+                        fontSize: '13px',
+                        borderRight: '1px solid #E5E7EB',
+                      }}>
+                        株主名
+                      </div>
+                      <div style={{ 
+                        padding: '10px 16px', 
+                        fontWeight: 600, 
+                        fontSize: '13px',
+                        textAlign: 'right',
+                      }}>
+                        比率
+                      </div>
+                    </div>
+                    
+                    {/* データ行 */}
+                    {capitalStructureRows.map((row, index) => (
+                      <div 
+                        key={index}
+                        style={{ 
+                          display: 'grid', 
+                          gridTemplateColumns: '1fr 120px', 
+                          borderBottom: '1px solid #E5E7EB',
+                        }}
+                      >
+                        <input
+                          type="text"
+                          value={row.name}
+                          onChange={(e) => {
+                            const newRows = [...capitalStructureRows];
+                            newRows[index].name = e.target.value;
+                            setCapitalStructureRows(newRows);
+                          }}
+                          disabled={savingContent}
+                          placeholder="株主名を入力"
+                          style={{
+                            padding: '10px 16px',
+                            border: 'none',
+                            borderRight: '1px solid #E5E7EB',
+                            fontSize: '14px',
+                            backgroundColor: savingContent ? '#F3F4F6' : '#FFFFFF',
+                            outline: 'none',
+                          }}
+                        />
+                        <div style={{ display: 'flex', alignItems: 'center', paddingRight: '16px' }}>
+                          <input
+                            type="text"
+                            value={row.ratio}
+                            onChange={(e) => {
+                              const newRows = [...capitalStructureRows];
+                              newRows[index].ratio = e.target.value;
+                              setCapitalStructureRows(newRows);
+                            }}
+                            disabled={savingContent}
+                            placeholder="%"
+                            style={{
+                              width: '100%',
+                              padding: '10px 8px',
+                              border: 'none',
+                              fontSize: '14px',
+                              textAlign: 'right',
+                              backgroundColor: savingContent ? '#F3F4F6' : '#FFFFFF',
+                              outline: 'none',
+                            }}
+                          />
+                          <span style={{ fontSize: '14px', color: '#6B7280', marginLeft: '4px' }}>%</span>
+                          {capitalStructureRows.length > 1 && (
+                            <button
+                              onClick={() => {
+                                const newRows = capitalStructureRows.filter((_, i) => i !== index);
+                                if (newRows.length === 0) {
+                                  setCapitalStructureRows([{ name: '', ratio: '' }]);
+                                } else {
+                                  setCapitalStructureRows(newRows);
+                                }
+                              }}
+                              disabled={savingContent}
+                              style={{
+                                marginLeft: '8px',
+                                padding: '4px 8px',
+                                backgroundColor: '#EF4444',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: savingContent ? 'not-allowed' : 'pointer',
+                                fontSize: '12px',
+                              }}
+                              title="行を削除"
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    
+                    {/* 合計行 */}
+                    <div style={{ 
+                      display: 'grid', 
+                      gridTemplateColumns: '1fr 120px', 
+                      backgroundColor: '#F9FAFB',
+                      borderTop: '2px solid #E5E7EB',
+                    }}>
+                      <div style={{ 
+                        padding: '10px 16px', 
+                        fontWeight: 600, 
+                        fontSize: '14px',
+                        borderRight: '1px solid #E5E7EB',
+                      }}>
+                        計
+                      </div>
+                      <div style={{ 
+                        padding: '10px 16px', 
+                        fontWeight: 600, 
+                        fontSize: '14px',
+                        textAlign: 'right',
+                        color: '#374151',
+                      }}>
+                        {(() => {
+                          const total = capitalStructureRows.reduce((sum, row) => {
+                            const ratio = parseFloat(row.ratio) || 0;
+                            return sum + ratio;
+                          }, 0);
+                          return `${total.toFixed(1)}%`;
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* 行追加ボタン */}
+                  <button
+                    onClick={() => {
+                      setCapitalStructureRows([...capitalStructureRows, { name: '', ratio: '' }]);
+                    }}
+                    disabled={savingContent}
+                    style={{
+                      marginTop: '8px',
+                      padding: '6px 12px',
+                      backgroundColor: '#10B981',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: savingContent ? 'not-allowed' : 'pointer',
+                      fontSize: '13px',
+                    }}
+                  >
+                    + 行を追加
+                  </button>
+                </div>
+                
+                {/* 右側: Mermaid図 */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <label style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text)' }}>
+                      資本構成図（Mermaid / PlantUML）
+                    </label>
+                    <button
+                      onClick={handleGenerateMermaidDiagram}
+                      disabled={savingContent || generatingDiagram || capitalStructureRows.filter(row => row.name.trim() && row.ratio.trim()).length === 0}
+                      style={{
+                        padding: '6px 12px',
+                        backgroundColor: (savingContent || generatingDiagram || capitalStructureRows.filter(row => row.name.trim() && row.ratio.trim()).length === 0) ? '#9CA3AF' : '#10B981',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: (savingContent || generatingDiagram || capitalStructureRows.filter(row => row.name.trim() && row.ratio.trim()).length === 0) ? 'not-allowed' : 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 500,
+                      }}
+                    >
+                      {generatingDiagram ? '生成中...' : '🤖 AIに書かせる'}
+                    </button>
+                  </div>
+                  <textarea
+                    value={capitalStructureDiagramText}
+                    onChange={(e) => setCapitalStructureDiagramText(e.target.value)}
+                    disabled={savingContent}
+                    placeholder="MermaidまたはPlantUMLのコードを入力してください&#10;&#10;Mermaid例：&#10;graph TD&#10;  A[株式会社A 60%] --> C[事業会社]&#10;  B[株式会社B 40%] --> C&#10;&#10;PlantUML例：&#10;@startuml&#10;A --> C : 60%&#10;B --> C : 40%&#10;@enduml"
+                    style={{
+                      width: '100%',
+                      minHeight: '300px',
+                      padding: '12px',
+                      border: '1px solid #E5E7EB',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      fontFamily: 'monospace',
+                      resize: 'vertical',
+                      backgroundColor: savingContent ? '#F3F4F6' : '#FFFFFF',
+                    }}
+                  />
+                  {capitalStructureDiagramText && (() => {
+                    // コードがMermaidかPlantUMLかを自動判定
+                    const trimmedCode = capitalStructureDiagramText.trim();
+                    const isPlantUML = trimmedCode.startsWith('@startuml') || 
+                                       trimmedCode.includes('@startuml') ||
+                                       trimmedCode.includes('skinparam') ||
+                                       trimmedCode.includes('-->') && !trimmedCode.match(/graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitgraph|journey|requirement/i);
+                    const isMermaid = !isPlantUML && (
+                      trimmedCode.startsWith('graph') ||
+                      trimmedCode.startsWith('flowchart') ||
+                      trimmedCode.startsWith('sequenceDiagram') ||
+                      trimmedCode.startsWith('classDiagram') ||
+                      trimmedCode.startsWith('stateDiagram') ||
+                      trimmedCode.startsWith('erDiagram') ||
+                      trimmedCode.startsWith('gantt') ||
+                      trimmedCode.startsWith('pie') ||
+                      trimmedCode.startsWith('gitgraph') ||
+                      trimmedCode.startsWith('journey') ||
+                      trimmedCode.startsWith('requirement')
+                    );
+
+                    return (
+                      <div style={{ marginTop: '12px', padding: '16px', border: '1px solid #E5E7EB', borderRadius: '6px', backgroundColor: '#F9FAFB' }}>
+                        <div style={{ fontSize: '12px', color: '#6B7280', marginBottom: '8px' }}>
+                          プレビュー: {isPlantUML ? 'PlantUML' : isMermaid ? 'Mermaid' : '自動判定中...'}
+                        </div>
+                        {isPlantUML ? (
+                          <PlantUMLDiagram 
+                            diagramCode={capitalStructureDiagramText} 
+                            diagramId={`capital-structure-plantuml-${companyId || 'new'}`}
+                            format="svg"
+                          />
+                        ) : isMermaid ? (
+                          <MermaidDiagram 
+                            diagramCode={capitalStructureDiagramText} 
+                            diagramId={`capital-structure-mermaid-${companyId || 'new'}`}
+                          />
+                        ) : (
+                          <div style={{ padding: '20px', textAlign: 'center', color: '#6B7280' }}>
+                            コード形式を判定中... または未対応の形式です。
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                {/* 左側: 資本構成テーブル表示 */}
+                <div>
+                  {(() => {
+                    try {
+                      const parsed = companyContent?.capitalStructure ? JSON.parse(companyContent.capitalStructure) : null;
+                      if (parsed && Array.isArray(parsed) && parsed.length > 0 && parsed.some((row: any) => row.name || row.ratio)) {
+                        const validRows = parsed.filter((row: any) => row.name || row.ratio);
+                        const total = validRows.reduce((sum: number, row: any) => {
+                          const ratio = parseFloat(row.ratio) || 0;
+                          return sum + ratio;
+                        }, 0);
+                        
+                        return (
+                          <div style={{ border: '1px solid #E5E7EB', borderRadius: '6px', overflow: 'hidden', backgroundColor: '#FFFFFF' }}>
+                            {/* テーブルヘッダー */}
+                            <div style={{ 
+                              display: 'grid', 
+                              gridTemplateColumns: '1fr auto', 
+                              backgroundColor: '#DDEBF7',
+                              borderBottom: '1px solid #E5E7EB',
+                            }}>
+                              <div style={{ 
+                                padding: '12px 16px', 
+                                fontWeight: 600, 
+                                fontSize: '14px',
+                                textAlign: 'center',
+                                borderRight: '1px solid #E5E7EB',
+                              }}>
+                                主要株主 (出資比率)
+                              </div>
+                            </div>
+                            <div style={{ 
+                              display: 'grid', 
+                              gridTemplateColumns: '1fr 120px', 
+                              backgroundColor: '#DDEBF7',
+                              borderBottom: '1px solid #E5E7EB',
+                            }}>
+                              <div style={{ 
+                                padding: '10px 16px', 
+                                fontWeight: 600, 
+                                fontSize: '13px',
+                                borderRight: '1px solid #E5E7EB',
+                              }}>
+                                株主名
+                              </div>
+                              <div style={{ 
+                                padding: '10px 16px', 
+                                fontWeight: 600, 
+                                fontSize: '13px',
+                                textAlign: 'right',
+                              }}>
+                                比率
+                              </div>
+                            </div>
+                            
+                            {/* データ行 */}
+                            {validRows.map((row: any, index: number) => (
+                              <div 
+                                key={index}
+                                style={{ 
+                                  display: 'grid', 
+                                  gridTemplateColumns: '1fr 120px', 
+                                  borderBottom: '1px solid #E5E7EB',
+                                }}
+                              >
+                                <div style={{ 
+                                  padding: '10px 16px', 
+                                  fontSize: '14px',
+                                  borderRight: '1px solid #E5E7EB',
+                                }}>
+                                  {row.name || '-'}
+                                </div>
+                                <div style={{ 
+                                  padding: '10px 16px', 
+                                  fontSize: '14px',
+                                  textAlign: 'right',
+                                }}>
+                                  {row.ratio ? `${row.ratio}%` : '-'}
+                                </div>
+                              </div>
+                            ))}
+                            
+                            {/* 合計行 */}
+                            <div style={{ 
+                              display: 'grid', 
+                              gridTemplateColumns: '1fr 120px', 
+                              backgroundColor: '#F9FAFB',
+                              borderTop: '2px solid #E5E7EB',
+                            }}>
+                              <div style={{ 
+                                padding: '10px 16px', 
+                                fontWeight: 600, 
+                                fontSize: '14px',
+                                borderRight: '1px solid #E5E7EB',
+                              }}>
+                                計
+                              </div>
+                              <div style={{ 
+                                padding: '10px 16px', 
+                                fontWeight: 600, 
+                                fontSize: '14px',
+                                textAlign: 'right',
+                                color: '#374151',
+                              }}>
+                                {total.toFixed(1)}%
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+                    } catch (e) {
+                      // JSONパースエラー
+                    }
+                    return (
+                      <p style={{ color: 'var(--color-text-light)', padding: '20px', textAlign: 'center' }}>
+                        資本構成が登録されていません
+                      </p>
+                    );
+                  })()}
+                </div>
+                
+                {/* 右側: Mermaid図表示 */}
+                <div>
+                  {companyContent?.capitalStructureDiagram ? (() => {
+                    // コードがMermaidかPlantUMLかを自動判定
+                    const trimmedCode = companyContent.capitalStructureDiagram.trim();
+                    const isPlantUML = trimmedCode.startsWith('@startuml') || 
+                                       trimmedCode.includes('@startuml') ||
+                                       trimmedCode.includes('skinparam') ||
+                                       trimmedCode.includes('-->') && !trimmedCode.match(/graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitgraph|journey|requirement/i);
+                    const isMermaid = !isPlantUML && (
+                      trimmedCode.startsWith('graph') ||
+                      trimmedCode.startsWith('flowchart') ||
+                      trimmedCode.startsWith('sequenceDiagram') ||
+                      trimmedCode.startsWith('classDiagram') ||
+                      trimmedCode.startsWith('stateDiagram') ||
+                      trimmedCode.startsWith('erDiagram') ||
+                      trimmedCode.startsWith('gantt') ||
+                      trimmedCode.startsWith('pie') ||
+                      trimmedCode.startsWith('gitgraph') ||
+                      trimmedCode.startsWith('journey') ||
+                      trimmedCode.startsWith('requirement')
+                    );
+
+                    return (
+                      <div style={{ 
+                        padding: '16px', 
+                        backgroundColor: '#F9FAFB', 
+                        borderRadius: '8px',
+                      }}>
+                        {isPlantUML ? (
+                          <PlantUMLDiagram 
+                            diagramCode={companyContent.capitalStructureDiagram} 
+                            diagramId={`capital-structure-display-plantuml-${companyId || 'unknown'}`}
+                            format="svg"
+                          />
+                        ) : isMermaid ? (
+                          <MermaidDiagram 
+                            diagramCode={companyContent.capitalStructureDiagram} 
+                            diagramId={`capital-structure-display-mermaid-${companyId || 'unknown'}`}
+                          />
+                        ) : (
+                          <div style={{ padding: '20px', textAlign: 'center', color: '#6B7280' }}>
+                            コード形式を判定できませんでした。
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })() : (
+                    <p style={{ color: 'var(--color-text-light)', padding: '20px', textAlign: 'center' }}>
+                      資本構成図が登録されていません
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+            
+            {(editingCapitalStructure || editingCapitalStructureDiagram) && (
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '12px' }}>
+                <button
+                  onClick={() => {
+                    setEditingCapitalStructure(false);
+                    setEditingCapitalStructureDiagram(false);
+                    // 既存データを読み込む
+                    try {
+                      if (companyContent?.capitalStructure) {
+                        const parsed = JSON.parse(companyContent.capitalStructure);
+                        if (Array.isArray(parsed) && parsed.length > 0) {
+                          setCapitalStructureRows(parsed);
+                        } else {
+                          setCapitalStructureRows([{ name: '', ratio: '' }]);
+                        }
+                      } else {
+                        setCapitalStructureRows([{ name: '', ratio: '' }]);
+                      }
+                    } catch {
+                      setCapitalStructureRows([{ name: '', ratio: '' }]);
+                    }
+                    setCapitalStructureDiagramText(companyContent?.capitalStructureDiagram || '');
+                  }}
+                  disabled={savingContent}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#6B7280',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: savingContent ? 'not-allowed' : 'pointer',
+                    fontSize: '14px',
+                  }}
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleSaveCapitalStructure}
+                  disabled={savingContent}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: savingContent ? '#9CA3AF' : '#10B981',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: savingContent ? 'not-allowed' : 'pointer',
+                    fontSize: '14px',
+                  }}
+                >
+                  {savingContent ? '保存中...' : '保存'}
+                </button>
               </div>
             )}
           </div>

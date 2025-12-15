@@ -25,6 +25,8 @@ export interface CompanyContent {
   companyId: string;
   introduction?: string;
   focusBusinesses?: string; // 注力事業
+  capitalStructure?: string; // 資本構成（JSON文字列またはテーブルデータ）
+  capitalStructureDiagram?: string; // 資本構成Mermaid図
   createdAt?: string;
   updatedAt?: string;
 }
