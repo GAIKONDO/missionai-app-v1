@@ -28,16 +28,21 @@ async function apiRequest<T>(
     ? endpoint 
     : `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
   
-  console.log(`🔍 [apiRequest] リクエストURL: ${url}`);
-  
   try {
+    // タイムアウトを1秒に設定（Rust APIが応答しない場合はすぐにTauriコマンドにフォールバック）
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 1000);
+    
     const response = await fetch(url, {
       ...options,
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         ...options?.headers,
       },
     });
+    
+    clearTimeout(timeoutId);
     
     if (!response.ok) {
       const errorData: ApiError = await response.json().catch(() => ({
@@ -49,9 +54,22 @@ async function apiRequest<T>(
     return response.json();
   } catch (error) {
     if (error instanceof Error) {
+      // AbortErrorの場合はタイムアウト（ログを抑制）
+      if (error.name === 'AbortError' || error.message.includes('aborted')) {
+        // タイムアウトログを抑制（大量に出力されるため）
+        throw new Error('API request timeout');
+      }
+      // CORSエラーやアクセス制御エラーの場合は、エラーログを抑制して再スロー
+      const errorMessage = error.message || String(error);
+      if (errorMessage.includes('access control checks') ||
+          errorMessage.includes('CORS') ||
+          errorMessage.includes('Failed to fetch')) {
+        // CORSエラーはフォールバック処理に進むため、エラーログを抑制
+        throw error;
+      }
       // ネットワークエラーの場合は詳細をログに出力
       if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-        console.error(`❌ [apiRequest] ネットワークエラー: ${url}`, error);
+        console.warn(`❌ [apiRequest] ネットワークエラー: ${url}`, error);
       }
       throw error;
     }

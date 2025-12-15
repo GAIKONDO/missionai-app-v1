@@ -9,6 +9,81 @@ import ContainerEditModal from './ContainerEditModal';
 import { updateCauseEffectDiagramWithMeetingNote, updateCauseEffectDiagramWithText } from '@/lib/causeEffectDiagramUpdate';
 import { saveFocusInitiative, getFocusInitiativeByCauseEffectDiagramId } from '@/lib/orgApi';
 import { getKnowledgeGraphContext } from '@/lib/knowledgeGraphRAG';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+
+// ReactMarkdown用の共通コンポーネント設定（リンクを新しいタブで開くように）
+const markdownComponents = {
+  a: ({ node, ...props }: any) => (
+    <a
+      {...props}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{ color: '#60A5FA', textDecoration: 'underline' }}
+    />
+  ),
+  p: ({ node, ...props }: any) => (
+    <p {...props} style={{ margin: '0 0 8px 0' }} />
+  ),
+  h1: ({ node, ...props }: any) => (
+    <h1 {...props} style={{ fontSize: '20px', fontWeight: 600, margin: '16px 0 8px 0' }} />
+  ),
+  h2: ({ node, ...props }: any) => (
+    <h2 {...props} style={{ fontSize: '18px', fontWeight: 600, margin: '14px 0 8px 0' }} />
+  ),
+  h3: ({ node, ...props }: any) => (
+    <h3 {...props} style={{ fontSize: '16px', fontWeight: 600, margin: '12px 0 6px 0' }} />
+  ),
+  ul: ({ node, ...props }: any) => (
+    <ul {...props} style={{ margin: '8px 0', paddingLeft: '20px' }} />
+  ),
+  ol: ({ node, ...props }: any) => (
+    <ol {...props} style={{ margin: '8px 0', paddingLeft: '20px' }} />
+  ),
+  li: ({ node, ...props }: any) => (
+    <li {...props} style={{ margin: '4px 0' }} />
+  ),
+  code: ({ node, inline, ...props }: any) => (
+    <code
+      {...props}
+      style={{
+        backgroundColor: inline ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.05)',
+        padding: inline ? '2px 6px' : '12px',
+        borderRadius: '4px',
+        fontSize: '13px',
+        fontFamily: 'monospace',
+        display: inline ? 'inline' : 'block',
+        overflowX: 'auto',
+      }}
+    />
+  ),
+  pre: ({ node, ...props }: any) => (
+    <pre {...props} style={{ margin: '8px 0', overflowX: 'auto' }} />
+  ),
+  blockquote: ({ node, ...props }: any) => (
+    <blockquote
+      {...props}
+      style={{
+        borderLeft: '3px solid rgba(255, 255, 255, 0.3)',
+        paddingLeft: '12px',
+        margin: '8px 0',
+        color: 'rgba(255, 255, 255, 0.8)',
+      }}
+    />
+  ),
+  hr: ({ node, ...props }: any) => (
+    <hr {...props} style={{ border: 'none', borderTop: '1px solid rgba(255, 255, 255, 0.1)', margin: '16px 0' }} />
+  ),
+  table: ({ node, ...props }: any) => (
+    <table {...props} style={{ borderCollapse: 'collapse', width: '100%', margin: '8px 0' }} />
+  ),
+  th: ({ node, ...props }: any) => (
+    <th {...props} style={{ border: '1px solid rgba(255, 255, 255, 0.2)', padding: '8px', textAlign: 'left' }} />
+  ),
+  td: ({ node, ...props }: any) => (
+    <td {...props} style={{ border: '1px solid rgba(255, 255, 255, 0.2)', padding: '8px' }} />
+  ),
+};
 
 interface Message {
   id: string;
@@ -49,6 +124,68 @@ export default function AIAssistantPanel({ isOpen, onClose, initialQuery }: AIAs
   const modelSelectorRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
   const params = useParams();
+  
+  // パネル幅の状態管理（localStorageから読み込み、デフォルトは480px）
+  const [panelWidth, setPanelWidth] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('aiAssistantPanelWidth');
+      return saved ? parseInt(saved, 10) : 480;
+    }
+    return 480;
+  });
+  
+  // リサイズ関連の状態
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeStartXRef = useRef<number>(0);
+  const resizeStartWidthRef = useRef<number>(480);
+  
+  // パネル幅をlocalStorageに保存
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('aiAssistantPanelWidth', panelWidth.toString());
+      // カスタムイベントを発火してLayout.tsxに通知
+      window.dispatchEvent(new CustomEvent('aiAssistantWidthChanged', { detail: panelWidth }));
+    }
+  }, [panelWidth]);
+  
+  // リサイズ開始
+  const handleResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+    resizeStartXRef.current = e.clientX;
+    resizeStartWidthRef.current = panelWidth;
+  };
+  
+  // リサイズ中
+  useEffect(() => {
+    if (!isResizing) return;
+    
+    // リサイズ中はカーソルを変更
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      const deltaX = resizeStartXRef.current - e.clientX; // 右から左にドラッグするので反転
+      const newWidth = Math.max(320, Math.min(1200, resizeStartWidthRef.current + deltaX)); // 最小320px、最大1200px
+      setPanelWidth(newWidth);
+    };
+    
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizing]);
   
   // 初期クエリが設定されたときに、入力フィールドに設定
   useEffect(() => {
@@ -984,8 +1121,6 @@ APIキーは https://platform.openai.com/api-keys で取得できます。`);
     // Enterキー単独では送信しない（改行のみ）
   };
 
-  const panelWidth = 480; // Cursor風の幅
-
   return (
     <>
       {/* オーバーレイ */}
@@ -1009,6 +1144,7 @@ APIキーは https://platform.openai.com/api-keys で取得できます。`);
 
       {/* AIアシスタントパネル */}
       <div
+        className="ai-assistant-panel"
         style={{
           position: 'fixed',
           top: 0,
@@ -1020,10 +1156,63 @@ APIキーは https://platform.openai.com/api-keys で取得できます。`);
           zIndex: 1000,
           display: 'flex',
           flexDirection: 'column',
-          transition: 'right 0.3s ease',
+          transition: isResizing ? 'none' : 'right 0.3s ease, width 0.3s ease',
           boxShadow: isOpen ? '-4px 0 24px rgba(0, 0, 0, 0.5)' : 'none',
         }}
       >
+        {/* リサイズハンドル */}
+        <div
+          onMouseDown={handleResizeStart}
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: '6px',
+            cursor: 'ew-resize',
+            backgroundColor: isResizing ? 'rgba(59, 130, 246, 0.6)' : 'transparent',
+            zIndex: 1001,
+            transition: isResizing ? 'none' : 'background-color 0.2s ease',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          onMouseEnter={(e) => {
+            if (!isResizing) {
+              e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 0.3)';
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!isResizing) {
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }
+          }}
+          title="ドラッグして幅を調整"
+        >
+          {/* リサイズハンドルの視覚的なインジケーター（3つのドット） */}
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px',
+              alignItems: 'center',
+              opacity: isResizing ? 1 : 0.5,
+              transition: 'opacity 0.2s ease',
+            }}
+          >
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                style={{
+                  width: '3px',
+                  height: '3px',
+                  backgroundColor: 'rgba(255, 255, 255, 0.6)',
+                  borderRadius: '50%',
+                }}
+              />
+            ))}
+          </div>
+        </div>
         {/* ヘッダー */}
         <div
           style={{
@@ -1273,12 +1462,20 @@ APIキーは https://platform.openai.com/api-keys で取得できます。`);
                     </button>
                   )}
                   <div
+                    className="markdown-content"
                     style={{
-                      whiteSpace: 'pre-wrap',
                       wordBreak: 'break-word',
                     }}
                   >
-                    {message.content}
+                    {message.role === 'assistant' ? (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                        {message.content}
+                      </ReactMarkdown>
+                    ) : (
+                      <div style={{ whiteSpace: 'pre-wrap' }}>
+                        {message.content}
+                      </div>
+                    )}
                   </div>
                   
                   {/* フィードバックボタン（アシスタントメッセージのみ） */}
@@ -1794,6 +1991,67 @@ APIキーは https://platform.openai.com/api-keys で取得できます。`);
           50% {
             opacity: 0.3;
           }
+        }
+      `}</style>
+
+      {/* AIアシスタントパネル内のマークダウンコンテンツ用スタイル（暗い背景用） */}
+      <style jsx global>{`
+        .ai-assistant-panel .markdown-content {
+          color: #ffffff;
+          line-height: 1.6;
+        }
+        .ai-assistant-panel .markdown-content h1,
+        .ai-assistant-panel .markdown-content h2,
+        .ai-assistant-panel .markdown-content h3,
+        .ai-assistant-panel .markdown-content h4,
+        .ai-assistant-panel .markdown-content h5,
+        .ai-assistant-panel .markdown-content h6 {
+          color: #ffffff;
+          border-bottom-color: rgba(255, 255, 255, 0.2);
+        }
+        .ai-assistant-panel .markdown-content p {
+          color: rgba(255, 255, 255, 0.9);
+        }
+        .ai-assistant-panel .markdown-content code {
+          background-color: rgba(255, 255, 255, 0.1);
+          color: #60A5FA;
+        }
+        .ai-assistant-panel .markdown-content pre {
+          background-color: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .ai-assistant-panel .markdown-content pre code {
+          background-color: transparent;
+          color: rgba(255, 255, 255, 0.9);
+        }
+        .ai-assistant-panel .markdown-content blockquote {
+          border-left-color: rgba(255, 255, 255, 0.3);
+          color: rgba(255, 255, 255, 0.8);
+        }
+        .ai-assistant-panel .markdown-content table {
+          border-color: rgba(255, 255, 255, 0.2);
+        }
+        .ai-assistant-panel .markdown-content th {
+          background-color: rgba(255, 255, 255, 0.05);
+          border-color: rgba(255, 255, 255, 0.2);
+          color: #ffffff;
+        }
+        .ai-assistant-panel .markdown-content td {
+          border-color: rgba(255, 255, 255, 0.2);
+          color: rgba(255, 255, 255, 0.9);
+        }
+        .ai-assistant-panel .markdown-content strong {
+          color: #ffffff;
+        }
+        .ai-assistant-panel .markdown-content hr {
+          border-top-color: rgba(255, 255, 255, 0.1);
+        }
+        .ai-assistant-panel .markdown-content ul,
+        .ai-assistant-panel .markdown-content ol {
+          color: rgba(255, 255, 255, 0.9);
+        }
+        .ai-assistant-panel .markdown-content li {
+          color: rgba(255, 255, 255, 0.9);
         }
       `}</style>
 

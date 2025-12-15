@@ -423,7 +423,9 @@ export default function OrganizationPage() {
         }
         
         // データベースから組織データを取得（メンバー情報も含む）
+        console.log('📖 [組織ページ] 組織データの取得を開始');
         const data = await getOrgTreeFromDb();
+        console.log('📖 [組織ページ] 組織データの取得完了:', data ? '成功' : 'データなし');
         
         if (data) {
           setOrgData(data);

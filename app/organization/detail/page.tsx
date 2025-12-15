@@ -23,6 +23,8 @@ function OrganizationDetailPageContent() {
   const [organization, setOrganization] = useState<OrgNodeData | null>(null);
   const [organizationContent, setOrganizationContent] = useState<OrganizationContent | null>(null);
   const [focusInitiatives, setFocusInitiatives] = useState<FocusInitiative[]>([]);
+  const [initiativesByOrg, setInitiativesByOrg] = useState<Map<string, { orgName: string; initiatives: FocusInitiative[] }>>(new Map()); // 組織ごとの注力施策
+  const [expandedOrgIds, setExpandedOrgIds] = useState<Set<string>>(new Set()); // 開いている子組織のID
   const [meetingNotes, setMeetingNotes] = useState<MeetingNote[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [activeTab, setActiveTab] = useState<TabType>(tabParam || 'introduction');
@@ -54,6 +56,122 @@ function OrganizationDetailPageContent() {
   const [editingMeetingNoteTitle, setEditingMeetingNoteTitle] = useState('');
   const [showDeleteMeetingNoteConfirmModal, setShowDeleteMeetingNoteConfirmModal] = useState(false);
   const [deleteTargetMeetingNoteId, setDeleteTargetMeetingNoteId] = useState<string | null>(null);
+
+  // 注力施策を再取得して状態を更新する共通関数
+  const reloadInitiatives = async (orgId: string, orgTree: OrgNodeData | null) => {
+    try {
+      // 現在の組織の注力施策を取得
+      const currentInitiatives = await getFocusInitiatives(orgId);
+      
+      // 子組織のIDを収集
+      const childOrgIds: string[] = [];
+      const collectChildOrgIds = (org: OrgNodeData) => {
+        if (org.children) {
+          for (const child of org.children) {
+            if (child.id) {
+              childOrgIds.push(child.id);
+            }
+            collectChildOrgIds(child); // 再帰的に子組織を収集
+          }
+        }
+      };
+      
+      if (orgTree) {
+        const findOrg = (node: OrgNodeData): OrgNodeData | null => {
+          if (node.id === orgId) return node;
+          if (node.children) {
+            for (const child of node.children) {
+              const found = findOrg(child);
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+        const foundOrg = findOrg(orgTree);
+        if (foundOrg) {
+          collectChildOrgIds(foundOrg);
+        }
+      }
+      
+      // 子組織の注力施策を取得
+      const childInitiatives: FocusInitiative[] = [];
+      for (const childOrgId of childOrgIds) {
+        try {
+          const childInitiativesData = await getFocusInitiatives(childOrgId);
+          childInitiatives.push(...childInitiativesData);
+        } catch (error) {
+          console.warn(`⚠️ [reloadInitiatives] 子組織 ${childOrgId} の注力施策取得に失敗:`, error);
+        }
+      }
+      
+      // すべての注力施策を設定
+      const allInitiatives = [...currentInitiatives, ...childInitiatives];
+      setFocusInitiatives(allInitiatives);
+      
+      // 組織ごとにグループ化
+      const initiativesByOrgMap = new Map<string, { orgName: string; initiatives: FocusInitiative[] }>();
+      
+      // 現在の組織の注力施策
+      if (currentInitiatives.length > 0 || orgId === organizationId) {
+        const findOrgName = (org: OrgNodeData, targetId: string): string | null => {
+          if (org.id === targetId) {
+            return org.name || org.title || targetId;
+          }
+          if (org.children) {
+            for (const child of org.children) {
+              const found = findOrgName(child, targetId);
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+        
+        const orgName = orgTree ? findOrgName(orgTree, orgId) : null;
+        initiativesByOrgMap.set(orgId, {
+          orgName: orgName || orgId,
+          initiatives: currentInitiatives,
+        });
+      }
+      
+      // 子組織の注力施策
+      for (const childOrgId of childOrgIds) {
+        const childInitiativesForOrg = childInitiatives.filter(init => init.organizationId === childOrgId);
+        if (childInitiativesForOrg.length > 0) {
+          // 組織名を取得
+          const findOrgName = (org: OrgNodeData, targetId: string): string | null => {
+            if (org.id === targetId) {
+              return org.name || org.title || targetId;
+            }
+            if (org.children) {
+              for (const child of org.children) {
+                const found = findOrgName(child, targetId);
+                if (found) return found;
+              }
+            }
+            return null;
+          };
+          
+          const orgName = orgTree ? findOrgName(orgTree, childOrgId) : null;
+          initiativesByOrgMap.set(childOrgId, {
+            orgName: orgName || childOrgId,
+            initiatives: childInitiativesForOrg,
+          });
+        }
+      }
+      
+      setInitiativesByOrg(initiativesByOrgMap);
+      
+      console.log('📋 [reloadInitiatives] 注力施策を再取得しました:', {
+        currentOrg: orgId,
+        currentCount: currentInitiatives.length,
+        childOrgs: childOrgIds,
+        childCount: childInitiatives.length,
+        totalCount: allInitiatives.length,
+      });
+    } catch (error: any) {
+      console.error('❌ [reloadInitiatives] 注力施策の再取得に失敗しました:', error);
+    }
+  };
 
   useEffect(() => {
     console.log('🚀 [useEffect] loadOrganizationData開始:', { organizationId });
@@ -265,8 +383,94 @@ function OrganizationDetailPageContent() {
             }
             
             try {
-              const initiatives = await getFocusInitiatives(validOrganizationId);
-              setFocusInitiatives(initiatives);
+              // 現在の組織の注力施策を取得
+              const currentInitiatives = await getFocusInitiatives(validOrganizationId);
+              
+              // 子組織のIDを収集
+              const childOrgIds: string[] = [];
+              const collectChildOrgIds = (org: OrgNodeData) => {
+                if (org.children) {
+                  for (const child of org.children) {
+                    if (child.id) {
+                      childOrgIds.push(child.id);
+                    }
+                    collectChildOrgIds(child); // 再帰的に子組織を収集
+                  }
+                }
+              };
+              
+              if (updatedOrg) {
+                collectChildOrgIds(updatedOrg);
+              }
+              
+              console.log('📋 [loadOrganizationData] 子組織ID:', childOrgIds);
+              
+              // 子組織の注力施策を取得
+              const childInitiatives: FocusInitiative[] = [];
+              for (const childOrgId of childOrgIds) {
+                try {
+                  const childInitiativesData = await getFocusInitiatives(childOrgId);
+                  childInitiatives.push(...childInitiativesData);
+                } catch (error) {
+                  console.warn(`⚠️ [loadOrganizationData] 子組織 ${childOrgId} の注力施策取得に失敗:`, error);
+                }
+              }
+              
+              // すべての注力施策を設定
+              const allInitiatives = [...currentInitiatives, ...childInitiatives];
+              setFocusInitiatives(allInitiatives);
+              
+              // 組織ごとにグループ化
+              const initiativesByOrgMap = new Map<string, { orgName: string; initiatives: FocusInitiative[] }>();
+              
+              // 現在の組織の注力施策
+              if (currentInitiatives.length > 0) {
+                initiativesByOrgMap.set(validOrganizationId, {
+                  orgName: updatedOrg?.name || updatedOrg?.title || validOrganizationId,
+                  initiatives: currentInitiatives,
+                });
+              }
+              
+              // 子組織の注力施策
+              for (const childOrgId of childOrgIds) {
+                const childInitiativesForOrg = childInitiatives.filter(init => init.organizationId === childOrgId);
+                if (childInitiativesForOrg.length > 0) {
+                  // 組織名を取得
+                  const findOrgName = (org: OrgNodeData, targetId: string): string | null => {
+                    if (org.id === targetId) {
+                      return org.name || org.title || targetId;
+                    }
+                    if (org.children) {
+                      for (const child of org.children) {
+                        const found = findOrgName(child, targetId);
+                        if (found) return found;
+                      }
+                    }
+                    return null;
+                  };
+                  
+                  const orgName = updatedOrg ? findOrgName(updatedOrg, childOrgId) : null;
+                  initiativesByOrgMap.set(childOrgId, {
+                    orgName: orgName || childOrgId,
+                    initiatives: childInitiativesForOrg,
+                  });
+                }
+              }
+              
+              setInitiativesByOrg(initiativesByOrgMap);
+              
+              console.log('📋 [loadOrganizationData] 組織ごとの注力施策:', {
+                currentOrg: validOrganizationId,
+                currentCount: currentInitiatives.length,
+                childOrgs: childOrgIds,
+                childCount: childInitiatives.length,
+                totalCount: allInitiatives.length,
+                byOrg: Array.from(initiativesByOrgMap.entries()).map(([orgId, data]) => ({
+                  orgId,
+                  orgName: data.orgName,
+                  count: data.initiatives.length,
+                })),
+              });
             } catch (initError: any) {
               console.warn('注力施策の取得に失敗しました:', initError);
             }
@@ -488,10 +692,9 @@ function OrganizationDetailPageContent() {
       
       console.log('✅ 注力施策を追加しました。ID:', initiativeId);
       
-      // リストを再取得
-      const initiatives = await getFocusInitiatives(validOrgId);
-      console.log('📋 再取得した注力施策リスト:', initiatives);
-      setFocusInitiatives(initiatives);
+      // 組織ツリーを取得してから再取得
+      const orgTree = await getOrgTreeFromDb();
+      await reloadInitiatives(validOrgId, orgTree);
       
       // モーダルを閉じてフォームをリセット
       setShowAddInitiativeModal(false);
@@ -540,8 +743,8 @@ function OrganizationDetailPageContent() {
       });
 
       const validOrgId = organization?.id || organizationId;
-      const initiatives = await getFocusInitiatives(validOrgId);
-      setFocusInitiatives(initiatives);
+      const orgTree = await getOrgTreeFromDb();
+      await reloadInitiatives(validOrgId, orgTree);
       setEditingInitiativeId(null);
       setEditingTitle('');
       
@@ -578,8 +781,8 @@ function OrganizationDetailPageContent() {
       await deleteFocusInitiative(initiativeId);
       
       const validOrgId = organization?.id || organizationId;
-      const initiatives = await getFocusInitiatives(validOrgId);
-      setFocusInitiatives(initiatives);
+      const orgTree = await getOrgTreeFromDb();
+      await reloadInitiatives(validOrgId, orgTree);
       
       await tauriAlert('注力施策を削除しました');
     } catch (error: any) {
@@ -1110,201 +1313,373 @@ function OrganizationDetailPageContent() {
               <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--color-text)', margin: 0 }}>
                 注力施策 ({focusInitiatives.length}件)
               </h3>
-              <button
-                onClick={handleOpenAddInitiativeModal}
-                style={{
-                  padding: '8px 16px',
-                  backgroundColor: '#10B981',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = '#059669';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = '#10B981';
-                }}
-              >
-                + 追加
-              </button>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                {initiativesByOrg.size > 1 && (
+                  <button
+                    onClick={() => {
+                      const childOrgIds = Array.from(initiativesByOrg.keys()).filter(id => id !== organizationId);
+                      const allExpanded = childOrgIds.length > 0 && childOrgIds.every(id => expandedOrgIds.has(id));
+                      
+                      if (allExpanded) {
+                        // すべて閉じる
+                        setExpandedOrgIds(new Set());
+                      } else {
+                        // すべて開く
+                        setExpandedOrgIds(new Set(childOrgIds));
+                      }
+                    }}
+                    style={{
+                      padding: '8px 16px',
+                      backgroundColor: '#6B7280',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = '#4B5563';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = '#6B7280';
+                    }}
+                  >
+                    {(() => {
+                      const childOrgIds = Array.from(initiativesByOrg.keys()).filter(id => id !== organizationId);
+                      const allExpanded = childOrgIds.length > 0 && childOrgIds.every(id => expandedOrgIds.has(id));
+                      return allExpanded ? (
+                        <>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="18 15 12 9 6 15" />
+                          </svg>
+                          すべて閉じる
+                        </>
+                      ) : (
+                        <>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="6 9 12 15 18 9" />
+                          </svg>
+                          すべて開く
+                        </>
+                      );
+                    })()}
+                  </button>
+                )}
+                <button
+                  onClick={handleOpenAddInitiativeModal}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#10B981',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#059669';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = '#10B981';
+                  }}
+                >
+                  + 追加
+                </button>
+              </div>
             </div>
             {focusInitiatives.length === 0 ? (
               <p style={{ color: 'var(--color-text-light)', padding: '20px', textAlign: 'center' }}>
                 注力施策が登録されていません
               </p>
             ) : (
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-                  gap: '16px',
-                }}
-              >
-                {focusInitiatives.map((initiative) => (
-                  <div
-                    key={initiative.id}
-                    style={{
-                      padding: '16px',
-                      backgroundColor: '#ffffff',
-                      border: '1px solid #E5E7EB',
-                      borderRadius: '8px',
-                      transition: 'all 0.2s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (editingInitiativeId !== initiative.id) {
-                        e.currentTarget.style.backgroundColor = '#F9FAFB';
-                        e.currentTarget.style.borderColor = '#3B82F6';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (editingInitiativeId !== initiative.id) {
-                        e.currentTarget.style.backgroundColor = '#ffffff';
-                        e.currentTarget.style.borderColor = '#E5E7EB';
-                      }
-                    }}
-                  >
-                    {editingInitiativeId === initiative.id ? (
-                      // 編集モード
-                      <div>
-                        <input
-                          type="text"
-                          value={editingTitle}
-                          onChange={(e) => setEditingTitle(e.target.value)}
-                          autoFocus
-                          disabled={savingInitiative}
-                          style={{
-                            width: '100%',
-                            padding: '8px 12px',
-                            border: '2px solid #3B82F6',
-                            borderRadius: '6px',
-                            fontSize: '16px',
-                            fontWeight: 600,
-                            marginBottom: '8px',
-                            backgroundColor: savingInitiative ? '#F3F4F6' : '#FFFFFF',
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              handleSaveEdit(initiative.id);
-                            } else if (e.key === 'Escape') {
-                              handleCancelEdit();
-                            }
-                          }}
-                        />
-                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                {Array.from(initiativesByOrg.entries()).map(([orgId, orgData]) => {
+                  const isCurrentOrg = orgId === organizationId;
+                  const isExpanded = isCurrentOrg || expandedOrgIds.has(orgId);
+                  
+                  return (
+                    <div key={orgId} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      <div style={{ 
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        marginBottom: '8px',
+                        paddingBottom: '8px',
+                        borderBottom: '1px solid #E5E7EB',
+                      }}>
+                        <h4 style={{ 
+                          fontSize: '14px', 
+                          fontWeight: 600, 
+                          color: '#6B7280',
+                          margin: 0,
+                        }}>
+                          {orgData.orgName} ({orgData.initiatives.length}件)
+                        </h4>
+                        {!isCurrentOrg && (
                           <button
-                            onClick={handleCancelEdit}
-                            disabled={savingInitiative}
-                            style={{
-                              padding: '6px 12px',
-                              backgroundColor: '#6B7280',
-                              color: 'white',
-                              border: 'none',
-                              borderRadius: '4px',
-                              cursor: savingInitiative ? 'not-allowed' : 'pointer',
-                              fontSize: '12px',
-                            }}
-                          >
-                            キャンセル
-                          </button>
-                          <button
-                            onClick={() => handleSaveEdit(initiative.id)}
-                            disabled={savingInitiative || !editingTitle.trim()}
-                            style={{
-                              padding: '6px 12px',
-                              backgroundColor: savingInitiative || !editingTitle.trim() ? '#9CA3AF' : '#10B981',
-                              color: 'white',
-                              border: 'none',
-                              borderRadius: '4px',
-                              cursor: savingInitiative || !editingTitle.trim() ? 'not-allowed' : 'pointer',
-                              fontSize: '12px',
-                            }}
-                          >
-                            {savingInitiative ? '保存中...' : '保存'}
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      // 表示モード
-                      <>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                          <h4 
                             onClick={() => {
-                              if (organizationId && initiative.id) {
-                                router.push(`/organization/initiative?organizationId=${organizationId}&initiativeId=${initiative.id}`);
+                              const newExpanded = new Set(expandedOrgIds);
+                              if (isExpanded) {
+                                newExpanded.delete(orgId);
+                              } else {
+                                newExpanded.add(orgId);
                               }
+                              setExpandedOrgIds(newExpanded);
                             }}
-                            style={{ 
-                              fontSize: '16px', 
-                              fontWeight: 600, 
-                              color: 'var(--color-text)',
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              width: '24px',
+                              height: '24px',
+                              padding: 0,
+                              backgroundColor: 'transparent',
+                              border: 'none',
                               cursor: 'pointer',
-                              flex: 1,
+                              color: '#6B7280',
+                              transition: 'transform 0.2s ease',
+                              transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.color = '#374151';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.color = '#6B7280';
                             }}
                           >
-                            {initiative.title}
-                          </h4>
-                          <div style={{ display: 'flex', gap: '4px', marginLeft: '8px' }}>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleStartEdit(initiative);
-                              }}
-                              disabled={savingInitiative}
-                              style={{
-                                padding: '4px 8px',
-                                backgroundColor: '#3B82F6',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: savingInitiative ? 'not-allowed' : 'pointer',
-                                fontSize: '12px',
-                              }}
-                              title="編集"
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
                             >
-                              ✏️
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteInitiative(initiative.id);
-                              }}
-                              disabled={savingInitiative}
+                              <polyline points="9 18 15 12 9 6" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                      {isExpanded && (
+                        <div
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+                            gap: '16px',
+                          }}
+                        >
+                          {orgData.initiatives.map((initiative) => (
+                            <div
+                              key={initiative.id}
                               style={{
-                                padding: '4px 8px',
-                                backgroundColor: '#EF4444',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: savingInitiative ? 'not-allowed' : 'pointer',
-                                fontSize: '12px',
+                                padding: '16px',
+                                backgroundColor: '#ffffff',
+                                border: '1px solid #E5E7EB',
+                                borderRadius: '8px',
+                                transition: 'all 0.2s ease',
                               }}
-                              title="削除"
+                              onMouseEnter={(e) => {
+                                if (editingInitiativeId !== initiative.id) {
+                                  e.currentTarget.style.backgroundColor = '#F9FAFB';
+                                  e.currentTarget.style.borderColor = '#3B82F6';
+                                }
+                              }}
+                              onMouseLeave={(e) => {
+                                if (editingInitiativeId !== initiative.id) {
+                                  e.currentTarget.style.backgroundColor = '#ffffff';
+                                  e.currentTarget.style.borderColor = '#E5E7EB';
+                                }
+                              }}
                             >
-                              🗑️
-                            </button>
-                          </div>
+                          {editingInitiativeId === initiative.id ? (
+                            // 編集モード
+                            <div>
+                              <input
+                                type="text"
+                                value={editingTitle}
+                                onChange={(e) => setEditingTitle(e.target.value)}
+                                autoFocus
+                                disabled={savingInitiative}
+                                style={{
+                                  width: '100%',
+                                  padding: '8px 12px',
+                                  border: '2px solid #3B82F6',
+                                  borderRadius: '6px',
+                                  fontSize: '16px',
+                                  fontWeight: 600,
+                                  marginBottom: '8px',
+                                  backgroundColor: savingInitiative ? '#F3F4F6' : '#FFFFFF',
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    handleSaveEdit(initiative.id);
+                                  } else if (e.key === 'Escape') {
+                                    handleCancelEdit();
+                                  }
+                                }}
+                              />
+                              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                <button
+                                  onClick={handleCancelEdit}
+                                  disabled={savingInitiative}
+                                  style={{
+                                    padding: '6px 12px',
+                                    backgroundColor: '#6B7280',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    cursor: savingInitiative ? 'not-allowed' : 'pointer',
+                                    fontSize: '12px',
+                                  }}
+                                >
+                                  キャンセル
+                                </button>
+                                <button
+                                  onClick={() => handleSaveEdit(initiative.id)}
+                                  disabled={savingInitiative || !editingTitle.trim()}
+                                  style={{
+                                    padding: '6px 12px',
+                                    backgroundColor: savingInitiative || !editingTitle.trim() ? '#9CA3AF' : '#10B981',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    cursor: savingInitiative || !editingTitle.trim() ? 'not-allowed' : 'pointer',
+                                    fontSize: '12px',
+                                  }}
+                                >
+                                  {savingInitiative ? '保存中...' : '保存'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            // 表示モード
+                            <>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                                <h4 
+                                  onClick={() => {
+                                    if (initiative.organizationId && initiative.id) {
+                                      router.push(`/organization/initiative?organizationId=${initiative.organizationId}&initiativeId=${initiative.id}`);
+                                    }
+                                  }}
+                                  style={{ 
+                                    fontSize: '16px', 
+                                    fontWeight: 600, 
+                                    color: 'var(--color-text)',
+                                    cursor: 'pointer',
+                                    flex: 1,
+                                  }}
+                                >
+                                  {initiative.title}
+                                </h4>
+                                <div style={{ display: 'flex', gap: '4px', marginLeft: '8px', alignItems: 'center' }}>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleStartEdit(initiative);
+                                    }}
+                                    disabled={savingInitiative}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      width: '28px',
+                                      height: '28px',
+                                      padding: 0,
+                                      backgroundColor: 'transparent',
+                                      color: '#6B7280',
+                                      border: 'none',
+                                      borderRadius: '6px',
+                                      cursor: savingInitiative ? 'not-allowed' : 'pointer',
+                                      opacity: 0.6,
+                                      transition: 'all 0.2s ease',
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      if (!savingInitiative) {
+                                        e.currentTarget.style.backgroundColor = 'rgba(107, 114, 128, 0.1)';
+                                        e.currentTarget.style.opacity = '1';
+                                        e.currentTarget.style.color = '#374151';
+                                      }
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      if (!savingInitiative) {
+                                        e.currentTarget.style.backgroundColor = 'transparent';
+                                        e.currentTarget.style.opacity = '0.6';
+                                        e.currentTarget.style.color = '#6B7280';
+                                      }
+                                    }}
+                                    title="編集"
+                                  >
+                                    <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" style={{ display: 'block' }}>
+                                      <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteInitiative(initiative.id);
+                                    }}
+                                    disabled={savingInitiative}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      width: '28px',
+                                      height: '28px',
+                                      padding: 0,
+                                      backgroundColor: 'transparent',
+                                      color: '#6B7280',
+                                      border: 'none',
+                                      borderRadius: '6px',
+                                      cursor: savingInitiative ? 'not-allowed' : 'pointer',
+                                      opacity: 0.6,
+                                      transition: 'all 0.2s ease',
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      if (!savingInitiative) {
+                                        e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+                                        e.currentTarget.style.opacity = '1';
+                                        e.currentTarget.style.color = '#DC2626';
+                                      }
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      if (!savingInitiative) {
+                                        e.currentTarget.style.backgroundColor = 'transparent';
+                                        e.currentTarget.style.opacity = '0.6';
+                                        e.currentTarget.style.color = '#6B7280';
+                                      }
+                                    }}
+                                    title="削除"
+                                  >
+                                    <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" style={{ display: 'block' }}>
+                                      <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                              {initiative.assignee && (
+                                <div style={{ fontSize: '12px', color: '#6B7280', marginTop: '8px' }}>
+                                  担当者: {initiative.assignee}
+                                </div>
+                              )}
+                            </>
+                          )}
+                            </div>
+                          ))}
                         </div>
-                        {initiative.description && (
-                          <p style={{ fontSize: '14px', color: 'var(--color-text-light)', marginBottom: '8px', lineHeight: '1.5' }}>
-                            {initiative.description}
-                          </p>
-                        )}
-                        {initiative.assignee && (
-                          <div style={{ fontSize: '12px', color: '#6B7280', marginTop: '8px' }}>
-                            担当者: {initiative.assignee}
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                ))}
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1766,7 +2141,7 @@ function OrganizationDetailPageContent() {
                           >
                             {note.title}
                           </h4>
-                          <div style={{ display: 'flex', gap: '4px', marginLeft: '8px' }} onClick={(e) => e.stopPropagation()}>
+                          <div style={{ display: 'flex', gap: '4px', marginLeft: '8px', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1774,17 +2149,39 @@ function OrganizationDetailPageContent() {
                               }}
                               disabled={savingMeetingNote}
                               style={{
-                                padding: '4px 8px',
-                                backgroundColor: '#3B82F6',
-                                color: 'white',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                width: '28px',
+                                height: '28px',
+                                padding: 0,
+                                backgroundColor: 'transparent',
+                                color: '#6B7280',
                                 border: 'none',
-                                borderRadius: '4px',
+                                borderRadius: '6px',
                                 cursor: savingMeetingNote ? 'not-allowed' : 'pointer',
-                                fontSize: '12px',
+                                opacity: 0.6,
+                                transition: 'all 0.2s ease',
+                              }}
+                              onMouseEnter={(e) => {
+                                if (!savingMeetingNote) {
+                                  e.currentTarget.style.backgroundColor = 'rgba(107, 114, 128, 0.1)';
+                                  e.currentTarget.style.opacity = '1';
+                                  e.currentTarget.style.color = '#374151';
+                                }
+                              }}
+                              onMouseLeave={(e) => {
+                                if (!savingMeetingNote) {
+                                  e.currentTarget.style.backgroundColor = 'transparent';
+                                  e.currentTarget.style.opacity = '0.6';
+                                  e.currentTarget.style.color = '#6B7280';
+                                }
                               }}
                               title="編集"
                             >
-                              ✏️
+                              <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" style={{ display: 'block' }}>
+                                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                              </svg>
                             </button>
                             <button
                               onClick={(e) => {
@@ -1793,17 +2190,39 @@ function OrganizationDetailPageContent() {
                               }}
                               disabled={savingMeetingNote}
                               style={{
-                                padding: '4px 8px',
-                                backgroundColor: '#EF4444',
-                                color: 'white',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                width: '28px',
+                                height: '28px',
+                                padding: 0,
+                                backgroundColor: 'transparent',
+                                color: '#6B7280',
                                 border: 'none',
-                                borderRadius: '4px',
+                                borderRadius: '6px',
                                 cursor: savingMeetingNote ? 'not-allowed' : 'pointer',
-                                fontSize: '12px',
+                                opacity: 0.6,
+                                transition: 'all 0.2s ease',
+                              }}
+                              onMouseEnter={(e) => {
+                                if (!savingMeetingNote) {
+                                  e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+                                  e.currentTarget.style.opacity = '1';
+                                  e.currentTarget.style.color = '#DC2626';
+                                }
+                              }}
+                              onMouseLeave={(e) => {
+                                if (!savingMeetingNote) {
+                                  e.currentTarget.style.backgroundColor = 'transparent';
+                                  e.currentTarget.style.opacity = '0.6';
+                                  e.currentTarget.style.color = '#6B7280';
+                                }
                               }}
                               title="削除"
                             >
-                              🗑️
+                              <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" style={{ display: 'block' }}>
+                                <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                              </svg>
                             </button>
                           </div>
                         </div>

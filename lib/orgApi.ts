@@ -804,7 +804,8 @@ export interface Theme {
  */
 export interface FocusInitiative {
   id: string;
-  organizationId: string;
+  organizationId?: string;
+  companyId?: string;
   title: string;
   description?: string;
   content?: string; // 詳細コンテンツ（マークダウン）
@@ -1116,6 +1117,8 @@ export async function getFocusInitiativeById(initiativeId: string): Promise<Focu
       console.log('📖 [getFocusInitiativeById] データ構造確認:', {
         hasData: !!data,
         dataKeys: data ? Object.keys(data) : [],
+        organizationId: data?.organizationId,
+        companyId: data?.companyId,
         topicIds: data?.topicIds,
         topicIdsType: typeof data?.topicIds,
         themeIds: data?.themeIds,
@@ -1140,11 +1143,12 @@ export async function getFocusInitiativeById(initiativeId: string): Promise<Focu
         return [];
       };
       
-      if (data && (data.id || data.title || data.organizationId)) {
+      if (data && (data.id || data.title || data.organizationId || data.companyId)) {
         // データをFocusInitiative形式に変換
         const initiative: FocusInitiative = {
           id: data.id || initiativeId,
-          organizationId: data.organizationId || '',
+          organizationId: data.organizationId !== null && data.organizationId !== undefined ? data.organizationId : undefined,
+          companyId: data.companyId !== null && data.companyId !== undefined ? data.companyId : undefined,
           title: data.title || '',
           description: data.description || '',
           content: data.content || '',
@@ -1173,6 +1177,8 @@ export async function getFocusInitiativeById(initiativeId: string): Promise<Focu
         console.log('📖 [getFocusInitiativeById] 変換後:', {
           id: initiative.id,
           title: initiative.title,
+          organizationId: initiative.organizationId,
+          companyId: initiative.companyId,
           assignee: initiative.assignee,
           description: initiative.description,
           contentLength: initiative.content?.length || 0,
@@ -1215,7 +1221,12 @@ export async function saveFocusInitiative(initiative: Partial<FocusInitiative>):
       hasId: !!initiative.id 
     });
     
-    // organizationIdがorganizationsテーブルに存在するか確認
+    // organizationIdまたはcompanyIdが指定されている必要がある
+    if (!initiative.organizationId && !initiative.companyId) {
+      throw new Error('organizationIdまたはcompanyIdが指定されていません');
+    }
+    
+    // organizationIdが指定されている場合、organizationsテーブルに存在するか確認
     if (initiative.organizationId) {
       try {
         const orgDocRef = doc(null, 'organizations', initiative.organizationId);
@@ -1232,8 +1243,27 @@ export async function saveFocusInitiative(initiative: Partial<FocusInitiative>):
         // その他のエラーは警告のみ（組織が存在しない可能性があるが、続行を試みる）
         console.warn('⚠️ [saveFocusInitiative] 組織IDの存在確認でエラー（続行します）:', errorMessage);
       }
-    } else {
-      throw new Error('organizationIdが指定されていません');
+    }
+    
+    // companyIdが指定されている場合、companiesテーブルに存在するか確認（Tauri環境の場合）
+    if (initiative.companyId && typeof window !== 'undefined' && '__TAURI__' in window) {
+      try {
+        const { callTauriCommand } = await import('./localFirebase');
+        const result = await callTauriCommand('doc_get', {
+          collectionName: 'companies',
+          docId: initiative.companyId,
+        });
+        if (!result || !(result as any).exists) {
+          throw new Error(`事業会社ID "${initiative.companyId}" がcompaniesテーブルに存在しません`);
+        }
+        console.log('✅ [saveFocusInitiative] 事業会社IDの存在確認成功:', initiative.companyId);
+      } catch (companyCheckError: any) {
+        const errorMessage = companyCheckError?.message || String(companyCheckError || '');
+        if (errorMessage.includes('存在しません') || errorMessage.includes('no rows')) {
+          throw new Error(`事業会社ID "${initiative.companyId}" がcompaniesテーブルに存在しません。`);
+        }
+        console.warn('⚠️ [saveFocusInitiative] 事業会社IDの存在確認でエラー（続行します）:', errorMessage);
+      }
     }
     
     const docRef = doc(null, 'focusInitiatives', initiativeId);
@@ -1286,7 +1316,8 @@ export async function saveFocusInitiative(initiative: Partial<FocusInitiative>):
     
     const data: any = {
       id: initiativeId,
-      organizationId: initiative.organizationId!,
+      organizationId: initiative.organizationId || null,
+      companyId: initiative.companyId || null,
       title: initiative.title || '',
       description: initiative.description || '',
       content: initiative.content || '',
@@ -1349,12 +1380,43 @@ export async function saveFocusInitiative(initiative: Partial<FocusInitiative>):
     });
     
     // setDocを呼び出す
-    await setDoc(docRef, data);
-    console.log('✅ [saveFocusInitiative] データベース保存成功:', initiativeId, { 
-      title: data.title,
-      topicIds: data.topicIds,
-      themeIds: data.themeIds,
-    });
+    // Tauri環境ではcallTauriCommandを使用
+    if (typeof window !== 'undefined' && '__TAURI__' in window) {
+      const { callTauriCommand } = await import('./localFirebase');
+      
+      // themeIdsとtopicIdsをJSON文字列に変換
+      const dataForDb: any = {
+        ...data,
+        themeIds: Array.isArray(data.themeIds) && data.themeIds.length > 0 ? JSON.stringify(data.themeIds) : null,
+        topicIds: Array.isArray(data.topicIds) && data.topicIds.length > 0 ? JSON.stringify(data.topicIds) : null,
+        method: Array.isArray(data.method) && data.method.length > 0 ? JSON.stringify(data.method) : null,
+        means: Array.isArray(data.means) && data.means.length > 0 ? JSON.stringify(data.means) : null,
+        relatedOrganizations: Array.isArray(data.relatedOrganizations) && data.relatedOrganizations.length > 0 ? JSON.stringify(data.relatedOrganizations) : null,
+        relatedGroupCompanies: Array.isArray(data.relatedGroupCompanies) && data.relatedGroupCompanies.length > 0 ? JSON.stringify(data.relatedGroupCompanies) : null,
+        methodDetails: data.methodDetails && Object.keys(data.methodDetails).length > 0 ? JSON.stringify(data.methodDetails) : null,
+      };
+      
+      await callTauriCommand('doc_set', {
+        collectionName: 'focusInitiatives',
+        docId: initiativeId,
+        data: dataForDb,
+      });
+      console.log('✅ [saveFocusInitiative] データベース保存成功（Tauri）:', initiativeId, {
+        title: data.title,
+        organizationId: data.organizationId,
+        companyId: data.companyId,
+        topicIds: data.topicIds,
+        themeIds: data.themeIds,
+      });
+    } else {
+      // フォールバック: Firestoreを使用
+      await setDoc(docRef, data);
+      console.log('✅ [saveFocusInitiative] データベース保存成功（Firestore）:', initiativeId, {
+        title: data.title,
+        topicIds: data.topicIds,
+        themeIds: data.themeIds,
+      });
+    }
     
     // 保存後に確認のため再取得
     try {
@@ -2257,6 +2319,58 @@ export async function getThemes(): Promise<Theme[]> {
   try {
     console.log('📖 [getThemes] 開始（SQLiteから取得）');
     
+    // Tauri環境では直接Tauriコマンドを使用（CORSエラーを回避）
+    if (typeof window !== 'undefined' && '__TAURI__' in window) {
+      const { callTauriCommand } = await import('./localFirebase');
+      
+      try {
+        const result = await callTauriCommand('collection_get', {
+          collectionName: 'themes',
+        });
+        
+        if (!result || !Array.isArray(result)) {
+          console.log('⚠️ [getThemes] 結果が配列ではありません:', result);
+          return [];
+        }
+        
+        const themes: Theme[] = result.map((item: any) => {
+          const themeData = item.data || item;
+          const themeId = item.id || themeData.id;
+          
+          // initiativeIdsをJSON文字列から配列に変換
+          let initiativeIds: string[] = [];
+          if (themeData.initiativeIds) {
+            if (typeof themeData.initiativeIds === 'string') {
+              try {
+                initiativeIds = JSON.parse(themeData.initiativeIds);
+              } catch (e) {
+                console.warn('⚠️ [getThemes] initiativeIdsのパースエラー:', e);
+                initiativeIds = [];
+              }
+            } else if (Array.isArray(themeData.initiativeIds)) {
+              initiativeIds = themeData.initiativeIds;
+            }
+          }
+          
+          return {
+            id: themeId,
+            title: themeData.title || '',
+            description: themeData.description || '',
+            initiativeIds: initiativeIds,
+            createdAt: themeData.createdAt,
+            updatedAt: themeData.updatedAt,
+          };
+        }).filter((theme: Theme) => theme.id && theme.title);
+        
+        console.log('✅ [getThemes] 取得成功（Tauriコマンド経由）:', themes.length, '件');
+        return themes;
+      } catch (error: any) {
+        console.error('❌ [getThemes] Tauriコマンドエラー:', error);
+        return [];
+      }
+    }
+    
+    // フォールバック: Rust API経由
     const { apiGet } = await import('./apiClient');
     
     try {
@@ -2347,6 +2461,35 @@ export async function saveTheme(theme: Partial<Theme>): Promise<string> {
       hasId: !!theme.id 
     });
     
+    // Tauri環境では直接Tauriコマンドを使用（CORSエラーを回避）
+    if (typeof window !== 'undefined' && '__TAURI__' in window) {
+      const { callTauriCommand } = await import('./localFirebase');
+      
+      const themeData: any = {
+        id: themeId,
+        title: theme.title || '',
+        description: theme.description || '',
+        initiativeIds: Array.isArray(theme.initiativeIds) ? theme.initiativeIds : (theme.initiativeIds ? [theme.initiativeIds].filter(Boolean) : []),
+        createdAt: theme.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      
+      // initiativeIdsをJSON文字列に変換
+      if (Array.isArray(themeData.initiativeIds)) {
+        themeData.initiativeIds = JSON.stringify(themeData.initiativeIds);
+      }
+      
+      await callTauriCommand('doc_set', {
+        collectionName: 'themes',
+        docId: themeId,
+        data: themeData,
+      });
+      
+      console.log('✅ [saveTheme] テーマを保存しました（Tauriコマンド経由）:', themeId);
+      return themeId;
+    }
+    
+    // フォールバック: Rust API経由
     const { apiPost, apiPut } = await import('./apiClient');
     
     const themeData: any = {
@@ -2382,6 +2525,20 @@ export async function deleteTheme(themeId: string): Promise<void> {
   try {
     console.log('🗑️ [deleteTheme] 開始（SQLiteから削除）:', { themeId });
     
+    // Tauri環境では直接Tauriコマンドを使用（CORSエラーを回避）
+    if (typeof window !== 'undefined' && '__TAURI__' in window) {
+      const { callTauriCommand } = await import('./localFirebase');
+      
+      await callTauriCommand('doc_delete', {
+        collectionName: 'themes',
+        docId: themeId,
+      });
+      
+      console.log('✅ [deleteTheme] テーマを削除しました（Tauriコマンド経由）:', themeId);
+      return;
+    }
+    
+    // フォールバック: Rust API経由
     const { apiDelete } = await import('./apiClient');
     
     await apiDelete(`/api/themes/${themeId}`);

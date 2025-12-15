@@ -450,7 +450,8 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS focusInitiatives (
                 id TEXT PRIMARY KEY,
-                organizationId TEXT NOT NULL,
+                organizationId TEXT,
+                companyId TEXT,
                 title TEXT NOT NULL,
                 description TEXT,
                 content TEXT,
@@ -458,7 +459,10 @@ impl Database {
                 topicIds TEXT,
                 createdAt TEXT,
                 updatedAt TEXT,
-                FOREIGN KEY (organizationId) REFERENCES organizations(id)
+                FOREIGN KEY (organizationId) REFERENCES organizations(id),
+                FOREIGN KEY (companyId) REFERENCES companies(id),
+                CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
+                       (organizationId IS NULL AND companyId IS NOT NULL))
             )",
             [],
         )?;
@@ -495,7 +499,8 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS meetingNotes (
                 id TEXT PRIMARY KEY,
-                organizationId TEXT NOT NULL,
+                organizationId TEXT,
+                companyId TEXT,
                 title TEXT NOT NULL,
                 description TEXT,
                 content TEXT,
@@ -504,7 +509,320 @@ impl Database {
                 lastChromaSyncAttempt TEXT,
                 createdAt TEXT,
                 updatedAt TEXT,
-                FOREIGN KEY (organizationId) REFERENCES organizations(id)
+                FOREIGN KEY (organizationId) REFERENCES organizations(id),
+                FOREIGN KEY (companyId) REFERENCES companies(id),
+                CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
+                       (organizationId IS NULL AND companyId IS NOT NULL))
+            )",
+            [],
+        )?;
+        
+        // meetingNotesテーブルのマイグレーション（organizationIdをNULL可能に）
+        // CREATE TABLE IF NOT EXISTSの後に実行することで、既存テーブルが古いスキーマの場合にマイグレーションを実行
+        init_log!("🔍 meetingNotesテーブルのマイグレーションを開始します...");
+        let meeting_notes_table_exists: bool = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='meetingNotes'",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(false);
+        
+        init_log!("📊 meetingNotesテーブルの存在確認: {}", meeting_notes_table_exists);
+        
+        if meeting_notes_table_exists {
+            // organizationIdカラムが存在するかどうかを確認
+            let org_id_exists: bool = conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('meetingNotes') WHERE name='organizationId'",
+                [],
+                |row| row.get::<_, i32>(0).map(|n| n > 0),
+            ).unwrap_or(false);
+            
+            init_log!("📊 meetingNotesテーブルのorganizationIdカラムの存在確認: {}", org_id_exists);
+            
+            if org_id_exists {
+                // organizationIdカラムがNOT NULLかどうかを確認
+                let org_id_not_null: bool = conn.query_row(
+                    "SELECT \"notnull\" FROM pragma_table_info('meetingNotes') WHERE name='organizationId'",
+                    [],
+                    |row| row.get::<_, i32>(0).map(|n| n != 0),
+                ).unwrap_or(false);
+                
+                init_log!("📊 meetingNotesテーブルのorganizationIdカラムのNOT NULL確認: {}", org_id_not_null);
+                
+                if org_id_not_null {
+                    init_log_always!("📝 meetingNotesテーブルを再作成します（organizationIdをNULL可能に）");
+                    
+                    // 外部キー制約を一時的に無効化（topicsテーブルがmeetingNotesを参照しているため）
+                    if let Err(e) = conn.execute("PRAGMA foreign_keys = OFF", []) {
+                        init_log_always!("❌ 外部キー制約の無効化に失敗しました: {}", e);
+                    } else {
+                        init_log!("✅ 外部キー制約を無効化しました");
+                        
+                        // 既存データをバックアップテーブルにコピー
+                        if let Err(e) = conn.execute("CREATE TABLE IF NOT EXISTS meetingNotes_backup AS SELECT * FROM meetingNotes", []) {
+                            init_log_always!("❌ バックアップテーブルの作成に失敗しました: {}", e);
+                        } else {
+                            init_log!("✅ バックアップテーブルを作成しました");
+                            
+                            // 古いテーブルを削除
+                            if let Err(e) = conn.execute("DROP TABLE meetingNotes", []) {
+                                init_log_always!("❌ 古いテーブルの削除に失敗しました: {}", e);
+                            } else {
+                                init_log!("✅ 古いテーブルを削除しました");
+                                
+                                // 新しいテーブルを作成（organizationIdをNULL可能に）
+                                if let Err(e) = conn.execute(
+                                    "CREATE TABLE meetingNotes (
+                                        id TEXT PRIMARY KEY,
+                                        organizationId TEXT,
+                                        companyId TEXT,
+                                        title TEXT NOT NULL,
+                                        description TEXT,
+                                        content TEXT,
+                                        chromaSynced INTEGER DEFAULT 0,
+                                        chromaSyncError TEXT,
+                                        lastChromaSyncAttempt TEXT,
+                                        createdAt TEXT,
+                                        updatedAt TEXT,
+                                        FOREIGN KEY (organizationId) REFERENCES organizations(id),
+                                        FOREIGN KEY (companyId) REFERENCES companies(id),
+                                        CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
+                                               (organizationId IS NULL AND companyId IS NOT NULL))
+                                    )",
+                                    [],
+                                ) {
+                                    init_log_always!("❌ 新しいテーブルの作成に失敗しました: {}", e);
+                                } else {
+                                    init_log!("✅ 新しいテーブルを作成しました");
+                                    
+                                    // バックアップテーブルからデータをコピー
+                                    let backup_has_company_id: bool = conn.query_row(
+                                        "SELECT COUNT(*) FROM pragma_table_info('meetingNotes_backup') WHERE name='companyId'",
+                                        [],
+                                        |row| row.get::<_, i32>(0).map(|n| n > 0),
+                                    ).unwrap_or(false);
+                                    
+                                    init_log!("📊 バックアップテーブルのcompanyIdカラムの存在確認: {}", backup_has_company_id);
+                                    
+                                    if backup_has_company_id {
+                                        if let Err(e) = conn.execute(
+                                            "INSERT INTO meetingNotes (id, organizationId, companyId, title, description, content, chromaSynced, chromaSyncError, lastChromaSyncAttempt, createdAt, updatedAt) 
+                                             SELECT id, organizationId, companyId, title, description, content, chromaSynced, chromaSyncError, lastChromaSyncAttempt, createdAt, updatedAt 
+                                             FROM meetingNotes_backup",
+                                            [],
+                                        ) {
+                                            init_log_always!("❌ データのコピーに失敗しました: {}", e);
+                                        } else {
+                                            init_log!("✅ データをコピーしました（companyIdあり）");
+                                        }
+                                    } else {
+                                        if let Err(e) = conn.execute(
+                                            "INSERT INTO meetingNotes (id, organizationId, companyId, title, description, content, chromaSynced, chromaSyncError, lastChromaSyncAttempt, createdAt, updatedAt) 
+                                             SELECT id, organizationId, NULL, title, description, content, chromaSynced, chromaSyncError, lastChromaSyncAttempt, createdAt, updatedAt 
+                                             FROM meetingNotes_backup",
+                                            [],
+                                        ) {
+                                            init_log_always!("❌ データのコピーに失敗しました: {}", e);
+                                        } else {
+                                            init_log!("✅ データをコピーしました（companyIdなし）");
+                                        }
+                                    }
+                                    
+                                    // バックアップテーブルを削除
+                                    let _ = conn.execute("DROP TABLE meetingNotes_backup", []);
+                                    
+                                    init_log_always!("✅ meetingNotesテーブルの再作成が完了しました");
+                                }
+                            }
+                            
+                            // 外部キー制約を再度有効化
+                            if let Err(e) = conn.execute("PRAGMA foreign_keys = ON", []) {
+                                init_log_always!("❌ 外部キー制約の再有効化に失敗しました: {}", e);
+                            } else {
+                                init_log!("✅ 外部キー制約を再有効化しました");
+                            }
+                        }
+                    }
+                } else {
+                    init_log!("ℹ️  meetingNotesテーブルのorganizationIdは既にNULL可能です");
+                }
+            } else {
+                init_log!("ℹ️  meetingNotesテーブルにorganizationIdカラムが存在しません（新規テーブルの可能性）");
+            }
+        }
+        
+        // meetingNotesテーブルにcompanyIdカラムを追加（既存のテーブル用）
+        let meeting_notes_columns_to_add = vec![("companyId", "TEXT")];
+        for (column_name, column_type) in meeting_notes_columns_to_add {
+            let column_exists: bool = conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('meetingNotes') WHERE name = ?1",
+                params![column_name],
+                |row| Ok(row.get::<_, i32>(0)? > 0),
+            ).unwrap_or(false);
+            
+            if !column_exists {
+                init_log!("📝 meetingNotesテーブルにカラムを追加: {}", column_name);
+                if let Err(e) = conn.execute(
+                    &format!("ALTER TABLE meetingNotes ADD COLUMN {} {}", column_name, column_type),
+                    [],
+                ) {
+                    init_log!("⚠️  カラム追加エラー（既に存在する可能性があります）: {} - {}", column_name, e);
+                }
+            } else {
+                init_log!("ℹ️  meetingNotesテーブルのカラム '{}' は既に存在します", column_name);
+            }
+        }
+        
+        // focusInitiativesテーブルにcompanyIdカラムを追加（既存のテーブル用）
+        let focus_initiatives_columns_to_add = vec![("companyId", "TEXT")];
+        for (column_name, column_type) in focus_initiatives_columns_to_add {
+            let column_exists: bool = conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('focusInitiatives') WHERE name = ?1",
+                params![column_name],
+                |row| Ok(row.get::<_, i32>(0)? > 0),
+            ).unwrap_or(false);
+            
+            if !column_exists {
+                init_log!("📝 focusInitiativesテーブルにカラムを追加: {}", column_name);
+                if let Err(e) = conn.execute(
+                    &format!("ALTER TABLE focusInitiatives ADD COLUMN {} {}", column_name, column_type),
+                    [],
+                ) {
+                    init_log!("⚠️  カラム追加エラー（既に存在する可能性があります）: {} - {}", column_name, e);
+                }
+            } else {
+                init_log!("ℹ️  focusInitiativesテーブルのカラム '{}' は既に存在します", column_name);
+            }
+        }
+        
+        // focusInitiativesテーブルの外部キー制約を更新（organizationIdをNULL可能に）
+        // SQLiteではALTER TABLEでNOT NULL制約を削除できないため、テーブル再作成が必要
+        // 既存テーブルがorganizationIdをNOT NULLとして持っている場合は、テーブルを再作成
+        // エラーが発生しても初期化を続行できるようにエラーハンドリングを追加
+        if let Err(e) = (|| -> SqlResult<()> {
+            let table_exists: bool = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='focusInitiatives'",
+                [],
+                |row| row.get(0),
+            ).unwrap_or(false);
+            
+            if table_exists {
+                // organizationIdカラムが存在するかどうかを確認
+                let org_id_exists: bool = conn.query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('focusInitiatives') WHERE name='organizationId'",
+                    [],
+                    |row| row.get::<_, i32>(0).map(|n| n > 0),
+                ).unwrap_or(false);
+                
+                if !org_id_exists {
+                    init_log!("ℹ️  focusInitiativesテーブルにorganizationIdカラムが存在しません（新規テーブルの可能性）");
+                    return Ok(());
+                }
+                
+                // organizationIdカラムがNOT NULLかどうかを確認
+                let org_id_not_null: bool = conn.query_row(
+                    "SELECT \"notnull\" FROM pragma_table_info('focusInitiatives') WHERE name='organizationId'",
+                    [],
+                    |row| row.get::<_, i32>(0).map(|n| n != 0),
+                ).unwrap_or(false);
+                
+                if org_id_not_null {
+                    init_log!("📝 focusInitiativesテーブルを再作成します（organizationIdをNULL可能に）");
+                    
+                    // 既存データをバックアップテーブルにコピー
+                    conn.execute("CREATE TABLE IF NOT EXISTS focusInitiatives_backup AS SELECT * FROM focusInitiatives", [])?;
+                    
+                    // 古いテーブルを削除
+                    conn.execute("DROP TABLE focusInitiatives", [])?;
+                    
+                    // 新しいテーブルを作成（organizationIdをNULL可能に）
+                    conn.execute(
+                        "CREATE TABLE focusInitiatives (
+                            id TEXT PRIMARY KEY,
+                            organizationId TEXT,
+                            companyId TEXT,
+                            title TEXT NOT NULL,
+                            description TEXT,
+                            content TEXT,
+                            themeIds TEXT,
+                            topicIds TEXT,
+                            createdAt TEXT,
+                            updatedAt TEXT,
+                            FOREIGN KEY (organizationId) REFERENCES organizations(id),
+                            FOREIGN KEY (companyId) REFERENCES companies(id),
+                            CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
+                                   (organizationId IS NULL AND companyId IS NOT NULL))
+                        )",
+                        [],
+                    )?;
+                    
+                    // バックアップテーブルからデータをコピー（カラム名を明示的に指定）
+                    // companyIdカラムが存在しない場合はNULLを設定
+                    let backup_has_company_id: bool = conn.query_row(
+                        "SELECT COUNT(*) FROM pragma_table_info('focusInitiatives_backup') WHERE name='companyId'",
+                        [],
+                        |row| row.get::<_, i32>(0).map(|n| n > 0),
+                    ).unwrap_or(false);
+                    
+                    // themeIdsとtopicIdsカラムの存在も確認
+                    let backup_has_theme_ids: bool = conn.query_row(
+                        "SELECT COUNT(*) FROM pragma_table_info('focusInitiatives_backup') WHERE name='themeIds'",
+                        [],
+                        |row| row.get::<_, i32>(0).map(|n| n > 0),
+                    ).unwrap_or(false);
+                    
+                    let backup_has_topic_ids: bool = conn.query_row(
+                        "SELECT COUNT(*) FROM pragma_table_info('focusInitiatives_backup') WHERE name='topicIds'",
+                        [],
+                        |row| row.get::<_, i32>(0).map(|n| n > 0),
+                    ).unwrap_or(false);
+                    
+                    if backup_has_company_id && backup_has_theme_ids && backup_has_topic_ids {
+                        conn.execute(
+                            "INSERT INTO focusInitiatives (id, organizationId, companyId, title, description, content, themeIds, topicIds, createdAt, updatedAt) 
+                             SELECT id, organizationId, companyId, title, description, content, themeIds, topicIds, createdAt, updatedAt 
+                             FROM focusInitiatives_backup",
+                            [],
+                        )?;
+                    } else {
+                        // 古いテーブル構造の場合、不足しているカラムはNULLを設定
+                        let company_id_col = if backup_has_company_id { "companyId" } else { "NULL" };
+                        let theme_ids_col = if backup_has_theme_ids { "themeIds" } else { "NULL" };
+                        let topic_ids_col = if backup_has_topic_ids { "topicIds" } else { "NULL" };
+                        
+                        conn.execute(
+                            &format!(
+                                "INSERT INTO focusInitiatives (id, organizationId, companyId, title, description, content, themeIds, topicIds, createdAt, updatedAt) 
+                                 SELECT id, organizationId, {}, title, description, content, {}, {}, createdAt, updatedAt 
+                                 FROM focusInitiatives_backup",
+                                company_id_col, theme_ids_col, topic_ids_col
+                            ),
+                            [],
+                        )?;
+                    }
+                    
+                    // バックアップテーブルを削除
+                    conn.execute("DROP TABLE focusInitiatives_backup", [])?;
+                    
+                    init_log!("✅ focusInitiativesテーブルの再作成が完了しました");
+                } else {
+                    init_log!("ℹ️  focusInitiativesテーブルのorganizationIdは既にNULL可能です");
+                }
+            }
+            Ok(())
+        })() {
+            init_log!("⚠️  focusInitiativesテーブルのマイグレーションでエラーが発生しました（続行します）: {}", e);
+        }
+        
+        // 事業会社コンテンツテーブル（新規追加）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS companyContents (
+                id TEXT PRIMARY KEY,
+                companyId TEXT NOT NULL,
+                introduction TEXT,
+                focusBusinesses TEXT,
+                createdAt TEXT,
+                updatedAt TEXT,
+                FOREIGN KEY (companyId) REFERENCES companies(id)
             )",
             [],
         )?;
@@ -543,12 +861,16 @@ impl Database {
                 aliases TEXT,
                 metadata TEXT,
                 organizationId TEXT,
+                companyId TEXT,
                 chromaSynced INTEGER DEFAULT 0,
                 chromaSyncError TEXT,
                 lastChromaSyncAttempt TEXT,
                 createdAt TEXT NOT NULL,
                 updatedAt TEXT NOT NULL,
-                FOREIGN KEY (organizationId) REFERENCES organizations(id)
+                FOREIGN KEY (organizationId) REFERENCES organizations(id),
+                FOREIGN KEY (companyId) REFERENCES companies(id),
+                CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
+                       (organizationId IS NULL AND companyId IS NOT NULL))
             )",
             [],
         )?;
@@ -565,6 +887,7 @@ impl Database {
                 confidence REAL,
                 metadata TEXT,
                 organizationId TEXT,
+                companyId TEXT,
                 chromaSynced INTEGER DEFAULT 0,
                 chromaSyncError TEXT,
                 lastChromaSyncAttempt TEXT,
@@ -572,10 +895,194 @@ impl Database {
                 updatedAt TEXT NOT NULL,
                 FOREIGN KEY (sourceEntityId) REFERENCES entities(id),
                 FOREIGN KEY (targetEntityId) REFERENCES entities(id),
-                FOREIGN KEY (organizationId) REFERENCES organizations(id)
+                FOREIGN KEY (organizationId) REFERENCES organizations(id),
+                FOREIGN KEY (companyId) REFERENCES companies(id),
+                CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
+                       (organizationId IS NULL AND companyId IS NOT NULL))
             )",
             [],
         )?;
+        
+        // entitiesテーブルのマイグレーション（companyIdカラムとCHECK制約を追加）
+        init_log!("🔍 entitiesテーブルのマイグレーションを開始します...");
+        if let Err(e) = (|| -> SqlResult<()> {
+            let entities_table_exists: bool = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='entities'",
+                [],
+                |row| row.get(0),
+            ).unwrap_or(false);
+            
+            init_log!("📊 entitiesテーブルの存在確認: {}", entities_table_exists);
+            
+            if entities_table_exists {
+                // companyIdカラムが存在するかどうかを確認
+                let company_id_exists: bool = conn.query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('entities') WHERE name='companyId'",
+                    [],
+                    |row| row.get::<_, i32>(0).map(|n| n > 0),
+                ).unwrap_or(false);
+                
+                init_log!("📊 entitiesテーブルのcompanyIdカラムの存在確認: {}", company_id_exists);
+                
+                if !company_id_exists {
+                    init_log_always!("📝 entitiesテーブルを再作成します（companyIdカラムとCHECK制約を追加）");
+                    
+                    // 外部キー制約を一時的に無効化（relationsテーブルがentitiesを参照しているため）
+                    conn.execute("PRAGMA foreign_keys = OFF", [])?;
+                    init_log!("✅ 外部キー制約を無効化しました");
+                    
+                    // 既存データをバックアップテーブルにコピー
+                    conn.execute("CREATE TABLE IF NOT EXISTS entities_backup AS SELECT * FROM entities", [])?;
+                    init_log!("✅ バックアップテーブルを作成しました");
+                    
+                    // 古いテーブルを削除
+                    conn.execute("DROP TABLE entities", [])?;
+                    init_log!("✅ 古いテーブルを削除しました");
+                    
+                    // 新しいテーブルを作成（companyIdカラムとCHECK制約を追加）
+                    conn.execute(
+                        "CREATE TABLE entities (
+                            id TEXT PRIMARY KEY,
+                            name TEXT NOT NULL,
+                            type TEXT NOT NULL,
+                            aliases TEXT,
+                            metadata TEXT,
+                            organizationId TEXT,
+                            companyId TEXT,
+                            chromaSynced INTEGER DEFAULT 0,
+                            chromaSyncError TEXT,
+                            lastChromaSyncAttempt TEXT,
+                            createdAt TEXT NOT NULL,
+                            updatedAt TEXT NOT NULL,
+                            FOREIGN KEY (organizationId) REFERENCES organizations(id),
+                            FOREIGN KEY (companyId) REFERENCES companies(id),
+                            CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
+                                   (organizationId IS NULL AND companyId IS NOT NULL))
+                        )",
+                        [],
+                    )?;
+                    init_log!("✅ 新しいテーブルを作成しました");
+                    
+                    // バックアップテーブルからデータをコピー
+                    conn.execute(
+                        "INSERT INTO entities (id, name, type, aliases, metadata, organizationId, companyId, chromaSynced, chromaSyncError, lastChromaSyncAttempt, createdAt, updatedAt) 
+                         SELECT id, name, type, aliases, metadata, organizationId, NULL, chromaSynced, chromaSyncError, lastChromaSyncAttempt, createdAt, updatedAt 
+                         FROM entities_backup",
+                        [],
+                    )?;
+                    init_log!("✅ データをコピーしました");
+                    
+                    // バックアップテーブルを削除
+                    let _ = conn.execute("DROP TABLE entities_backup", []);
+                    
+                    // 外部キー制約を再度有効化
+                    conn.execute("PRAGMA foreign_keys = ON", [])?;
+                    init_log!("✅ 外部キー制約を再有効化しました");
+                    
+                    init_log_always!("✅ entitiesテーブルの再作成が完了しました");
+                } else {
+                    init_log!("ℹ️  entitiesテーブルにcompanyIdカラムは既に存在します");
+                }
+            } else {
+                init_log!("ℹ️  entitiesテーブルが存在しません（新規テーブルの可能性）");
+            }
+            Ok(())
+        })() {
+            init_log_always!("❌ entitiesテーブルのマイグレーション中にエラーが発生しました: {}", e);
+        }
+        
+        // relationsテーブルのマイグレーション（companyIdカラムとCHECK制約を追加）
+        init_log!("🔍 relationsテーブルのマイグレーションを開始します...");
+        if let Err(e) = (|| -> SqlResult<()> {
+            let relations_table_exists: bool = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='relations'",
+                [],
+                |row| row.get(0),
+            ).unwrap_or(false);
+            
+            init_log!("📊 relationsテーブルの存在確認: {}", relations_table_exists);
+            
+            if relations_table_exists {
+                // companyIdカラムが存在するかどうかを確認
+                let company_id_exists: bool = conn.query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('relations') WHERE name='companyId'",
+                    [],
+                    |row| row.get::<_, i32>(0).map(|n| n > 0),
+                ).unwrap_or(false);
+                
+                init_log!("📊 relationsテーブルのcompanyIdカラムの存在確認: {}", company_id_exists);
+                
+                if !company_id_exists {
+                    init_log_always!("📝 relationsテーブルを再作成します（companyIdカラムとCHECK制約を追加）");
+                    
+                    // 外部キー制約を一時的に無効化
+                    conn.execute("PRAGMA foreign_keys = OFF", [])?;
+                    init_log!("✅ 外部キー制約を無効化しました");
+                    
+                    // 既存データをバックアップテーブルにコピー
+                    conn.execute("CREATE TABLE IF NOT EXISTS relations_backup AS SELECT * FROM relations", [])?;
+                    init_log!("✅ バックアップテーブルを作成しました");
+                    
+                    // 古いテーブルを削除
+                    conn.execute("DROP TABLE relations", [])?;
+                    init_log!("✅ 古いテーブルを削除しました");
+                    
+                    // 新しいテーブルを作成（companyIdカラムとCHECK制約を追加）
+                    conn.execute(
+                        "CREATE TABLE relations (
+                            id TEXT PRIMARY KEY,
+                            topicId TEXT NOT NULL,
+                            sourceEntityId TEXT,
+                            targetEntityId TEXT,
+                            relationType TEXT NOT NULL,
+                            description TEXT,
+                            confidence REAL,
+                            metadata TEXT,
+                            organizationId TEXT,
+                            companyId TEXT,
+                            chromaSynced INTEGER DEFAULT 0,
+                            chromaSyncError TEXT,
+                            lastChromaSyncAttempt TEXT,
+                            createdAt TEXT NOT NULL,
+                            updatedAt TEXT NOT NULL,
+                            FOREIGN KEY (sourceEntityId) REFERENCES entities(id),
+                            FOREIGN KEY (targetEntityId) REFERENCES entities(id),
+                            FOREIGN KEY (organizationId) REFERENCES organizations(id),
+                            FOREIGN KEY (companyId) REFERENCES companies(id),
+                            CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
+                                   (organizationId IS NULL AND companyId IS NOT NULL))
+                        )",
+                        [],
+                    )?;
+                    init_log!("✅ 新しいテーブルを作成しました");
+                    
+                    // バックアップテーブルからデータをコピー
+                    conn.execute(
+                        "INSERT INTO relations (id, topicId, sourceEntityId, targetEntityId, relationType, description, confidence, metadata, organizationId, companyId, chromaSynced, chromaSyncError, lastChromaSyncAttempt, createdAt, updatedAt) 
+                         SELECT id, topicId, sourceEntityId, targetEntityId, relationType, description, confidence, metadata, organizationId, NULL, chromaSynced, chromaSyncError, lastChromaSyncAttempt, createdAt, updatedAt 
+                         FROM relations_backup",
+                        [],
+                    )?;
+                    init_log!("✅ データをコピーしました");
+                    
+                    // バックアップテーブルを削除
+                    let _ = conn.execute("DROP TABLE relations_backup", []);
+                    
+                    // 外部キー制約を再度有効化
+                    conn.execute("PRAGMA foreign_keys = ON", [])?;
+                    init_log!("✅ 外部キー制約を再有効化しました");
+                    
+                    init_log_always!("✅ relationsテーブルの再作成が完了しました");
+                } else {
+                    init_log!("ℹ️  relationsテーブルにcompanyIdカラムは既に存在します");
+                }
+            } else {
+                init_log!("ℹ️  relationsテーブルが存在しません（新規テーブルの可能性）");
+            }
+            Ok(())
+        })() {
+            init_log_always!("❌ relationsテーブルのマイグレーション中にエラーが発生しました: {}", e);
+        }
         
         // トピックテーブル（ChromaDB同期状態カラムを含む）
         conn.execute(
@@ -646,9 +1153,13 @@ impl Database {
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pageContainers_planId ON pageContainers(planId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_organizationContents_organizationId ON organizationContents(organizationId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_focusInitiatives_organizationId ON focusInitiatives(organizationId)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_focusInitiatives_companyId ON focusInitiatives(companyId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_meetingNotes_organizationId ON meetingNotes(organizationId)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_meetingNotes_companyId ON meetingNotes(companyId)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_companyContents_companyId ON companyContents(companyId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_themes_id ON themes(id)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_organizationId ON entities(organizationId)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_companyId ON entities(companyId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_chromaSynced ON entities(chromaSynced)", [])?;
@@ -657,6 +1168,7 @@ impl Database {
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_topicId ON relations(topicId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_sourceEntityId ON relations(sourceEntityId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_targetEntityId ON relations(targetEntityId)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_companyId ON relations(companyId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_relationType ON relations(relationType)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_organizationId ON relations(organizationId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_chromaSynced ON relations(chromaSynced)", [])?;

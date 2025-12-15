@@ -95,6 +95,7 @@ function ZoomableMermaidDiagram({
   const zoomRef = useRef(1);
   const mermaidRenderedRef = useRef(false);
   const [mermaidLoaded, setMermaidLoaded] = useState(false);
+  const [isRendered, setIsRendered] = useState(false);
 
   // 最新の値をrefに同期
   useEffect(() => {
@@ -117,6 +118,189 @@ function ZoomableMermaidDiagram({
     setZoom(1);
     setTranslateX(0);
     setTranslateY(0);
+  };
+
+  // PNGダウンロード機能
+  const handleDownloadPNG = async () => {
+    try {
+      if (!mermaidContainerRef.current) {
+        console.error('Mermaidコンテナが見つかりません');
+        return;
+      }
+
+      const svgElement = mermaidContainerRef.current.querySelector('svg');
+      if (!svgElement) {
+        console.error('SVG要素が見つかりません');
+        alert('図がまだレンダリングされていません。しばらく待ってから再度お試しください。');
+        return;
+      }
+
+      // SVGをクローンしてスタイルを適用
+      const clonedSvg = svgElement.cloneNode(true) as SVGElement;
+      
+      // SVGのサイズを取得
+      const svgRect = svgElement.getBoundingClientRect();
+      let svgWidth = svgElement.viewBox.baseVal.width;
+      let svgHeight = svgElement.viewBox.baseVal.height;
+      
+      // viewBoxがない場合は、width/height属性または実際のサイズを使用
+      if (!svgWidth || svgWidth === 0) {
+        svgWidth = parseFloat(svgElement.getAttribute('width') || '0') || svgRect.width;
+      }
+      if (!svgHeight || svgHeight === 0) {
+        svgHeight = parseFloat(svgElement.getAttribute('height') || '0') || svgRect.height;
+      }
+      
+      // それでもサイズが取得できない場合は、実際のサイズを使用
+      if (!svgWidth || svgWidth === 0) {
+        svgWidth = svgRect.width;
+      }
+      if (!svgHeight || svgHeight === 0) {
+        svgHeight = svgRect.height;
+      }
+
+      // SVGのスタイルを取得して適用
+      clonedSvg.setAttribute('width', svgWidth.toString());
+      clonedSvg.setAttribute('height', svgHeight.toString());
+      clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      clonedSvg.setAttribute('style', 'background: white;');
+
+      // SVGをBase64エンコードしたData URLに変換（セキュリティエラーを回避）
+      const svgData = new XMLSerializer().serializeToString(clonedSvg);
+      const base64Svg = btoa(unescape(encodeURIComponent(svgData)));
+      const svgDataUrl = `data:image/svg+xml;base64,${base64Svg}`;
+
+      // Canvasを作成してSVGを描画
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        console.error('Canvas contextが取得できません');
+        return;
+      }
+
+      // 高解像度で描画（2倍スケール）
+      const scale = 2;
+      canvas.width = svgWidth * scale;
+      canvas.height = svgHeight * scale;
+      ctx.scale(scale, scale);
+
+      // 背景を白に設定
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, svgWidth, svgHeight);
+
+      // SVGを画像として読み込んでCanvasに描画
+      return new Promise<void>((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous'; // CORSエラーを回避
+        
+        img.onload = () => {
+          try {
+            ctx.drawImage(img, 0, 0, svgWidth, svgHeight);
+            
+            // PNGとしてダウンロード
+            canvas.toBlob((blob) => {
+              if (!blob) {
+                console.error('PNGの生成に失敗しました');
+                reject(new Error('PNGの生成に失敗しました'));
+                return;
+              }
+
+              try {
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `${diagramId || 'mermaid-diagram'}-${Date.now()}.png`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                // 少し遅延させてからURLを解放
+                setTimeout(() => {
+                  URL.revokeObjectURL(url);
+                }, 100);
+                
+                resolve();
+              } catch (error) {
+                console.error('ダウンロードリンクの作成に失敗しました:', error);
+                reject(error);
+              }
+            }, 'image/png', 1.0);
+          } catch (error) {
+            console.error('Canvas描画エラー:', error);
+            reject(error);
+          }
+        };
+
+        img.onerror = (error) => {
+          console.error('SVG画像の読み込みに失敗しました:', error);
+          reject(new Error('SVG画像の読み込みに失敗しました'));
+        };
+
+        img.src = svgDataUrl;
+      }).catch((error) => {
+        console.error('PNGダウンロードエラー:', error);
+        // html2canvasにフォールバック
+        handleDownloadPNGFallback();
+      });
+    } catch (error) {
+      console.error('PNGダウンロードエラー:', error);
+      // html2canvasにフォールバック
+      handleDownloadPNGFallback();
+    }
+  };
+
+  // html2canvasを使用したフォールバック方法
+  const handleDownloadPNGFallback = async () => {
+    try {
+      if (!mermaidContainerRef.current) {
+        alert('図がまだレンダリングされていません。');
+        return;
+      }
+
+      const svgElement = mermaidContainerRef.current.querySelector('svg');
+      if (!svgElement) {
+        alert('図がまだレンダリングされていません。');
+        return;
+      }
+
+      // SVG要素を含む親要素を取得
+      const container = svgElement.parentElement;
+      if (!container) {
+        alert('コンテナが見つかりません。');
+        return;
+      }
+
+      // html2canvasでキャプチャ
+      const canvas = await html2canvas(container as HTMLElement, {
+        backgroundColor: '#ffffff',
+        scale: 2, // 高解像度
+        useCORS: true,
+        logging: false,
+      });
+
+      // PNGとしてダウンロード
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          alert('PNGの生成に失敗しました。');
+          return;
+        }
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${diagramId || 'mermaid-diagram'}-${Date.now()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        setTimeout(() => {
+          URL.revokeObjectURL(url);
+        }, 100);
+      }, 'image/png', 1.0);
+    } catch (error) {
+      console.error('html2canvasフォールバックエラー:', error);
+      alert('PNGのダウンロードに失敗しました。');
+    }
   };
 
   // マウスドラッグ処理
@@ -226,15 +410,16 @@ function ZoomableMermaidDiagram({
       return; // コードが変更されていないかつレンダリング済みの場合はスキップ
     }
 
-    // mermaidCodeが変更された場合は、レンダリング済みフラグをリセット
-    if (previousMermaidCodeRef.current !== mermaidCode) {
-      const svg = mermaidContainerRef.current.querySelector('svg');
-      if (svg) {
-        svg.remove();
+      // mermaidCodeが変更された場合は、レンダリング済みフラグをリセット
+      if (previousMermaidCodeRef.current !== mermaidCode) {
+        const svg = mermaidContainerRef.current.querySelector('svg');
+        if (svg) {
+          svg.remove();
+        }
+        mermaidRenderedRef.current = false;
+        setIsRendered(false);
+        previousMermaidCodeRef.current = mermaidCode;
       }
-      mermaidRenderedRef.current = false;
-      previousMermaidCodeRef.current = mermaidCode;
-    }
 
     if (mermaidRenderedRef.current) return; // 既にレンダリング済みの場合はスキップ
 
@@ -268,6 +453,7 @@ function ZoomableMermaidDiagram({
         // 既にSVGが生成されている場合はスキップ
         if (mermaidContainerRef.current.querySelector('svg')) {
           mermaidRenderedRef.current = true;
+          setIsRendered(true);
           return;
         }
 
@@ -277,6 +463,7 @@ function ZoomableMermaidDiagram({
         });
         
         mermaidRenderedRef.current = true;
+        setIsRendered(true);
       } catch (error) {
         console.error('Mermaid図のレンダリングエラー:', error);
         mermaidRenderedRef.current = false;
@@ -413,6 +600,34 @@ function ZoomableMermaidDiagram({
           }}
         >
           リセット
+        </button>
+        <button
+          onClick={handleDownloadPNG}
+          disabled={!isRendered}
+          style={{
+            padding: '6px 12px',
+            border: '1px solid #ddd',
+            borderRadius: '4px',
+            backgroundColor: isRendered ? 'white' : '#f5f5f5',
+            cursor: isRendered ? 'pointer' : 'not-allowed',
+            fontSize: '12px',
+            fontWeight: 600,
+            marginLeft: '4px',
+            opacity: isRendered ? 1 : 0.5,
+          }}
+          onMouseEnter={(e) => {
+            if (isRendered) {
+              e.currentTarget.style.backgroundColor = '#f5f5f5';
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (isRendered) {
+              e.currentTarget.style.backgroundColor = 'white';
+            }
+          }}
+          title="PNGとしてダウンロード"
+        >
+          📥 PNG
         </button>
       </div>
       <div

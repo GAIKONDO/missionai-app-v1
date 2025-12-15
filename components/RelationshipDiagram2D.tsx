@@ -138,7 +138,7 @@ const wrapText = (text: string, maxWidth: number, fontSize: number, nodeType?: '
   const maxCharsByType: Record<string, number> = {
     'theme': 10,        // テーマノード: 10文字
     'organization': 8,  // 組織ノード: 8文字
-    'initiative': 6,    // 注力施策ノード: 6文字
+    'initiative': 8,    // 注力施策ノード: 8文字
   };
   
   // 文字幅ベースの最大文字数
@@ -234,8 +234,8 @@ const getNodeRadius = (node: RelationshipNode): number => {
   if (node.data?.isParent) return Math.max(node.label.length * 5, 100); // 親：100px
   if (node.type === 'theme') return Math.max(node.label.length * 3.5, 60); // 大：60px（75px→60px）
   if (node.type === 'organization') return Math.max(node.label.length * 3, 45); // 中：45px
-  if (node.type === 'initiative') return Math.max(node.label.length * 2.5, 28); // 小：28px
-  if (node.type === 'topic') return Math.max(node.label.length * 2, 20); // 最小：20px
+  if (node.type === 'initiative') return 28; // 注力施策は固定サイズ：28px
+  if (node.type === 'topic') return 20; // 個別トピックは固定サイズ：20px
   return 40;
 };
 
@@ -245,7 +245,7 @@ const getCollisionRadius = (node: RelationshipNode): number => {
   if (node.data?.isParent) return 105; // 親：105px
   if (node.type === 'theme') return 65; // 大：65px（80px→65px）
   if (node.type === 'organization') return 50; // 中：50px
-  if (node.type === 'initiative') return 33; // 小：33px
+  if (node.type === 'initiative') return 30; // 小：30px
   if (node.type === 'topic') return 24; // 最小：24px
   return 40;
 };
@@ -1292,7 +1292,12 @@ export default function RelationshipDiagram2D({
           : d.type === 'topic'
           ? parseFloat(DESIGN.typography.topic.fontSize)
           : 14;
-        const lines = wrapText(d.label, radius * 2, fontSize, d.type);
+        // 注力施策の場合は8文字を上限として省略表示
+        let displayLabel = d.label;
+        if (d.type === 'initiative' && d.label.length > 8) {
+          displayLabel = d.label.substring(0, 8) + '...';
+        }
+        const lines = wrapText(displayLabel, radius * 2, fontSize, d.type);
         const lineHeight = fontSize * 1.2;
         
         // 複数行の場合、垂直位置を中央に調整

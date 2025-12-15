@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
-import { getFocusInitiativeById, saveFocusInitiative, getOrgTreeFromDb, getThemes, type Theme, getAllTopics, type TopicInfo, getAllMeetingNotes, getTopicsByMeetingNote, getAllOrganizationsFromTree, findOrganizationById, getMeetingNoteById, type MeetingNote, getOrgMembers } from '@/lib/orgApi';
+import { getFocusInitiativeById, saveFocusInitiative, getOrgTreeFromDb, getThemes, type Theme, getAllTopics, getAllTopicsBatch, type TopicInfo, getAllMeetingNotes, getTopicsByMeetingNote, getAllOrganizationsFromTree, findOrganizationById, getMeetingNoteById, type MeetingNote, getOrgMembers } from '@/lib/orgApi';
+import { getCompanyById, getAllCompanies, getCompanyMeetingNotes, type Company, type CompanyMeetingNote } from '@/lib/companiesApi';
 import { updateInitiative } from '@/lib/focusInitiativeService';
 import type { FocusInitiative, OrgNodeData } from '@/lib/orgApi';
 import ReactMarkdown from 'react-markdown';
@@ -53,10 +54,12 @@ function FocusInitiativeDetailPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const organizationId = searchParams?.get('organizationId') as string;
+  const companyId = searchParams?.get('companyId') as string;
   const initiativeId = searchParams?.get('initiativeId') as string;
   
   const [initiative, setInitiative] = useState<FocusInitiative | null>(null);
   const [orgData, setOrgData] = useState<OrgNodeData | null>(null);
+  const [company, setCompany] = useState<Company | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('overview');
@@ -88,17 +91,23 @@ function FocusInitiativeDetailPageContent() {
   const [localThemeIds, setLocalThemeIds] = useState<string[]>([]);
   const [topics, setTopics] = useState<TopicInfo[]>([]);
   const [localTopicIds, setLocalTopicIds] = useState<string[]>([]);
+  const [isTopicsExpanded, setIsTopicsExpanded] = useState(false); // 個別トピックセクションの開閉状態
   const [isTopicSelectModalOpen, setIsTopicSelectModalOpen] = useState(false);
   const [topicSearchQuery, setTopicSearchQuery] = useState('');
   const [allOrganizations, setAllOrganizations] = useState<Array<{ id: string; name: string; title?: string }>>([]);
+  const [allCompanies, setAllCompanies] = useState<Company[]>([]);
   const [allMeetingNotes, setAllMeetingNotes] = useState<MeetingNote[]>([]);
+  const [allCompanyMeetingNotes, setAllCompanyMeetingNotes] = useState<CompanyMeetingNote[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState<string>('');
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>('');
   const [selectedMeetingNoteId, setSelectedMeetingNoteId] = useState<string>('');
   const [modalTopics, setModalTopics] = useState<TopicInfo[]>([]);
   const [orgTreeForModal, setOrgTreeForModal] = useState<OrgNodeData | null>(null);
   const [orgIdInput, setOrgIdInput] = useState<string>('');
+  const [companyIdInput, setCompanyIdInput] = useState<string>('');
   const [meetingNoteIdInput, setMeetingNoteIdInput] = useState<string>('');
   const [filteredMeetingNotes, setFilteredMeetingNotes] = useState<MeetingNote[]>([]);
+  const [filteredCompanyMeetingNotes, setFilteredCompanyMeetingNotes] = useState<CompanyMeetingNote[]>([]);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
   const [isMonetizationUpdateModalOpen, setIsMonetizationUpdateModalOpen] = useState(false);
   const [isRelationUpdateModalOpen, setIsRelationUpdateModalOpen] = useState(false);
@@ -292,9 +301,23 @@ ${formatInstruction}
         return summary;
       } else {
         // OpenAI APIを呼び出し
-        const apiKey = process.env.NEXT_PUBLIC_OPENAI_API_KEY;
+        // APIキーを取得: 設定ページ > localStorage > 環境変数の順
+        let apiKey: string | undefined;
+        if (typeof window !== 'undefined') {
+          try {
+            const { getAPIKey } = await import('@/lib/security');
+            apiKey = getAPIKey('openai') || undefined;
+          } catch (error) {
+            // セキュリティモジュールがない場合は直接localStorageから取得
+            apiKey = localStorage.getItem('NEXT_PUBLIC_OPENAI_API_KEY') || undefined;
+          }
+        }
         if (!apiKey) {
-          throw new Error('OpenAI APIキーが設定されていません。環境変数NEXT_PUBLIC_OPENAI_API_KEYを設定してください。');
+          apiKey = process.env.NEXT_PUBLIC_OPENAI_API_KEY;
+        }
+        
+        if (!apiKey) {
+          throw new Error('OpenAI APIキーが設定されていません。設定ページ（/settings）でAPIキーを設定してください。');
         }
         
         const requestBody: any = {
@@ -489,16 +512,28 @@ ${formatInstruction}
     }
   }, [initiative, initiativeId, editingContent, localAssignee, localDescription, localMethod, localMethodOther, localMeans, localMeansOther, localObjective, localConsiderationPeriod, localExecutionPeriod, localMonetizationPeriod, localRelatedOrganizations, localRelatedGroupCompanies, localMonetizationDiagram, localRelationDiagram, localThemeIds, localTopicIds]);
   
-  // モーダルが開かれたときに、デフォルトで現在の組織を選択し、議事録をフィルタリング
+  // モーダルが開かれたときに、デフォルトで現在の組織または事業会社を選択し、議事録をフィルタリング
   useEffect(() => {
-    if (isTopicSelectModalOpen && organizationId && allMeetingNotes.length > 0) {
-      // デフォルトで現在の組織を選択
-      setSelectedOrgId(organizationId);
-      // 現在の組織の議事録をフィルタリング
-      const notes = allMeetingNotes.filter(note => note.organizationId === organizationId);
-      setFilteredMeetingNotes(notes);
+    if (isTopicSelectModalOpen) {
+      if (companyId && allCompanyMeetingNotes.length > 0) {
+        // デフォルトで現在の事業会社を選択
+        setSelectedCompanyId(companyId);
+        setSelectedOrgId('');
+        // 現在の事業会社の議事録をフィルタリング
+        const notes = allCompanyMeetingNotes.filter(note => note.companyId === companyId);
+        setFilteredCompanyMeetingNotes(notes);
+        setFilteredMeetingNotes([]);
+      } else if (organizationId && allMeetingNotes.length > 0) {
+        // デフォルトで現在の組織を選択
+        setSelectedOrgId(organizationId);
+        setSelectedCompanyId('');
+        // 現在の組織の議事録をフィルタリング
+        const notes = allMeetingNotes.filter(note => note.organizationId === organizationId);
+        setFilteredMeetingNotes(notes);
+        setFilteredCompanyMeetingNotes([]);
+      }
     }
-  }, [isTopicSelectModalOpen, organizationId, allMeetingNotes]);
+  }, [isTopicSelectModalOpen, organizationId, companyId, allMeetingNotes, allCompanyMeetingNotes]);
   
   // JSONファイルをダウンロードする関数
   const handleDownloadJson = useCallback(async () => {
@@ -558,8 +593,8 @@ ${formatInstruction}
 
   useEffect(() => {
     const loadData = async () => {
-      if (!organizationId || !initiativeId) {
-        setError('組織IDまたは施策IDが指定されていません');
+      if ((!organizationId && !companyId) || !initiativeId) {
+        setError('組織IDまたは事業会社ID、または施策IDが指定されていません');
         setLoading(false);
         return;
       }
@@ -567,89 +602,150 @@ ${formatInstruction}
       try {
         setLoading(true);
         
-        // 組織データを取得
-        const orgTree = await getOrgTreeFromDb();
-        const findOrganization = (node: OrgNodeData): OrgNodeData | null => {
-          if (node.id === organizationId) {
-            return node;
-          }
-          if (node.children) {
-            for (const child of node.children) {
-              const found = findOrganization(child);
-              if (found) return found;
+        // 組織データを取得（organizationIdが指定されている場合のみ）
+        let orgTree: OrgNodeData | null = null;
+        if (organizationId) {
+          orgTree = await getOrgTreeFromDb();
+          const findOrganization = (node: OrgNodeData): OrgNodeData | null => {
+            if (node.id === organizationId) {
+              return node;
+            }
+            if (node.children) {
+              for (const child of node.children) {
+                const found = findOrganization(child);
+                if (found) return found;
+              }
+            }
+            return null;
+          };
+          const foundOrg = orgTree ? findOrganization(orgTree) : null;
+          setOrgData(foundOrg);
+        } else {
+          // companyIdのみの場合は組織データをnullに設定
+          setOrgData(null);
+          
+          // 事業会社データを取得
+          if (companyId) {
+            try {
+              const companyData = await getCompanyById(companyId);
+              setCompany(companyData);
+            } catch (companyError: any) {
+              console.warn('⚠️ [ページ] 事業会社データの取得に失敗:', companyError);
+              setCompany(null);
             }
           }
-          return null;
-        };
-        const foundOrg = orgTree ? findOrganization(orgTree) : null;
-        setOrgData(foundOrg);
+        }
         
         // テーマを取得
         const themesData = await getThemes();
         setThemes(themesData);
         
-        // 個別トピックを取得（現在の組織のみ）
-        const topicsData = await getAllTopics(organizationId);
-        setTopics(topicsData);
+        // すべての組織を取得（モーダル用）- 常に取得
+        let modalOrgTree: OrgNodeData | null = null;
+        if (orgTree) {
+          modalOrgTree = orgTree;
+        } else {
+          // organizationIdが存在しない場合でも、モーダル用に組織ツリーを取得
+          try {
+            modalOrgTree = await getOrgTreeFromDb();
+          } catch (treeError: any) {
+            console.warn('⚠️ [ページ] モーダル用組織ツリー取得に失敗:', treeError);
+          }
+        }
         
-        // すべての組織を取得（モーダル用）- 既に取得したorgTreeを再利用
-        const allOrgs = getAllOrganizationsFromTree(orgTree);
-        setAllOrganizations(allOrgs);
-        setOrgTreeForModal(orgTree);
+        if (modalOrgTree) {
+          const allOrgs = getAllOrganizationsFromTree(modalOrgTree);
+          setAllOrganizations(allOrgs);
+          setOrgTreeForModal(modalOrgTree);
+        } else {
+          setAllOrganizations([]);
+          setOrgTreeForModal(null);
+        }
+        
+        // 組織のメンバーを取得（organizationIdが指定されている場合のみ）
+        if (organizationId) {
+          try {
+            const membersData = await getOrgMembers(organizationId);
+            const membersList = membersData.map((member: any) => ({
+              id: member.id,
+              name: member.name,
+              position: member.position || undefined,
+            }));
+            setOrgMembers(membersList);
+            console.log('✅ [ページ] メンバー取得完了:', { count: membersList.length, members: membersList });
+          } catch (memberError: any) {
+            console.warn('⚠️ [ページ] メンバー取得に失敗:', memberError);
+            setOrgMembers([]);
+          }
+          
+          // 全組織のメンバーを取得（直接入力時の検索用）
+          if (modalOrgTree) {
+            try {
+              const allOrgsForMembers = getAllOrganizationsFromTree(modalOrgTree);
+              const allMembersList: Array<{ id: string; name: string; position?: string; organizationId?: string }> = [];
+              
+              // 各組織のメンバーを取得
+              for (const org of allOrgsForMembers) {
+                try {
+                  const orgMembersData = await getOrgMembers(org.id);
+                  const orgMembersList = orgMembersData.map((member: any) => ({
+                    id: member.id,
+                    name: member.name,
+                    position: member.position || undefined,
+                    organizationId: org.id,
+                  }));
+                  allMembersList.push(...orgMembersList);
+                } catch (err) {
+                  console.warn(`⚠️ [ページ] 組織 ${org.id} のメンバー取得に失敗:`, err);
+                }
+              }
+              
+              // 重複を除去（同じ名前のメンバーが複数の組織に所属している場合）
+              const uniqueMembers = new Map<string, { id: string; name: string; position?: string; organizationId?: string }>();
+              allMembersList.forEach(member => {
+                if (!uniqueMembers.has(member.name) || !uniqueMembers.get(member.name)?.position) {
+                  uniqueMembers.set(member.name, member);
+                }
+              });
+              
+              setAllOrgMembers(Array.from(uniqueMembers.values()));
+              console.log('✅ [ページ] 全組織メンバー取得完了:', { count: Array.from(uniqueMembers.values()).length });
+            } catch (allMemberError: any) {
+              console.warn('⚠️ [ページ] 全組織メンバー取得に失敗:', allMemberError);
+              setAllOrgMembers([]);
+            }
+          }
+        } else {
+          // companyIdのみの場合は組織メンバーを空に設定
+          setOrgMembers([]);
+          setAllOrgMembers([]);
+        }
         
         // すべての議事録を取得（モーダル用）
         const allNotes = await getAllMeetingNotes();
         setAllMeetingNotes(allNotes);
         
-        // 組織のメンバーを取得（現在の組織のみ）
+        // すべての事業会社を取得（モーダル用）
         try {
-          const membersData = await getOrgMembers(organizationId);
-          const membersList = membersData.map((member: any) => ({
-            id: member.id,
-            name: member.name,
-            position: member.position || undefined,
-          }));
-          setOrgMembers(membersList);
-          console.log('✅ [ページ] メンバー取得完了:', { count: membersList.length, members: membersList });
-        } catch (memberError: any) {
-          console.warn('⚠️ [ページ] メンバー取得に失敗:', memberError);
-          setOrgMembers([]);
-        }
-        
-        // 全組織のメンバーを取得（直接入力時の検索用）
-        try {
-          const allOrgs = getAllOrganizationsFromTree(orgTree);
-          const allMembersList: Array<{ id: string; name: string; position?: string; organizationId?: string }> = [];
+          const companiesData = await getAllCompanies();
+          setAllCompanies(companiesData);
           
-          // 各組織のメンバーを取得
-          for (const org of allOrgs) {
+          // すべての事業会社の議事録を取得（モーダル用）
+          const allCompanyNotes: CompanyMeetingNote[] = [];
+          for (const comp of companiesData) {
             try {
-              const orgMembersData = await getOrgMembers(org.id);
-              const orgMembersList = orgMembersData.map((member: any) => ({
-                id: member.id,
-                name: member.name,
-                position: member.position || undefined,
-                organizationId: org.id,
-              }));
-              allMembersList.push(...orgMembersList);
-            } catch (err) {
-              console.warn(`⚠️ [ページ] 組織 ${org.id} のメンバー取得に失敗:`, err);
+              const companyNotes = await getCompanyMeetingNotes(comp.id);
+              allCompanyNotes.push(...companyNotes);
+            } catch (error: any) {
+              console.warn(`⚠️ [ページ] 事業会社 ${comp.id} の議事録取得に失敗:`, error);
             }
           }
-          
-          // 重複を除去（同じ名前のメンバーが複数の組織に所属している場合）
-          const uniqueMembers = new Map<string, { id: string; name: string; position?: string; organizationId?: string }>();
-          allMembersList.forEach(member => {
-            if (!uniqueMembers.has(member.name) || !uniqueMembers.get(member.name)?.position) {
-              uniqueMembers.set(member.name, member);
-            }
-          });
-          
-          setAllOrgMembers(Array.from(uniqueMembers.values()));
-          console.log('✅ [ページ] 全組織メンバー取得完了:', { count: Array.from(uniqueMembers.values()).length });
-        } catch (allMemberError: any) {
-          console.warn('⚠️ [ページ] 全組織メンバー取得に失敗:', allMemberError);
-          setAllOrgMembers([]);
+          setAllCompanyMeetingNotes(allCompanyNotes);
+          console.log('✅ [ページ] 事業会社議事録取得完了:', { count: allCompanyNotes.length });
+        } catch (companiesError: any) {
+          console.warn('⚠️ [ページ] 事業会社データの取得に失敗:', companiesError);
+          setAllCompanies([]);
+          setAllCompanyMeetingNotes([]);
         }
         
         // 注力施策を取得
@@ -658,6 +754,34 @@ ${formatInstruction}
           setError('注力施策が見つかりませんでした');
           setLoading(false);
           return;
+        }
+        
+        // companyIdが指定されている場合、取得したデータのcompanyIdと一致するか確認
+        if (companyId) {
+          console.log('🔍 [ページ] companyId検証:', {
+            urlCompanyId: companyId,
+            dataCompanyId: initiativeData.companyId,
+            match: initiativeData.companyId === companyId,
+          });
+          if (initiativeData.companyId !== companyId) {
+            setError('注力施策が見つかりませんでした（事業会社IDが一致しません）');
+            setLoading(false);
+            return;
+          }
+        }
+        
+        // organizationIdが指定されている場合、取得したデータのorganizationIdと一致するか確認
+        if (organizationId) {
+          console.log('🔍 [ページ] organizationId検証:', {
+            urlOrganizationId: organizationId,
+            dataOrganizationId: initiativeData.organizationId,
+            match: initiativeData.organizationId === organizationId,
+          });
+          if (initiativeData.organizationId !== organizationId) {
+            setError('注力施策が見つかりませんでした（組織IDが一致しません）');
+            setLoading(false);
+            return;
+          }
         }
         
         console.log('📖 [ページ] データ読み込み:', {
@@ -680,24 +804,39 @@ ${formatInstruction}
         // monetizationDiagramIdが存在しない場合は生成
         if (!initiativeData.monetizationDiagramId && initiativeData.monetizationDiagram) {
           initiativeData.monetizationDiagramId = `md_${generateUniqueId()}`;
-          // データベースに保存
-          await saveFocusInitiative({
-            ...initiativeData,
-            monetizationDiagramId: initiativeData.monetizationDiagramId,
-          });
+          // データベースに保存（エラーは無視して続行）
+          try {
+            await saveFocusInitiative({
+              ...initiativeData,
+              monetizationDiagramId: initiativeData.monetizationDiagramId,
+            });
+          } catch (saveError: any) {
+            console.warn('⚠️ [ページ] monetizationDiagramId保存エラー（続行します）:', saveError);
+          }
         }
         
         // relationDiagramIdが存在しない場合は生成
         if (!initiativeData.relationDiagramId && initiativeData.relationDiagram) {
           initiativeData.relationDiagramId = `rd_${generateUniqueId()}`;
-          // データベースに保存
-          await saveFocusInitiative({
-            ...initiativeData,
-            relationDiagramId: initiativeData.relationDiagramId,
-          });
+          // データベースに保存（エラーは無視して続行）
+          try {
+            await saveFocusInitiative({
+              ...initiativeData,
+              relationDiagramId: initiativeData.relationDiagramId,
+            });
+          } catch (saveError: any) {
+            console.warn('⚠️ [ページ] relationDiagramId保存エラー（続行します）:', saveError);
+          }
         }
         
+        console.log('✅ [ページ] setInitiative呼び出し前:', {
+          initiativeId: initiativeData.id,
+          title: initiativeData.title,
+          organizationId: initiativeData.organizationId,
+          companyId: initiativeData.companyId,
+        });
         setInitiative(initiativeData);
+        console.log('✅ [ページ] setInitiative呼び出し後');
         setEditingContent(initiativeData.content || '');
         
         // ローカル状態を初期化
@@ -766,6 +905,29 @@ ${formatInstruction}
           : (initiativeData.themeId ? [initiativeData.themeId] : []);
         setLocalThemeIds(themeIdsValue);
         
+        // 個別トピックを取得（全組織横断的に取得）
+        // 他の組織のトピックが紐づけられている場合でも表示できるようにするため
+        const topicsData = await getAllTopicsBatch();
+        setTopics(topicsData);
+        
+        console.log('📖 [ページ] 取得したトピック:', {
+          count: topicsData.length,
+          // 紐づけられているトピックIDが存在するか確認
+          topicIdsFromInitiative: Array.isArray(initiativeData.topicIds) ? initiativeData.topicIds : [],
+          matchingTopics: Array.isArray(initiativeData.topicIds) 
+            ? initiativeData.topicIds.map(topicId => {
+                const topic = topicsData.find(t => t.id === topicId);
+                return {
+                  topicId,
+                  found: !!topic,
+                  title: topic?.title,
+                  organizationId: topic?.organizationId,
+                  isOtherOrg: topic?.organizationId !== organizationId,
+                };
+              })
+            : [],
+        });
+        
         // topicIdsを設定
         const topicIdsValue = Array.isArray(initiativeData.topicIds) ? initiativeData.topicIds : [];
         setLocalTopicIds(topicIdsValue);
@@ -796,7 +958,7 @@ ${formatInstruction}
     };
 
     loadData();
-  }, [organizationId, initiativeId]);
+  }, [organizationId, companyId, initiativeId]);
   
   // 担当者ドロップダウンの外側クリックで閉じる
   useEffect(() => {
@@ -855,7 +1017,10 @@ ${formatInstruction}
     );
   }
 
-  if (error || !initiative || !orgData) {
+  // companyIdが指定されている場合はorgDataがnullでも問題ない
+  const shouldShowError = error || !initiative || (!companyId && !orgData);
+  
+  if (shouldShowError) {
     return (
       <Layout>
         <div className="card" style={{ padding: '20px' }}>
@@ -864,7 +1029,13 @@ ${formatInstruction}
             {error || 'データが見つかりませんでした。'}
           </p>
           <button
-            onClick={() => router.push(`/organization/detail?id=${organizationId}&tab=focusInitiatives`)}
+            onClick={() => {
+              if (companyId) {
+                router.push(`/companies/detail?id=${companyId}&tab=focusInitiatives`);
+              } else {
+                router.push(`/organization/detail?id=${organizationId}&tab=focusInitiatives`);
+              }
+            }}
             style={{
               marginTop: '16px',
               padding: '8px 16px',
@@ -876,7 +1047,7 @@ ${formatInstruction}
               fontSize: '14px',
             }}
           >
-            組織ページに戻る
+            {companyId ? '事業会社ページに戻る' : '組織ページに戻る'}
           </button>
         </div>
       </Layout>
@@ -2544,7 +2715,7 @@ graph LR
         <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ fontSize: '14px', color: '#6B7280', marginBottom: '4px' }}>
-              {orgData.name} / 注力施策
+              {companyId && company ? company.name : (orgData ? orgData.name : '')} / 注力施策
             </div>
             <h2 style={{ margin: 0 }}>{initiative.title}</h2>
           </div>
@@ -2663,7 +2834,13 @@ graph LR
               <DownloadIcon size={18} color="white" />
             </button>
             <button
-              onClick={() => router.push(`/organization/detail?id=${organizationId}&tab=focusInitiatives`)}
+              onClick={() => {
+                if (companyId) {
+                  router.push(`/companies/detail?id=${companyId}&tab=focusInitiatives`);
+                } else {
+                  router.push(`/organization/detail?id=${organizationId}&tab=focusInitiatives`);
+                }
+              }}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -2754,12 +2931,34 @@ graph LR
           
           {/* 個別トピックセクション */}
           <div style={{ marginTop: '24px', paddingTop: '24px', borderTop: '1px solid #E5E7EB' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <label style={{ display: 'block', fontWeight: '600', color: '#374151', fontSize: '16px' }}>
-                個別トピック（複数選択可能）
-              </label>
+            <div 
+              style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center', 
+                marginBottom: '12px',
+                cursor: 'pointer',
+              }}
+              onClick={() => setIsTopicsExpanded(!isTopicsExpanded)}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '14px', transition: 'transform 0.2s', transform: isTopicsExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                  ▶
+                </span>
+                <label style={{ display: 'block', fontWeight: '600', color: '#374151', fontSize: '16px', cursor: 'pointer' }}>
+                  個別トピック（複数選択可能）
+                  {localTopicIds.length > 0 && (
+                    <span style={{ fontSize: '14px', fontWeight: '400', color: '#6B7280', marginLeft: '8px' }}>
+                      ({localTopicIds.length}件)
+                    </span>
+                  )}
+                </label>
+              </div>
               <button
-                onClick={() => setIsTopicSelectModalOpen(true)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsTopicSelectModalOpen(true);
+                }}
                 style={{
                   padding: '8px 16px',
                   backgroundColor: '#3B82F6',
@@ -2785,16 +2984,75 @@ graph LR
                 <span>個別トピックを選択</span>
               </button>
             </div>
-            <div style={{ fontSize: '14px', color: '#6B7280', marginBottom: '12px' }}>
-              この注力施策が関連する議事録アーカイブの個別トピックを選択してください
-            </div>
             
-            {/* 選択したトピックの表示 */}
-            {localTopicIds.length > 0 ? (
+            {/* 開閉式の内容 */}
+            {isTopicsExpanded && (
+              <>
+                <div style={{ fontSize: '14px', color: '#6B7280', marginBottom: '12px' }}>
+                  この注力施策が関連する議事録アーカイブの個別トピックを選択してください
+                </div>
+                
+                {/* 選択したトピックの表示 */}
+                {localTopicIds.length > 0 ? (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
                 {localTopicIds.map((topicId) => {
                   const topic = topics.find(t => t.id === topicId);
-                  if (!topic) return null;
+                  if (!topic) {
+                    // トピックが見つからない場合（他の組織のトピックが削除された可能性）
+                    return (
+                      <div
+                        key={topicId}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: '8px 12px',
+                          border: '1px solid #EF4444',
+                          borderRadius: '6px',
+                          backgroundColor: '#FEE2E2',
+                          fontSize: '14px',
+                        }}
+                      >
+                        <span style={{ fontWeight: '500', marginRight: '8px', color: '#DC2626' }}>
+                          トピックが見つかりません (ID: {topicId.substring(0, 20)}...)
+                        </span>
+                        <button
+                          onClick={() => {
+                            setLocalTopicIds(localTopicIds.filter(id => id !== topicId));
+                          }}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#EF4444',
+                            cursor: 'pointer',
+                            fontSize: '16px',
+                            padding: '0',
+                            width: '20px',
+                            height: '20px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: '4px',
+                            transition: 'background-color 0.2s',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = '#FEE2E2';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                          }}
+                          title="削除"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  }
+                  
+                  // 組織名を取得
+                  const topicOrg = topic.organizationId ? findOrganizationById(orgData, topic.organizationId) : null;
+                  const topicOrgName = topicOrg ? (topicOrg.name || topicOrg.title || topic.organizationId) : topic.organizationId;
+                  const isOtherOrg = topic.organizationId !== organizationId;
+                  
                   return (
                     <div
                       key={topicId}
@@ -2802,18 +3060,28 @@ graph LR
                         display: 'flex',
                         alignItems: 'center',
                         padding: '8px 12px',
-                        border: '1px solid var(--color-primary)',
+                        border: `1px solid ${isOtherOrg ? '#F59E0B' : 'var(--color-primary)'}`,
                         borderRadius: '6px',
-                        backgroundColor: '#EFF6FF',
+                        backgroundColor: isOtherOrg ? '#FEF3C7' : '#EFF6FF',
                         fontSize: '14px',
                       }}
                     >
+                      {isOtherOrg && (
+                        <span style={{ fontSize: '11px', color: '#F59E0B', fontWeight: '600', marginRight: '6px', padding: '2px 6px', backgroundColor: '#FDE68A', borderRadius: '4px' }}>
+                          他組織
+                        </span>
+                      )}
                       <span style={{ fontWeight: '500', marginRight: '8px' }}>
                         {topic.title}
                       </span>
                       <span style={{ fontSize: '12px', color: '#9CA3AF', marginRight: '8px' }}>
                         ({topic.meetingNoteTitle})
                       </span>
+                      {isOtherOrg && (
+                        <span style={{ fontSize: '11px', color: '#6B7280', marginRight: '8px' }}>
+                          [{topicOrgName}]
+                        </span>
+                      )}
                       <button
                         onClick={() => {
                           setLocalTopicIds(localTopicIds.filter(id => id !== topicId));
@@ -2847,10 +3115,12 @@ graph LR
                   );
                 })}
               </div>
-            ) : (
-              <div style={{ fontSize: '14px', color: '#9CA3AF', fontStyle: 'italic', padding: '12px', backgroundColor: '#F9FAFB', borderRadius: '6px', border: '1px dashed #D1D5DB' }}>
-                選択された個別トピックはありません。「個別トピックを選択」ボタンから選択してください。
-              </div>
+                ) : (
+                  <div style={{ fontSize: '14px', color: '#9CA3AF', fontStyle: 'italic', padding: '12px', backgroundColor: '#F9FAFB', borderRadius: '6px', border: '1px dashed #D1D5DB' }}>
+                    選択された個別トピックはありません。「個別トピックを選択」ボタンから選択してください。
+                  </div>
+                )}
+              </>
             )}
           </div>
           
@@ -3064,11 +3334,14 @@ graph LR
               setIsTopicSelectModalOpen(false);
               setTopicSearchQuery('');
               setSelectedOrgId('');
+              setSelectedCompanyId('');
               setSelectedMeetingNoteId('');
               setModalTopics([]);
               setOrgIdInput('');
+              setCompanyIdInput('');
               setMeetingNoteIdInput('');
               setFilteredMeetingNotes([]);
+              setFilteredCompanyMeetingNotes([]);
             }
           }}
         >
@@ -3108,11 +3381,14 @@ graph LR
                   setIsTopicSelectModalOpen(false);
                   setTopicSearchQuery('');
                   setSelectedOrgId('');
+                  setSelectedCompanyId('');
                   setSelectedMeetingNoteId('');
                   setModalTopics([]);
                   setOrgIdInput('');
+                  setCompanyIdInput('');
                   setMeetingNoteIdInput('');
                   setFilteredMeetingNotes([]);
+                  setFilteredCompanyMeetingNotes([]);
                 }}
                 style={{
                   background: 'none',
@@ -3128,14 +3404,14 @@ graph LR
               </button>
             </div>
 
-            {/* 組織・議事録選択セクション */}
+            {/* 組織・事業会社・議事録選択セクション */}
             <div style={{ padding: '16px 24px', borderBottom: '1px solid #E5E7EB', backgroundColor: '#F9FAFB' }}>
               {/* ユニークID入力セクション */}
               <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#FFFFFF', borderRadius: '8px', border: '1px solid #E5E7EB' }}>
                 <div style={{ fontSize: '12px', fontWeight: 600, color: '#6B7280', marginBottom: '8px' }}>
                   ユニークIDで直接指定（オプション）
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
                   <div>
                     <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', color: '#6B7280' }}>
                       組織ID
@@ -3151,10 +3427,12 @@ graph LR
                             const foundOrg = findOrganizationById(orgTreeForModal, orgIdInput.trim());
                             if (foundOrg && foundOrg.id) {
                               setSelectedOrgId(foundOrg.id);
+                              setSelectedCompanyId('');
                               setSelectedMeetingNoteId('');
                               setModalTopics([]);
                               const notes = allMeetingNotes.filter(note => note.organizationId === foundOrg.id);
                               setFilteredMeetingNotes(notes);
+                              setFilteredCompanyMeetingNotes([]);
                               setOrgIdInput(''); // 検索後にクリア
                             } else {
                               alert('指定された組織IDが見つかりませんでした');
@@ -3175,13 +3453,83 @@ graph LR
                             const foundOrg = findOrganizationById(orgTreeForModal, orgIdInput.trim());
                             if (foundOrg && foundOrg.id) {
                               setSelectedOrgId(foundOrg.id);
+                              setSelectedCompanyId('');
                               setSelectedMeetingNoteId('');
                               setModalTopics([]);
                               const notes = allMeetingNotes.filter(note => note.organizationId === foundOrg.id);
                               setFilteredMeetingNotes(notes);
+                              setFilteredCompanyMeetingNotes([]);
                               setOrgIdInput(''); // 検索後にクリア
                             } else {
                               alert('指定された組織IDが見つかりませんでした');
+                            }
+                          }
+                        }}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: '#3B82F6',
+                          color: '#FFFFFF',
+                          border: 'none',
+                          borderRadius: '6px',
+                          fontSize: '13px',
+                          fontWeight: 500,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        検索
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', color: '#6B7280' }}>
+                      事業会社ID
+                    </label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type="text"
+                        placeholder="事業会社IDを入力"
+                        value={companyIdInput}
+                        onChange={(e) => setCompanyIdInput(e.target.value)}
+                        onKeyDown={async (e) => {
+                          if (e.key === 'Enter' && companyIdInput.trim()) {
+                            const foundCompany = allCompanies.find(comp => comp.id === companyIdInput.trim());
+                            if (foundCompany) {
+                              setSelectedCompanyId(foundCompany.id);
+                              setSelectedOrgId('');
+                              setSelectedMeetingNoteId('');
+                              setModalTopics([]);
+                              const notes = allCompanyMeetingNotes.filter(note => note.companyId === foundCompany.id);
+                              setFilteredCompanyMeetingNotes(notes);
+                              setFilteredMeetingNotes([]);
+                              setCompanyIdInput(''); // 検索後にクリア
+                            } else {
+                              alert('指定された事業会社IDが見つかりませんでした');
+                            }
+                          }
+                        }}
+                        style={{
+                          flex: 1,
+                          padding: '8px 10px',
+                          border: '1px solid #D1D5DB',
+                          borderRadius: '6px',
+                          fontSize: '13px',
+                        }}
+                      />
+                      <button
+                        onClick={async () => {
+                          if (companyIdInput.trim()) {
+                            const foundCompany = allCompanies.find(comp => comp.id === companyIdInput.trim());
+                            if (foundCompany) {
+                              setSelectedCompanyId(foundCompany.id);
+                              setSelectedOrgId('');
+                              setSelectedMeetingNoteId('');
+                              setModalTopics([]);
+                              const notes = allCompanyMeetingNotes.filter(note => note.companyId === foundCompany.id);
+                              setFilteredCompanyMeetingNotes(notes);
+                              setFilteredMeetingNotes([]);
+                              setCompanyIdInput(''); // 検索後にクリア
+                            } else {
+                              alert('指定された事業会社IDが見つかりませんでした');
                             }
                           }
                         }}
@@ -3212,16 +3560,32 @@ graph LR
                         onChange={(e) => setMeetingNoteIdInput(e.target.value)}
                         onKeyDown={async (e) => {
                           if (e.key === 'Enter' && meetingNoteIdInput.trim()) {
-                            const note = await getMeetingNoteById(meetingNoteIdInput.trim());
-                            if (note) {
-                              setSelectedMeetingNoteId(note.id);
-                              setSelectedOrgId(note.organizationId);
-                              const topics = await getTopicsByMeetingNote(note.id);
+                            // まず組織の議事録を検索
+                            const orgNote = await getMeetingNoteById(meetingNoteIdInput.trim());
+                            if (orgNote) {
+                              setSelectedMeetingNoteId(orgNote.id);
+                              setSelectedOrgId(orgNote.organizationId);
+                              setSelectedCompanyId('');
+                              const topics = await getTopicsByMeetingNote(orgNote.id);
                               setModalTopics(topics);
-                              const notes = allMeetingNotes.filter(n => n.organizationId === note.organizationId);
+                              const notes = allMeetingNotes.filter(n => n.organizationId === orgNote.organizationId);
                               setFilteredMeetingNotes(notes);
+                              setFilteredCompanyMeetingNotes([]);
                             } else {
-                              alert('指定された議事録IDが見つかりませんでした');
+                              // 組織の議事録が見つからない場合、事業会社の議事録を検索
+                              const companyNote = allCompanyMeetingNotes.find(n => n.id === meetingNoteIdInput.trim());
+                              if (companyNote) {
+                                setSelectedMeetingNoteId(companyNote.id);
+                                setSelectedCompanyId(companyNote.companyId);
+                                setSelectedOrgId('');
+                                const topics = await getTopicsByMeetingNote(companyNote.id);
+                                setModalTopics(topics);
+                                const notes = allCompanyMeetingNotes.filter(n => n.companyId === companyNote.companyId);
+                                setFilteredCompanyMeetingNotes(notes);
+                                setFilteredMeetingNotes([]);
+                              } else {
+                                alert('指定された議事録IDが見つかりませんでした');
+                              }
                             }
                           }
                         }}
@@ -3236,16 +3600,32 @@ graph LR
                       <button
                         onClick={async () => {
                           if (meetingNoteIdInput.trim()) {
-                            const note = await getMeetingNoteById(meetingNoteIdInput.trim());
-                            if (note) {
-                              setSelectedMeetingNoteId(note.id);
-                              setSelectedOrgId(note.organizationId);
-                              const topics = await getTopicsByMeetingNote(note.id);
+                            // まず組織の議事録を検索
+                            const orgNote = await getMeetingNoteById(meetingNoteIdInput.trim());
+                            if (orgNote) {
+                              setSelectedMeetingNoteId(orgNote.id);
+                              setSelectedOrgId(orgNote.organizationId);
+                              setSelectedCompanyId('');
+                              const topics = await getTopicsByMeetingNote(orgNote.id);
                               setModalTopics(topics);
-                              const notes = allMeetingNotes.filter(n => n.organizationId === note.organizationId);
+                              const notes = allMeetingNotes.filter(n => n.organizationId === orgNote.organizationId);
                               setFilteredMeetingNotes(notes);
+                              setFilteredCompanyMeetingNotes([]);
                             } else {
-                              alert('指定された議事録IDが見つかりませんでした');
+                              // 組織の議事録が見つからない場合、事業会社の議事録を検索
+                              const companyNote = allCompanyMeetingNotes.find(n => n.id === meetingNoteIdInput.trim());
+                              if (companyNote) {
+                                setSelectedMeetingNoteId(companyNote.id);
+                                setSelectedCompanyId(companyNote.companyId);
+                                setSelectedOrgId('');
+                                const topics = await getTopicsByMeetingNote(companyNote.id);
+                                setModalTopics(topics);
+                                const notes = allCompanyMeetingNotes.filter(n => n.companyId === companyNote.companyId);
+                                setFilteredCompanyMeetingNotes(notes);
+                                setFilteredMeetingNotes([]);
+                              } else {
+                                alert('指定された議事録IDが見つかりませんでした');
+                              }
                             }
                           }
                         }}
@@ -3278,13 +3658,16 @@ graph LR
                     onChange={async (e) => {
                       const orgId = e.target.value;
                       setSelectedOrgId(orgId);
+                      setSelectedCompanyId('');
                       setSelectedMeetingNoteId('');
                       setModalTopics([]);
                       if (orgId) {
                         const notes = allMeetingNotes.filter(note => note.organizationId === orgId);
                         setFilteredMeetingNotes(notes);
+                        setFilteredCompanyMeetingNotes([]);
                       } else {
                         setFilteredMeetingNotes([]);
+                        setFilteredCompanyMeetingNotes([]);
                       }
                     }}
                     style={{
@@ -3350,6 +3733,88 @@ graph LR
                 )}
               </div>
 
+              {/* 事業会社選択 */}
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 600, color: '#374151' }}>
+                  事業会社を選択
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <select
+                    value={selectedCompanyId}
+                    onChange={async (e) => {
+                      const compId = e.target.value;
+                      setSelectedCompanyId(compId);
+                      setSelectedOrgId('');
+                      setSelectedMeetingNoteId('');
+                      setModalTopics([]);
+                      if (compId) {
+                        const notes = allCompanyMeetingNotes.filter(note => note.companyId === compId);
+                        setFilteredCompanyMeetingNotes(notes);
+                        setFilteredMeetingNotes([]);
+                      } else {
+                        setFilteredCompanyMeetingNotes([]);
+                        setFilteredMeetingNotes([]);
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '12px 40px 12px 14px',
+                      border: '1px solid #D1D5DB',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      backgroundColor: '#FFFFFF',
+                      appearance: 'none',
+                      backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 12 12\'%3E%3Cpath fill=\'%236B7280\' d=\'M6 9L1 4h10z\'/%3E%3C/svg%3E")',
+                      backgroundRepeat: 'no-repeat',
+                      backgroundPosition: 'right 14px center',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = '#9CA3AF';
+                      e.currentTarget.style.boxShadow = '0 1px 2px 0 rgba(0, 0, 0, 0.05)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = '#D1D5DB';
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = '#3B82F6';
+                      e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = '#D1D5DB';
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                  >
+                    <option value="" style={{ color: '#9CA3AF' }}>事業会社を選択してください</option>
+                    {allCompanies.map((comp) => {
+                      const displayName = comp.name || comp.id;
+                      return (
+                        <option key={comp.id} value={comp.id} style={{ color: '#111827' }}>
+                          {displayName}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+                {selectedCompanyId && (
+                  <div style={{ marginTop: '6px', fontSize: '12px', color: '#6B7280' }}>
+                    {(() => {
+                      const selectedComp = allCompanies.find(comp => comp.id === selectedCompanyId);
+                      if (selectedComp) {
+                        return (
+                          <span>
+                            選択中: <span style={{ fontWeight: 500, color: '#374151' }}>{selectedComp.name}</span>
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
+                )}
+              </div>
+
               {/* 議事録カード表示 */}
               {selectedOrgId && filteredMeetingNotes.length > 0 && (
                 <div>
@@ -3370,6 +3835,74 @@ graph LR
                     }}
                   >
                     {filteredMeetingNotes.map((note) => {
+                      const isSelected = selectedMeetingNoteId === note.id;
+                      return (
+                        <div
+                          key={note.id}
+                          onClick={async () => {
+                            setSelectedMeetingNoteId(note.id);
+                            const topics = await getTopicsByMeetingNote(note.id);
+                            setModalTopics(topics);
+                          }}
+                          style={{
+                            padding: '12px',
+                            border: `2px solid ${isSelected ? '#3B82F6' : '#E5E7EB'}`,
+                            borderRadius: '8px',
+                            backgroundColor: isSelected ? '#EFF6FF' : '#FFFFFF',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isSelected) {
+                              e.currentTarget.style.backgroundColor = '#F9FAFB';
+                              e.currentTarget.style.borderColor = '#D1D5DB';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isSelected) {
+                              e.currentTarget.style.backgroundColor = '#FFFFFF';
+                              e.currentTarget.style.borderColor = '#E5E7EB';
+                            }
+                          }}
+                        >
+                          <div style={{ fontSize: '14px', fontWeight: 600, color: '#111827', marginBottom: '4px' }}>
+                            {note.title}
+                          </div>
+                          {note.description && (
+                            <div style={{ fontSize: '12px', color: '#6B7280', marginBottom: '4px', lineHeight: '1.4', maxHeight: '40px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {note.description.substring(0, 60)}{note.description.length > 60 ? '...' : ''}
+                            </div>
+                          )}
+                          <div style={{ fontSize: '11px', color: '#9CA3AF', fontFamily: 'monospace', marginTop: '4px' }}>
+                            ID: {note.id}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* 事業会社の議事録カード表示 */}
+              {selectedCompanyId && filteredCompanyMeetingNotes.length > 0 && (
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 600, color: '#374151' }}>
+                    議事録アーカイブを選択 ({filteredCompanyMeetingNotes.length}件)
+                  </label>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                      gap: '12px',
+                      maxHeight: '300px',
+                      overflowY: 'auto',
+                      padding: '8px',
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: '8px',
+                      border: '1px solid #E5E7EB',
+                    }}
+                  >
+                    {filteredCompanyMeetingNotes.map((note) => {
                       const isSelected = selectedMeetingNoteId === note.id;
                       return (
                         <div
@@ -3448,7 +3981,7 @@ graph LR
             >
               {!selectedMeetingNoteId ? (
                 <div style={{ textAlign: 'center', padding: '40px', color: '#9CA3AF' }}>
-                  組織と議事録アーカイブを選択すると、その議事録で作成された個別トピックが表示されます。
+                  組織または事業会社と議事録アーカイブを選択すると、その議事録で作成された個別トピックが表示されます。
                 </div>
               ) : modalTopics.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px', color: '#9CA3AF' }}>

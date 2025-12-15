@@ -70,8 +70,11 @@ export async function createEntity(entity: CreateEntityInput | (CreateEntityInpu
             timestamp: new Date().toISOString(),
           });
         });
+      } else if (entity.companyId) {
+        // 事業会社用の埋め込み生成（将来的に実装）
+        console.log(`ℹ️ [createEntity] companyIdが設定されていますが、事業会社用の埋め込み生成は未実装です: ${entity.name} (${id})`);
       } else {
-        console.warn(`⚠️ [createEntity] organizationIdが設定されていないため、埋め込み生成をスキップ: ${entity.name} (${id})`);
+        console.warn(`⚠️ [createEntity] organizationIdもcompanyIdも設定されていないため、埋め込み生成をスキップ: ${entity.name} (${id})`);
       }
 
       return entityData;
@@ -83,81 +86,142 @@ export async function createEntity(entity: CreateEntityInput | (CreateEntityInpu
 }
 
 /**
+ * 複数のエンティティIDで一括取得（並列処理、パフォーマンス最適化）
+ * @param entityIds エンティティIDの配列
+ * @param concurrencyLimit 並列実行数の制限（デフォルト: 5）
+ * @returns エンティティの配列（存在しないIDは除外）
+ */
+export async function getEntitiesByIds(
+  entityIds: string[],
+  concurrencyLimit: number = 5
+): Promise<Entity[]> {
+  if (entityIds.length === 0) {
+    return [];
+  }
+
+  // p-limitを使用して並列数を制限
+  const pLimit = (await import('p-limit')).default;
+  const limit = pLimit(concurrencyLimit);
+
+  try {
+    // 並列で取得
+    const results = await Promise.allSettled(
+      entityIds.map(id => 
+        limit(async () => {
+          try {
+            return await getEntityById(id);
+          } catch (error: any) {
+            // 個別のエラーは無視してnullを返す（CORSエラーなど）
+            const errorMessage = error?.message || String(error || '');
+            if (!errorMessage.includes('access control checks') && 
+                !errorMessage.includes('CORS') &&
+                !errorMessage.includes('Tauri環境ではありません')) {
+              console.warn(`[getEntitiesByIds] エンティティ ${id} の取得エラー:`, error);
+            }
+            return null;
+          }
+        })
+      )
+    );
+
+    // 成功した結果のみを返す
+    const entities: Entity[] = [];
+    for (const result of results) {
+      if (result.status === 'fulfilled' && result.value) {
+        entities.push(result.value);
+      }
+    }
+
+    return entities;
+  } catch (error) {
+    console.error('❌ [getEntitiesByIds] エラー:', error);
+    return [];
+  }
+}
+
+/**
  * エンティティIDで取得
  */
 export async function getEntityById(entityId: string): Promise<Entity | null> {
   try {
-    try {
-      // Rust API経由で取得（未実装の場合はフォールバック）
-      console.log('📖 [getEntityById] Rust API経由でエンティティを取得します:', entityId);
-      const result = await apiGet<Entity>(`/api/entities/${entityId}`);
-      console.log('✅ [getEntityById] Rust API経由でエンティティを取得しました:', entityId);
-      return result;
-    } catch (error: any) {
-      // フォールバック: Tauriコマンド経由
-      // エンティティが見つからない場合は警告を出力しない（リレーション埋め込み生成時に大量の警告が発生するため）
-      const isNotFoundError = error?.message?.includes('見つかりません') || error?.message?.includes('not found');
-      if (!isNotFoundError) {
-        console.warn('⚠️ [getEntityById] Rust API経由の取得に失敗、Tauriコマンドにフォールバック:', entityId, error);
-      }
-      console.log('📖 [getEntityById] Tauriコマンド経由でエンティティを取得します:', entityId);
-      const result = await callTauriCommand('doc_get', {
-        collectionName: 'entities',
-        docId: entityId,
-      });
+    // Tauri環境では直接Tauriコマンドを使用（CORSエラーを回避）
+    if (typeof window !== 'undefined' && '__TAURI__' in window) {
+      try {
+        const result = await callTauriCommand('doc_get', {
+          collectionName: 'entities',
+          docId: entityId,
+        });
 
-      // doc_getの結果は{exists: true/false, data: ...}の形式
-      const resultData = result as any;
-      console.log('📊 [getEntityById] Tauriコマンドの結果:', entityId, resultData);
-      if (!resultData?.exists || !resultData?.data) {
-        // エンティティが見つからない場合は警告を出力しない（リレーション埋め込み生成時に大量の警告が発生するため）
+        // doc_getの結果は{exists: true/false, data: ...}の形式
+        const resultData = result as any;
+        if (!resultData?.exists || !resultData?.data) {
+          // エンティティが見つからない場合は警告を出力しない（リレーション埋め込み生成時に大量の警告が発生するため）
+          return null;
+        }
+        
+        const entityData = resultData.data;
+        if (!entityData || Object.keys(entityData).length === 0) {
+          return null;
+        }
+        
+        // idフィールドを追加
+        const entityIdFromResult = entityId;
+        
+        // aliasesとmetadataをJSON文字列からオブジェクトに変換
+        const entity: Entity = {
+          ...entityData,
+          id: entityIdFromResult,
+        };
+        
+        if (entity.aliases && typeof entity.aliases === 'string') {
+          try {
+            entity.aliases = JSON.parse(entity.aliases);
+          } catch (e) {
+            console.warn('⚠️ [getEntityById] aliasesのパースエラー:', e);
+            entity.aliases = [];
+          }
+        }
+        
+        if (entity.metadata && typeof entity.metadata === 'string') {
+          try {
+            entity.metadata = JSON.parse(entity.metadata);
+          } catch (e) {
+            console.warn('⚠️ [getEntityById] metadataのパースエラー:', e);
+            entity.metadata = {};
+          }
+        }
+        
+        return entity;
+      } catch (docGetError: any) {
+        // doc_getのエラーも無視（エンティティが存在しない場合など）
+        const docGetErrorMessage = docGetError?.message || String(docGetError || '');
+        const isDocGetNoRowsError = docGetErrorMessage.includes('no rows') || 
+                                    docGetErrorMessage.includes('Query returned no rows') ||
+                                    docGetErrorMessage.includes('ドキュメント取得エラー') ||
+                                    docGetErrorMessage.includes('Tauri環境ではありません') ||
+                                    docGetErrorMessage.includes('access control checks');
+        
+        if (!isDocGetNoRowsError) {
+          console.warn('⚠️ [getEntityById] Tauriコマンド経由の取得に失敗:', entityId, docGetError);
+        }
         return null;
       }
-      console.log('✅ [getEntityById] Tauriコマンド経由でエンティティを取得しました:', entityId);
-      
-      const entityData = resultData.data;
-      if (!entityData || Object.keys(entityData).length === 0) {
-        return null;
-      }
-      
-      // idフィールドを追加
-      const entityIdFromResult = entityId;
-      
-      // aliasesとmetadataをJSON文字列からオブジェクトに変換
-      const entity: Entity = {
-        ...entityData,
-        id: entityIdFromResult,
-      };
-      
-      if (entity.aliases && typeof entity.aliases === 'string') {
-        try {
-          entity.aliases = JSON.parse(entity.aliases);
-        } catch (e) {
-          console.warn('⚠️ [getEntityById] aliasesのパースエラー:', e);
-          entity.aliases = [];
-        }
-      }
-      
-      if (entity.metadata && typeof entity.metadata === 'string') {
-        try {
-          entity.metadata = JSON.parse(entity.metadata);
-        } catch (e) {
-          console.warn('⚠️ [getEntityById] metadataのパースエラー:', e);
-          entity.metadata = {};
-        }
-      }
-      
-      return entity;
     }
+    
+    // Tauri環境でない場合はnullを返す
+    return null;
   } catch (error: any) {
-    // 「no rows」エラーは正常な状態（エンティティが存在しない）として扱う
+    // 「no rows」エラーやTauri環境でないエラーは正常な状態として扱う
     const errorMessage = error?.message || error?.error || error?.errorString || String(error || '');
     const isNoRowsError = errorMessage.includes('no rows') || 
                           errorMessage.includes('Query returned no rows') ||
                           errorMessage.includes('ドキュメント取得エラー');
+    const isTauriEnvError = errorMessage.includes('Tauri環境ではありません') ||
+                            errorMessage.includes('access control checks') ||
+                            errorMessage.includes('ipc://localhost');
     
-    if (isNoRowsError) {
-      // エンティティが存在しない場合は正常な状態として扱い、エラーログを出力しない
+    if (isNoRowsError || isTauriEnvError) {
+      // エンティティが存在しない場合やTauri環境でない場合は正常な状態として扱い、エラーログを出力しない
       return null;
     }
     
@@ -202,6 +266,7 @@ export async function getAllEntities(): Promise<Entity[]> {
           name: itemData.name || '',
           type: itemData.type || 'other',
           organizationId: itemData.organizationId || null,
+          companyId: itemData.companyId || null,
           aliases: [],
           metadata: {},
           createdAt: itemData.createdAt || new Date().toISOString(),
@@ -286,16 +351,59 @@ export async function getEntitiesByOrganizationId(organizationId: string): Promi
 }
 
 /**
+ * 事業会社IDでエンティティ一覧を取得
+ */
+export async function getEntitiesByCompanyId(companyId: string): Promise<Entity[]> {
+  try {
+    const result = await callTauriCommand('query_get', {
+      collectionName: 'entities',
+      conditions: { companyId },
+    });
+
+    // query_getの結果は[{id: ..., data: ...}, ...]の形式
+    const items = (result || []) as Array<{id: string; data: any}>;
+    return items.map(item => {
+      const entity: Entity = { ...item.data, id: item.id };
+      // aliasesとmetadataをJSON文字列からオブジェクトに変換
+      if (entity.aliases && typeof entity.aliases === 'string') {
+        try {
+          entity.aliases = JSON.parse(entity.aliases);
+        } catch (e) {
+          console.warn('⚠️ [getEntitiesByCompanyId] aliasesのパースエラー:', e);
+          entity.aliases = [];
+        }
+      }
+      if (entity.metadata && typeof entity.metadata === 'string') {
+        try {
+          entity.metadata = JSON.parse(entity.metadata);
+        } catch (e) {
+          console.warn('⚠️ [getEntitiesByCompanyId] metadataのパースエラー:', e);
+          entity.metadata = {};
+        }
+      }
+      return entity;
+    }) as Entity[];
+  } catch (error: any) {
+    console.error('❌ [getEntitiesByCompanyId] エラー:', error);
+    return [];
+  }
+}
+
+/**
  * エンティティタイプでフィルタリングして取得
  */
 export async function getEntitiesByType(
   type: EntityType,
-  organizationId?: string
+  organizationId?: string,
+  companyId?: string
 ): Promise<Entity[]> {
   try {
     const filters: any = { type };
     if (organizationId) {
       filters.organizationId = organizationId;
+    }
+    if (companyId) {
+      filters.companyId = companyId;
     }
 
     const result = await callTauriCommand('query_get', {
@@ -337,7 +445,8 @@ export async function getEntitiesByType(
  */
 export async function searchEntitiesByName(
   name: string,
-  organizationId?: string
+  organizationId?: string,
+  companyId?: string
 ): Promise<Entity[]> {
   try {
     // 簡易的な実装（完全一致・部分一致）
@@ -345,6 +454,9 @@ export async function searchEntitiesByName(
     const filters: any = {};
     if (organizationId) {
       filters.organizationId = organizationId;
+    }
+    if (companyId) {
+      filters.companyId = companyId;
     }
 
     const result = await callTauriCommand('query_get', {
@@ -408,16 +520,18 @@ export async function updateEntity(
       throw new Error(`エンティティが見つかりません: ${entityId}`);
     }
 
-    // organizationIdは外部キー制約があるため、更新しない（既存の値を保持）
-    // もしorganizationIdを更新する必要がある場合は、別途バリデーションが必要
-    const updatesWithoutOrgId = { ...updates };
-    delete (updatesWithoutOrgId as any).organizationId;
+    // organizationIdとcompanyIdは外部キー制約があるため、更新しない（既存の値を保持）
+    // もしorganizationIdやcompanyIdを更新する必要がある場合は、別途バリデーションが必要
+    const updatesWithoutIds = { ...updates };
+    delete (updatesWithoutIds as any).organizationId;
+    delete (updatesWithoutIds as any).companyId;
     
     const updated: Entity = {
       ...existing,
-      ...updatesWithoutOrgId,
-      // organizationIdは既存の値を保持（外部キー制約のため）
+      ...updatesWithoutIds,
+      // organizationIdとcompanyIdは既存の値を保持（外部キー制約のため）
       organizationId: existing.organizationId,
+      companyId: existing.companyId,
       updatedAt: new Date().toISOString(),
     };
     
@@ -426,11 +540,12 @@ export async function updateEntity(
       ...updated,
     };
     
-    // organizationIdは外部キー制約があるため、更新時には常に除外する
-    // 既存のエンティティのorganizationIdが存在しない組織IDを参照している可能性があるため、
-    // 更新時にはorganizationIdフィールドを除外して、既存の値を保持する
+    // organizationIdとcompanyIdは外部キー制約があるため、更新時には常に除外する
+    // 既存のエンティティのorganizationIdやcompanyIdが存在しないIDを参照している可能性があるため、
+    // 更新時にはこれらのフィールドを除外して、既存の値を保持する
     // これにより、外部キー制約エラーを回避
     delete updatedForDb.organizationId;
+    delete updatedForDb.companyId;
     
     if (updatedForDb.aliases && Array.isArray(updatedForDb.aliases)) {
       updatedForDb.aliases = JSON.stringify(updatedForDb.aliases);
@@ -477,8 +592,11 @@ export async function updateEntity(
           // エラーは既にsyncEntityToChroma内で処理されているため、ここではログのみ
           console.debug(`[updateEntity] ChromaDB同期エラー（処理は続行）: ${entityId}`, error);
         }
+      } else if (updated.companyId) {
+        // 事業会社用のChromaDB同期（将来的に実装）
+        console.log(`ℹ️ [updateEntity] companyIdが設定されていますが、事業会社用のChromaDB同期は未実装です: ${entityId}`);
       } else {
-        console.warn(`⚠️ [updateEntity] organizationIdが設定されていないため、ChromaDB同期をスキップ: ${entityId}`);
+        console.warn(`⚠️ [updateEntity] organizationIdもcompanyIdも設定されていないため、ChromaDB同期をスキップ: ${entityId}`);
       }
       
       return updated;
@@ -497,6 +615,7 @@ export async function deleteEntity(entityId: string): Promise<void> {
     // 削除前にエンティティ情報を取得（ChromaDB削除用）
     const existing = await getEntityById(entityId);
     const organizationId = existing?.organizationId;
+    const companyId = existing?.companyId;
     
     try {
       // Rust API経由で削除（未実装の場合はフォールバック）
@@ -519,6 +638,9 @@ export async function deleteEntity(entityId: string): Promise<void> {
         // エラーは既にdeleteEntityFromChroma内で処理されているため、ここではログのみ
         console.debug(`[deleteEntity] ChromaDB削除エラー（処理は続行）: ${entityId}`, error);
       }
+    } else if (companyId) {
+      // 事業会社用のChromaDB削除（将来的に実装）
+      console.log(`ℹ️ [deleteEntity] companyIdが設定されていますが、事業会社用のChromaDB削除は未実装です: ${entityId}`);
     }
     
     // キャッシュを無効化
@@ -590,11 +712,14 @@ export async function mergeEntities(
 export async function findSimilarEntities(
   entityName: string,
   organizationId?: string,
+  companyId?: string,
   threshold: number = 0.8
 ): Promise<Array<{ entity: Entity; similarity: number }>> {
   try {
     const entities = organizationId
       ? await getEntitiesByOrganizationId(organizationId)
+      : companyId
+      ? await getEntitiesByCompanyId(companyId)
       : await callTauriCommand('collection_get', {
           collectionName: 'entities',
         }).then(result => {

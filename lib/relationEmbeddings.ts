@@ -10,10 +10,11 @@ import {
 } from './embeddings';
 import type { RelationEmbedding, CreateRelationEmbeddingInput } from '@/types/relationEmbedding';
 import type { Relation } from '@/types/relation';
-import { getRelationById, getAllRelations } from './relationApi';
+import { getRelationById, getAllRelations, getRelationsByIds } from './relationApi';
 import { shouldUseChroma } from './chromaConfig';
 import { calculateRelationScore, adjustWeightsForQuery } from './ragSearchScoring';
 import { handleRAGSearchError, safeHandleRAGSearchError } from './ragSearchErrors';
+import pLimit from 'p-limit';
 
 /**
  * 現在の埋め込みバージョン
@@ -340,24 +341,44 @@ export async function waitForRelationEmbedding(
  * リレーション埋め込みを取得
  * 
  * @param relationId リレーションID
+ * @param organizationId 組織ID（オプション、指定されない場合はリレーションから取得を試みる）
  * @returns リレーション埋め込みデータ、またはnull
  */
 export async function getRelationEmbedding(
-  relationId: string
+  relationId: string,
+  organizationId?: string
 ): Promise<RelationEmbedding | null> {
   // ChromaDBを使用する場合（動的インポート）
   if (shouldUseChroma()) {
     try {
-      const { getRelationEmbeddingFromChroma } = await import('./relationEmbeddingsChroma');
-      const embedding = await getRelationEmbeddingFromChroma(relationId);
-      if (embedding) {
-        return embedding;
+      let orgId = organizationId;
+      if (!orgId) {
+        try {
+          const relation = await getRelationById(relationId);
+          orgId = relation?.organizationId;
+        } catch (e) {}
       }
-      // 埋め込みが見つからない場合はnullを返す
+
+      if (orgId) {
+        try {
+          const { getRelationEmbeddingFromChroma } = await import('./relationEmbeddingsChroma');
+          const embedding = await getRelationEmbeddingFromChroma(relationId, orgId);
+          if (embedding) {
+            return embedding;
+          }
+        } catch (chromaError: any) {
+          const errorMessage = chromaError?.message || String(chromaError);
+          if (errorMessage.includes('ChromaDBサーバーの起動に失敗しました') || 
+              errorMessage.includes('ChromaDBクライアントが初期化されていません')) {
+            console.debug(`ChromaDBサーバーが起動していないため、埋め込みの存在確認をスキップ: ${relationId}`);
+            return null;
+          }
+          console.debug(`ChromaDBからの埋め込み取得エラー（無視）: ${relationId}`, errorMessage);
+        }
+      }
       return null;
     } catch (chromaError: any) {
       console.error('❌ ChromaDBからの取得に失敗しました:', chromaError?.message || chromaError);
-      // ChromaDBからの取得に失敗した場合はnullを返す（埋め込みが存在しない可能性）
       return null;
     }
   }
@@ -402,7 +423,113 @@ export async function findSimilarRelations(
 }
 
 /**
- * ハイブリッド検索: ベクトル検索 + メタデータフィルタリング・ブースト
+ * キーワードマッチスコアを計算（SQLiteのキーワード検索用）
+ * リレーションタイプ、説明、メタデータなどを考慮
+ */
+function calculateRelationKeywordMatchScore(
+  queryText: string,
+  relation: Relation
+): number {
+  const queryLower = queryText.toLowerCase().trim();
+  const queryWords = queryLower.split(/\s+/).filter(w => w.length > 0);
+  
+  let score = 0;
+  const relationTypeLower = relation.relationType.toLowerCase();
+  const descriptionLower = (relation.description || '').toLowerCase();
+  
+  // 1. リレーションタイプ完全一致
+  if (relationTypeLower === queryLower) {
+    score = 0.9;
+  }
+  // 2. リレーションタイプ部分一致
+  else if (relationTypeLower.includes(queryLower)) {
+    score = 0.7;
+  }
+  // 3. 説明テキスト一致
+  else if (descriptionLower.includes(queryLower)) {
+    score = 0.6;
+  }
+  // 4. 単語レベルの一致
+  else {
+    let matchedWords = 0;
+    for (const word of queryWords) {
+      if (relationTypeLower.includes(word) || descriptionLower.includes(word)) {
+        matchedWords++;
+      }
+    }
+    if (matchedWords > 0) {
+      score = 0.4 * (matchedWords / queryWords.length);
+    }
+  }
+  
+  // 5. メタデータ一致（軽い追加スコア）
+  if (relation.metadata && Object.keys(relation.metadata).length > 0) {
+    const metadataText = JSON.stringify(relation.metadata).toLowerCase();
+    if (metadataText.includes(queryLower)) {
+      score = Math.min(1.0, score + 0.1);
+    }
+  }
+  
+  return Math.min(1.0, score);
+}
+
+/**
+ * SQLiteキーワード検索を実行（リレーション）
+ */
+async function searchRelationsByKeywords(
+  queryText: string,
+  limit: number,
+  filters?: {
+    organizationId?: string;
+    relationType?: string;
+  }
+): Promise<Array<{ relationId: string; keywordScore: number }>> {
+  try {
+    const { getAllRelations } = await import('./relationApi');
+    
+    // SQLiteから全リレーションを取得してフィルタリング
+    const allRelations = await getAllRelations();
+    const searchLower = queryText.toLowerCase();
+    
+    let keywordRelations = allRelations.filter(relation => {
+      // 組織IDでフィルタリング
+      if (filters?.organizationId && relation.organizationId !== filters.organizationId) {
+        return false;
+      }
+      
+      // リレーションタイプでフィルタリング
+      if (filters?.relationType && relation.relationType !== filters.relationType) {
+        return false;
+      }
+      
+      // キーワードマッチング
+      if (relation.relationType.toLowerCase().includes(searchLower)) {
+        return true;
+      }
+      if (relation.description && relation.description.toLowerCase().includes(searchLower)) {
+        return true;
+      }
+      return false;
+    });
+    
+    // キーワードマッチスコアを計算
+    const keywordResults = keywordRelations.map(relation => ({
+      relationId: relation.id,
+      keywordScore: calculateRelationKeywordMatchScore(queryText, relation),
+    }));
+    
+    // スコアでソート
+    keywordResults.sort((a, b) => b.keywordScore - a.keywordScore);
+    
+    return keywordResults.slice(0, limit);
+  } catch (error: any) {
+    console.warn(`[searchRelationsByKeywords] SQLiteキーワード検索エラー:`, error?.message || error);
+    return [];
+  }
+}
+
+/**
+ * ハイブリッド検索: ChromaDBベクトル検索 + SQLiteキーワード検索 + 統合スコアリング
  * 
  * @param queryText 検索クエリテキスト
  * @param limit 返す結果の最大数（デフォルト: 20）
@@ -419,38 +546,108 @@ export async function findSimilarRelationsHybrid(
   }
 ): Promise<Array<{ relationId: string; similarity: number; score: number }>> {
   try {
-    // 1. ベクトル検索で候補を取得（多めに取得）
-    const vectorResults = await findSimilarRelations(
-      queryText,
-      limit * 2,
-      filters?.organizationId
-    );
+    console.log(`[findSimilarRelationsHybrid] 🔍 ハイブリッド検索開始: queryText="${queryText}", limit=${limit}`);
+    
+    // 1. ChromaDBベクトル検索とSQLiteキーワード検索を並列実行
+    const [vectorResults, keywordResults] = await Promise.all([
+      findSimilarRelations(
+        queryText,
+        limit * 2,
+        filters?.organizationId
+      ).catch(error => {
+        console.warn(`[findSimilarRelationsHybrid] ベクトル検索エラー:`, error);
+        return [];
+      }),
+      searchRelationsByKeywords(
+        queryText,
+        limit * 2,
+        filters
+      ).catch(error => {
+        console.warn(`[findSimilarRelationsHybrid] キーワード検索エラー:`, error);
+        return [];
+      }),
+    ]);
 
-    if (vectorResults.length === 0) {
+    console.log(`[findSimilarRelationsHybrid] ベクトル検索結果: ${vectorResults.length}件, キーワード検索結果: ${keywordResults.length}件`);
+    
+    // ベクトル検索とキーワード検索の両方が空の場合は早期リターン
+    if (vectorResults.length === 0 && keywordResults.length === 0) {
       return [];
     }
-
-    // 2. クエリに基づいて重みを調整
-    const weights = adjustWeightsForQuery(queryText);
-
-    // 3. メタデータでフィルタリング・ブースト（新しいスコアリング関数を使用）
-    const enhancedResults: Array<{ relationId: string; similarity: number; score: number }> = [];
     
-    // クエリテキストを小文字に変換してキーワード抽出
-    const queryLower = queryText.toLowerCase();
-    const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2); // 2文字以上の単語のみ
+    // キーワード検索のみで結果がある場合でも続行
+    if (vectorResults.length === 0 && keywordResults.length > 0) {
+      console.log(`[findSimilarRelationsHybrid] ベクトル検索は0件ですが、キーワード検索で${keywordResults.length}件の結果があります。`);
+    }
+
+    // 2. ベクトル検索とキーワード検索の結果を統合
+    const vectorMap = new Map<string, number>();
+    const keywordMap = new Map<string, number>();
     
     for (const result of vectorResults) {
+      vectorMap.set(result.relationId, result.similarity);
+    }
+    
+    for (const result of keywordResults) {
+      keywordMap.set(result.relationId, result.keywordScore);
+    }
+    
+    // すべてのユニークなリレーションIDを収集
+    const allRelationIds = new Set<string>();
+    vectorMap.forEach((_, id) => allRelationIds.add(id));
+    keywordMap.forEach((_, id) => allRelationIds.add(id));
+    
+    console.log(`[findSimilarRelationsHybrid] 統合対象リレーション数: ${allRelationIds.size}件（ベクトル: ${vectorMap.size}件, キーワード: ${keywordMap.size}件）`);
+
+    // 3. リレーションデータを一括取得
+    const relationIds = Array.from(allRelationIds);
+    const relations = await getRelationsByIds(relationIds, 5);
+    const relationMap = new Map(relations.map(r => [r.id, r]));
+
+    // 4. 統合スコアリング: ベクトル類似度とキーワードスコアを組み合わせ
+    const weights = adjustWeightsForQuery(queryText);
+    const enhancedResults: Array<{ relationId: string; similarity: number; score: number }> = [];
+    
+    // 重み付け: ベクトル類似度60%、キーワードスコア40%
+    const VECTOR_WEIGHT = 0.6;
+    const KEYWORD_WEIGHT = 0.4;
+    
+    for (const relationId of allRelationIds) {
       try {
-        // リレーションデータを取得
-        const relation = await getRelationById(result.relationId);
+        const relation = relationMap.get(relationId);
         if (!relation) {
+          // リレーションが見つからない場合でも、ベクトルまたはキーワードスコアがあれば含める
+          const vectorSim = vectorMap.get(relationId) || 0;
+          const keywordScore = keywordMap.get(relationId) || 0;
+          const combinedScore = vectorSim * VECTOR_WEIGHT + keywordScore * KEYWORD_WEIGHT;
+          
+          if (combinedScore > 0) {
+            enhancedResults.push({
+              relationId,
+              similarity: vectorSim,
+              score: combinedScore,
+            });
+          }
           continue;
         }
 
-        // 新しいスコアリング関数を使用
-        let score = calculateRelationScore(result.similarity, relation, weights);
-
+        // ベクトル類似度とキーワードスコアを取得
+        const vectorSim = vectorMap.get(relationId) || 0;
+        const keywordScore = keywordMap.get(relationId) || calculateRelationKeywordMatchScore(queryText, relation);
+        
+        // ベーススコア: ベクトル類似度とキーワードスコアの重み付け平均
+        let score = vectorSim * VECTOR_WEIGHT + keywordScore * KEYWORD_WEIGHT;
+        
+        // キーワード完全一致の場合は大幅にブースト
+        if (keywordScore >= 0.9) {
+          score = Math.min(1.0, score + 0.2);
+        } else if (keywordScore >= 0.7) {
+          score = Math.min(1.0, score + 0.1);
+        }
+        
+        // メタデータスコアリング（既存のロジック）
+        score = calculateRelationScore(score, relation, weights);
+        
         // リレーションタイプが一致する場合は追加ブースト
         if (filters?.relationType && relation.relationType === filters.relationType) {
           score = Math.min(1.0, score + 0.1);
@@ -461,55 +658,24 @@ export async function findSimilarRelationsHybrid(
           score = Math.min(1.0, score + 0.08);
         }
 
-        // 説明テキストマッチのブースト
-        if (relation.description) {
-          const descriptionLower = relation.description.toLowerCase();
-          let descriptionMatchCount = 0;
-          for (const word of queryWords) {
-            if (descriptionLower.includes(word)) {
-              descriptionMatchCount++;
-            }
-          }
-          if (descriptionMatchCount > 0) {
-            score = Math.min(1.0, score + 0.05 * Math.min(descriptionMatchCount / queryWords.length, 1.0));
-          }
-        }
-
-        // リレーションタイプ名マッチのブースト
-        const relationTypeLower = relation.relationType.toLowerCase();
-        for (const word of queryWords) {
-          if (relationTypeLower.includes(word)) {
-            score = Math.min(1.0, score + 0.05);
-            break;
-          }
-        }
-
-        // メタデータマッチのブースト
-        if (relation.metadata && Object.keys(relation.metadata).length > 0) {
-          const metadataText = JSON.stringify(relation.metadata).toLowerCase();
-          for (const word of queryWords) {
-            if (metadataText.includes(word)) {
-              score = Math.min(1.0, score + 0.02);
-              break;
-            }
-          }
-        }
-
         enhancedResults.push({
-          relationId: result.relationId,
-          similarity: result.similarity,
+          relationId,
+          similarity: vectorSim,
           score,
         });
       } catch (error) {
-        // リレーション取得エラーは無視して続行
-        console.warn(`リレーション ${result.relationId} の取得エラー:`, error);
+        console.warn(`リレーション ${relationId} の処理エラー:`, error);
       }
     }
 
-    // 4. スコアでソートして上位を返す
-    return enhancedResults
+    // 5. スコアでソートして上位を返す
+    const sortedResults = enhancedResults
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
+    
+    console.log(`[findSimilarRelationsHybrid] 統合検索完了: ${sortedResults.length}件の結果を返します`);
+    
+    return sortedResults;
   } catch (error) {
     const ragError = handleRAGSearchError(error, {
       queryText,
@@ -549,55 +715,106 @@ export async function batchUpdateRelationEmbeddings(
   relationIds: string[],
   organizationId: string,
   forceRegenerate: boolean = false,
-  onProgress?: (current: number, total: number, relationId: string, status: 'processing' | 'skipped' | 'error' | 'success') => void
+  onProgress?: (current: number, total: number, relationId: string, status: 'processing' | 'skipped' | 'error' | 'success') => void,
+  shouldCancel?: () => boolean
 ): Promise<{ success: number; skipped: number; errors: number }> {
   console.log(`📊 ${relationIds.length}件のリレーション埋め込みを一括${forceRegenerate ? '再生成' : '生成'}します...`);
 
   let successCount = 0;
   let skippedCount = 0;
   let errorCount = 0;
+  let processedCount = 0;
 
-  for (let i = 0; i < relationIds.length; i++) {
-    const relationId = relationIds[i];
-    try {
-      // 既に埋め込みが存在するかチェック
-      const existing = await getRelationEmbedding(relationId);
-      if (existing && !forceRegenerate) {
-        console.log(`⏭️  リレーション ${relationId} は既に埋め込みが存在するためスキップ`);
-        skippedCount++;
-        onProgress?.(i + 1, relationIds.length, relationId, 'skipped');
-        continue;
-      }
-
-      // リレーションを取得してtopicIdを取得
-      const relation = await getRelationById(relationId);
-      if (!relation) {
-        console.warn(`⚠️ リレーションが見つかりません: ${relationId}`);
-        errorCount++;
-        onProgress?.(i + 1, relationIds.length, relationId, 'error');
-        continue;
-      }
-
-      const result = await saveRelationEmbeddingAsync(relationId, relation.topicId, organizationId);
-      if (result) {
-        successCount++;
-        onProgress?.(i + 1, relationIds.length, relationId, 'success');
-      } else {
-        // saveRelationEmbeddingAsyncがfalseを返した場合（リレーションが見つからない、既に生成中など）
-        errorCount++;
-        onProgress?.(i + 1, relationIds.length, relationId, 'error');
-        console.warn(`⚠️ リレーション ${relationId} の埋め込み生成がスキップされました`);
+  // 並列数を3〜5に制限（メモリ使用量を抑えるため）
+  const limit = pLimit(5);
+  
+  // 各リレーションの処理を並列実行（同時実行数制限付き）
+  const promises = relationIds.map((relationId, index) => 
+    limit(async () => {
+      // 停止チェック
+      if (shouldCancel && shouldCancel()) {
+        return { status: 'cancelled' as const };
       }
       
-      // APIレート制限を考慮して少し待機
-      await new Promise(resolve => setTimeout(resolve, 100));
-    } catch (error) {
-      console.error(`リレーション ${relationId} の埋め込み生成エラー:`, error);
-      errorCount++;
-      onProgress?.(i + 1, relationIds.length, relationId, 'error');
-      // エラーが発生しても続行
-    }
-  }
+      try {
+        // SQLiteのchromaSyncedフラグをチェック（高速）
+        if (!forceRegenerate) {
+          try {
+            const relationDoc = await callTauriCommand('doc_get', {
+              collectionName: 'relations',
+              docId: relationId,
+            });
+            
+            if (relationDoc?.exists && relationDoc?.data) {
+              const chromaSynced = relationDoc.data.chromaSynced;
+              if (chromaSynced === 1) {
+                console.log(`⏭️  リレーション ${relationId} は既に埋め込みが存在するためスキップ（SQLiteフラグ確認）`);
+                const current = ++processedCount;
+                skippedCount++;
+                onProgress?.(current, relationIds.length, relationId, 'skipped');
+                return { status: 'skipped' as const };
+              }
+            }
+          } catch (sqliteError: any) {
+            // SQLiteからの取得に失敗した場合は続行（ChromaDBから確認を試みる）
+            console.debug(`SQLiteからのフラグ取得エラー（続行）: ${relationId}`, sqliteError?.message || sqliteError);
+          }
+        }
+        
+        // SQLiteで確認できない場合、ChromaDBから確認（フォールバック）
+        if (!forceRegenerate) {
+          const existing = await getRelationEmbedding(relationId);
+          if (existing) {
+            console.log(`⏭️  リレーション ${relationId} は既に埋め込みが存在するためスキップ（ChromaDB確認）`);
+            const current = ++processedCount;
+            skippedCount++;
+            onProgress?.(current, relationIds.length, relationId, 'skipped');
+            return { status: 'skipped' as const };
+          }
+        }
+
+        // リレーションを取得してtopicIdを取得
+        const relation = await getRelationById(relationId);
+        if (!relation) {
+          console.warn(`⚠️ リレーションが見つかりません: ${relationId}`);
+          const current = ++processedCount;
+          errorCount++;
+          onProgress?.(current, relationIds.length, relationId, 'error');
+          return { status: 'error' as const };
+        }
+
+        const result = await saveRelationEmbeddingAsync(relationId, relation.topicId, organizationId);
+        const current = ++processedCount;
+        
+        if (result) {
+          successCount++;
+          onProgress?.(current, relationIds.length, relationId, 'success');
+          return { status: 'success' as const };
+        } else {
+          // saveRelationEmbeddingAsyncがfalseを返した場合（リレーションが見つからない、既に生成中など）
+          errorCount++;
+          onProgress?.(current, relationIds.length, relationId, 'error');
+          console.warn(`⚠️ リレーション ${relationId} の埋め込み生成がスキップされました`);
+          return { status: 'error' as const };
+        }
+      } catch (error) {
+        const current = ++processedCount;
+        console.error(`リレーション ${relationId} の埋め込み生成エラー:`, error);
+        errorCount++;
+        onProgress?.(current, relationIds.length, relationId, 'error');
+        return { status: 'error' as const };
+      } finally {
+        // 200件ごとにメモリを解放（ガベージコレクションを促す）
+        if (processedCount % 200 === 0 && typeof global !== 'undefined' && (global as any).gc) {
+          (global as any).gc();
+          console.log(`🧹 [メモリ解放] ${processedCount}件処理完了時点でガベージコレクションを実行`);
+        }
+      }
+    })
+  );
+
+  // すべての処理を待機
+  await Promise.allSettled(promises);
 
   console.log(`✅ リレーション埋め込みの一括${forceRegenerate ? '再生成' : '生成'}が完了しました (成功: ${successCount}, スキップ: ${skippedCount}, エラー: ${errorCount})`);
   return { success: successCount, skipped: skippedCount, errors: errorCount };

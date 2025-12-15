@@ -6,13 +6,14 @@
 import { findSimilarEntitiesHybrid } from './entityEmbeddings';
 import { findSimilarRelationsHybrid } from './relationEmbeddings';
 import { findSimilarTopicsHybrid } from './topicEmbeddings';
-import { getEntityById } from './entityApi';
-import { getRelationById } from './relationApi';
-import { getTopicsByMeetingNote } from './orgApi';
+import { getEntityById, getEntitiesByIds } from './entityApi';
+import { getRelationById, getRelationsByIds } from './relationApi';
+import { getTopicsByMeetingNote, getOrgTreeFromDb } from './orgApi';
 import { getCachedSearchResults, setCachedSearchResults } from './ragSearchCache';
 import { getDesignDocContext, isDesignDocQuery } from './designDocRAG';
 import type { Entity } from '@/types/entity';
 import type { Relation } from '@/types/relation';
+import type { OrgNodeData } from '@/components/OrgChart';
 
 /**
  * 検索結果の種類
@@ -59,10 +60,18 @@ export async function searchKnowledgeGraph(
       updatedBefore?: string;
       filterLogic?: 'AND' | 'OR';
     },
-    useCache: boolean = true
+    useCache: boolean = true,
+    timeoutMs: number = 10000 // デフォルト10秒のタイムアウト
   ): Promise<KnowledgeGraphSearchResult[]> {
   const startTime = Date.now();
   let usedChromaDB = false;
+
+  // タイムアウト用のPromiseを作成
+  const timeoutPromise = new Promise<KnowledgeGraphSearchResult[]>((_, reject) => {
+    setTimeout(() => {
+      reject(new Error(`RAG検索がタイムアウトしました（${timeoutMs / 1000}秒）`));
+    }, timeoutMs);
+  });
   
   // クエリが空の場合は早期リターン
   if (!queryText || queryText.trim().length === 0) {
@@ -136,12 +145,14 @@ export async function searchKnowledgeGraph(
 
     console.log(`[searchKnowledgeGraph] ✅ キャッシュなし。新規検索を実行します。`);
 
-    // 並列で各タイプを検索
-    const [entityResults, relationResults, topicResults] = await Promise.all([
-      // エンティティ検索
+    // 並列で各タイプを検索（タイムアウト付き）
+    // limitを増やして、より多くの候補から最適な結果を選択できるようにする
+    const searchLimit = Math.max(limit * 2, 20); // 最低20件、またはlimitの2倍
+    const searchPromise = Promise.all([
+      // エンティティ検索（多めに取得してからフィルタリング）
       findSimilarEntitiesHybrid(
         queryText,
-        limit,
+        searchLimit,
         {
           organizationId: filters?.organizationId,
           entityType: filters?.entityType,
@@ -151,10 +162,10 @@ export async function searchKnowledgeGraph(
         return [];
       }),
       
-      // リレーション検索
+      // リレーション検索（多めに取得してからフィルタリング）
       findSimilarRelationsHybrid(
         queryText,
-        limit,
+        searchLimit,
         {
           organizationId: filters?.organizationId,
           relationType: filters?.relationType,
@@ -164,10 +175,10 @@ export async function searchKnowledgeGraph(
         return [];
       }),
       
-      // トピック検索
+      // トピック検索（多めに取得してからフィルタリング）
       findSimilarTopicsHybrid(
         queryText,
-        limit,
+        searchLimit,
         {
           organizationId: filters?.organizationId,
           semanticCategory: filters?.topicSemanticCategory as any,
@@ -178,13 +189,41 @@ export async function searchKnowledgeGraph(
       }),
     ]);
 
+    // タイムアウトと検索を競争させる
+    let entityResults: any[] = [];
+    let relationResults: any[] = [];
+    let topicResults: any[] = [];
+    
+    try {
+      const results = await Promise.race([
+        searchPromise,
+        timeoutPromise,
+      ]);
+      [entityResults, relationResults, topicResults] = results as [any[], any[], any[]];
+    } catch (error: any) {
+      // タイムアウトエラーの場合
+      if (error?.message?.includes('タイムアウト') || error?.message?.includes('timeout')) {
+        console.warn(`[searchKnowledgeGraph] ⏱️ 検索がタイムアウトしました（${timeoutMs / 1000}秒）。`);
+        // タイムアウトエラーを再スローしてUI側で処理できるようにする
+        throw new Error(`検索がタイムアウトしました（${timeoutMs / 1000}秒）。時間がかかりすぎたため、検索を中断しました。再度検索を試してください。`);
+      } else {
+        // その他のエラーは再スロー
+        throw error;
+      }
+    }
+
     // 結果を統合
     const results: KnowledgeGraphSearchResult[] = [];
+
+    // エンティティ結果を一括取得（パフォーマンス最適化）
+    const entityIds = entityResults.map(r => r.entityId);
+    const entities = await getEntitiesByIds(entityIds, 5);
+    const entityMap = new Map(entities.map(e => [e.id, e]));
 
     // エンティティ結果を追加（日付フィルター適用）
     for (const result of entityResults) {
       try {
-        const entity = await getEntityById(result.entityId);
+        const entity = entityMap.get(result.entityId);
         if (entity) {
           // 日付フィルターの適用
           let passesDateFilter = true;
@@ -230,10 +269,15 @@ export async function searchKnowledgeGraph(
       }
     }
 
+    // リレーション結果を一括取得（パフォーマンス最適化）
+    const relationIds = relationResults.map(r => r.relationId);
+    const relations = await getRelationsByIds(relationIds, 5);
+    const relationMap = new Map(relations.map(r => [r.id, r]));
+
     // リレーション結果を追加（日付フィルター適用）
     for (const result of relationResults) {
       try {
-        const relation = await getRelationById(result.relationId);
+        const relation = relationMap.get(result.relationId);
         if (relation) {
           // 日付フィルターの適用
           let passesDateFilter = true;
@@ -479,6 +523,28 @@ export async function findRelatedRelations(
  * @param filters フィルタリング条件（オプション）
  * @returns RAG用のコンテキスト文字列
  */
+/**
+ * 組織ツリーから組織名を取得するヘルパー関数
+ */
+function findOrganizationNameById(orgTree: OrgNodeData | null, organizationId: string): string | null {
+  if (!orgTree) return null;
+  
+  // 再帰的に組織を検索
+  function search(node: OrgNodeData): OrgNodeData | null {
+    if (node.id === organizationId) return node;
+    if (node.children) {
+      for (const child of node.children) {
+        const found = search(child);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+  
+  const found = search(orgTree);
+  return found?.name || null;
+}
+
 export async function getKnowledgeGraphContext(
   queryText: string,
   limit: number = 5,
@@ -490,14 +556,78 @@ export async function getKnowledgeGraphContext(
   }
 ): Promise<string> {
   try {
+    console.log(`[getKnowledgeGraphContext] 🔍 AIアシスタント用コンテキスト生成開始: queryText="${queryText}", limit=${limit}, filters=`, filters);
+    
+    // ハイブリッド検索を実行（ChromaDBベクトル検索 + SQLiteキーワード検索）
+    // searchKnowledgeGraphは既にfindSimilarEntitiesHybrid、findSimilarRelationsHybrid、findSimilarTopicsHybridを使用しているため、
+    // ChromaDBとSQLiteの両方の情報が統合された結果が返されます
     const results = await searchKnowledgeGraph(queryText, limit, filters);
+    
+    const entityCount = results.filter(r => r.type === 'entity').length;
+    const relationCount = results.filter(r => r.type === 'relation').length;
+    const topicCount = results.filter(r => r.type === 'topic').length;
+    
+    console.log(`[getKnowledgeGraphContext] ハイブリッド検索完了: ${results.length}件の結果を取得（エンティティ: ${entityCount}件, リレーション: ${relationCount}件, トピック: ${topicCount}件）`);
+    
+    // 検索結果が0件の場合、デバッグ情報を出力
+    if (results.length === 0) {
+      console.warn(`[getKnowledgeGraphContext] ⚠️ 検索結果が0件です。queryText="${queryText}", filters=`, filters);
+      console.warn(`[getKnowledgeGraphContext] デバッグ情報:`);
+      console.warn(`  - organizationId: ${filters?.organizationId || '未指定（全組織検索）'}`);
+      console.warn(`  - limit: ${limit}`);
+      console.warn(`  - 考えられる原因:`);
+      console.warn(`    1. エンティティ/リレーション/トピックが登録されていない`);
+      console.warn(`    2. organizationIdフィルターが適用されている`);
+      console.warn(`    3. ChromaDBに埋め込みが生成されていない`);
+      console.warn(`    4. SQLiteキーワード検索でマッチしない`);
+      
+      // デバッグ用：直接キーワード検索を試行
+      try {
+        const { searchEntitiesByKeywords } = await import('./entityEmbeddings');
+        // searchEntitiesByKeywordsは非公開関数なので、直接テストできない
+        // 代わりに、getAllEntitiesで全エンティティを確認
+        const { getAllEntities } = await import('./entityApi');
+        const allEntities = await getAllEntities();
+        console.log(`[getKnowledgeGraphContext] デバッグ: 全エンティティ数: ${allEntities.length}件`);
+        if (allEntities.length > 0) {
+          const matchingEntities = allEntities.filter(e => {
+            const nameLower = e.name.toLowerCase();
+            const queryLower = queryText.toLowerCase();
+            return nameLower.includes(queryLower) || queryLower.includes(nameLower) ||
+                   (e.aliases && e.aliases.some(a => a.toLowerCase().includes(queryLower))) ||
+                   (e.metadata && JSON.stringify(e.metadata).toLowerCase().includes(queryLower));
+          });
+          console.log(`[getKnowledgeGraphContext] デバッグ: クエリ「${queryText}」にマッチするエンティティ: ${matchingEntities.length}件`);
+          if (matchingEntities.length > 0) {
+            console.log(`[getKnowledgeGraphContext] デバッグ: マッチしたエンティティ:`, matchingEntities.slice(0, 5).map(e => ({
+              id: e.id,
+              name: e.name,
+              organizationId: e.organizationId,
+              metadata: e.metadata,
+            })));
+          }
+        }
+      } catch (debugError) {
+        console.warn(`[getKnowledgeGraphContext] デバッグ情報の取得に失敗:`, debugError);
+      }
+    }
 
     const contextParts: string[] = [];
     
+    // 組織ツリーを取得（組織名の取得に使用、パフォーマンス向上のため一度だけ取得）
+    let orgTree: OrgNodeData | null = null;
+    try {
+      orgTree = await getOrgTreeFromDb();
+    } catch (error) {
+      // 組織ツリー取得エラーは警告のみ（続行）
+      console.warn('組織ツリーの取得に失敗しました（続行します）:', error);
+    }
+    
     // エンティティ情報を追加（詳細版）
+    // ハイブリッド検索の結果には、ChromaDBベクトル検索とSQLiteキーワード検索の両方の情報が統合されています
     const entities = results.filter(r => r.type === 'entity' && r.entity);
     if (entities.length > 0) {
-      contextParts.push('## 関連エンティティ');
+      contextParts.push('## 関連エンティティ（ハイブリッド検索結果：ChromaDBベクトル検索 + SQLiteキーワード検索）');
       for (const result of entities) {
         if (result.entity) {
           const entity = result.entity;
@@ -506,7 +636,7 @@ export async function getKnowledgeGraphContext(
           // 基本情報
           parts.push(`**${entity.name}**`);
           
-          // 別名
+          // 別名（キーワード検索でマッチした可能性がある）
           if (entity.aliases && entity.aliases.length > 0) {
             parts.push(`別名: ${entity.aliases.join(', ')}`);
           }
@@ -527,7 +657,7 @@ export async function getKnowledgeGraphContext(
             }
           }
           
-          // スコア情報
+          // スコア情報（ベクトル類似度とキーワードマッチスコアの統合スコア）
           parts.push(`関連度: ${(result.score * 100).toFixed(1)}%`);
           
           contextParts.push(`- ${parts.join(' | ')}`);
@@ -536,9 +666,10 @@ export async function getKnowledgeGraphContext(
     }
 
     // リレーション情報を追加（詳細版）
+    // ハイブリッド検索の結果には、ChromaDBベクトル検索とSQLiteキーワード検索の両方の情報が統合されています
     const relations = results.filter(r => r.type === 'relation' && r.relation);
     if (relations.length > 0) {
-      contextParts.push('\n## 関連リレーション');
+      contextParts.push('\n## 関連リレーション（ハイブリッド検索結果：ChromaDBベクトル検索 + SQLiteキーワード検索）');
       for (const result of relations) {
         if (result.relation) {
           const relation = result.relation;
@@ -597,9 +728,10 @@ export async function getKnowledgeGraphContext(
     }
 
     // トピック情報を追加（詳細版）
+    // ハイブリッド検索の結果には、ChromaDBベクトル検索とSQLiteキーワード検索の両方の情報が統合されています
     const topics = results.filter(r => r.type === 'topic');
     if (topics.length > 0) {
-      contextParts.push('\n## 関連トピック');
+      contextParts.push('\n## 関連トピック（ハイブリッド検索結果：ChromaDBベクトル検索 + SQLiteキーワード検索）');
       for (const result of topics) {
         if (result.meetingNoteId && result.topicId) {
           try {
@@ -610,6 +742,30 @@ export async function getKnowledgeGraphContext(
             if (topicInfo) {
               const parts: string[] = [];
               parts.push(`**${topicInfo.title}**`);
+              
+              // 出典情報を追加（AIが出典を把握しやすくするため）
+              if (topicInfo.meetingNoteTitle) {
+                parts.push(`出典: ${topicInfo.meetingNoteTitle}`);
+              }
+              
+              // 組織名を追加（あれば）
+              if (topicInfo.organizationId && orgTree) {
+                const orgName = findOrganizationNameById(orgTree, topicInfo.organizationId);
+                if (orgName) {
+                  parts.push(`組織: ${orgName}`);
+                }
+              }
+              
+              // 日付情報を追加（あれば）
+              if (topicInfo.topicDate) {
+                try {
+                  const dateStr = new Date(topicInfo.topicDate).toLocaleDateString('ja-JP');
+                  parts.push(`日時: ${dateStr}`);
+                } catch (error) {
+                  // 日付のパースエラーは無視
+                  console.warn('日付のパースエラー:', error);
+                }
+              }
               
               // 内容のサマリー（最初の200文字）
               if (topicInfo.content) {
@@ -656,9 +812,12 @@ export async function getKnowledgeGraphContext(
       }
     }
 
-    return contextParts.join('\n');
+    const context = contextParts.join('\n');
+    console.log(`[getKnowledgeGraphContext] AIアシスタント用コンテキスト生成完了: ${context.length}文字`);
+    
+    return context;
   } catch (error) {
-    console.error('コンテキスト取得エラー:', error);
+    console.error('[getKnowledgeGraphContext] コンテキスト取得エラー:', error);
     return '';
   }
 }

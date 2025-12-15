@@ -78,57 +78,136 @@ const VegaChart = memo(function VegaChart({ spec, language = 'vega-lite', title,
           
           // クリックイベントのリスナーを追加
           if (onSignal) {
-            // viewのDOM要素にクリックイベントリスナーを追加
-            const viewElement = viewRef.current.container();
-            if (viewElement) {
-              const clickHandler = async (event: MouseEvent) => {
+            // Vega-Liteのviewに直接クリックイベントを追加
+            try {
+              // Vega-LiteのviewのaddEventListenerを使用（推奨方法）
+              viewRef.current.addEventListener('click', (event: any, item: any) => {
                 try {
-                  // クリック位置を取得
-                  const rect = viewElement.getBoundingClientRect();
-                  const x = event.clientX - rect.left;
-                  const y = event.clientY - rect.top;
-                  
-                  // Vega-Liteのviewからクリック位置のデータを取得
-                  // scaleを使って座標を変換
-                  const scales = viewRef.current.scale('x');
-                  if (scales) {
-                    // x座標からテーマを逆引き
-                    const theme = scales.invert(x);
-                    if (theme) {
-                      // chartDataから該当するテーマIDを取得
-                      const themeData = chartData.find((d: any) => d.theme === theme);
-                      if (themeData && themeData.themeId) {
-                        onSignal('clicked_theme', { themeId: themeData.themeId });
-                        return;
-                      }
-                    }
-                  }
-                  
-                  // chartDataからx座標に最も近いテーマを探す
-                  // 各テーマの棒グラフの位置を計算
-                  if (chartData && chartData.length > 0) {
-                    const uniqueThemes = Array.from(new Set(chartData.map((d: any) => d.theme)));
-                    const themeWidth = rect.width / uniqueThemes.length;
-                    const clickedThemeIndex = Math.floor(x / themeWidth);
-                    
-                    if (clickedThemeIndex >= 0 && clickedThemeIndex < uniqueThemes.length) {
-                      const clickedTheme = uniqueThemes[clickedThemeIndex];
-                      const themeData = chartData.find((d: any) => d.theme === clickedTheme);
-                      if (themeData && themeData.themeId) {
-                        onSignal('clicked_theme', { themeId: themeData.themeId });
-                      }
+                  if (item && item.datum) {
+                    // クリックされたデータからテーマIDを取得
+                    const themeId = item.datum.themeId;
+                    if (themeId) {
+                      onSignal('clicked_theme', { themeId });
+                      return;
                     }
                   }
                 } catch (e) {
-                  console.warn('Failed to get clicked item:', e);
+                  console.warn('Failed to get clicked item from Vega view:', e);
                 }
-              };
-              
-              viewElement.addEventListener('click', clickHandler);
-              
-              // クリーンアップ時にイベントリスナーを削除するための参照を保存
-              (viewRef.current as any)._clickHandler = clickHandler;
-              (viewRef.current as any)._viewElement = viewElement;
+              });
+            } catch (e) {
+              // addEventListenerが利用できない場合は、DOM要素にイベントリスナーを追加
+              const viewElement = viewRef.current.container();
+              if (viewElement) {
+                const clickHandler = (event: MouseEvent) => {
+                  try {
+                    // クリック位置を取得
+                    const rect = viewElement.getBoundingClientRect();
+                    const x = event.clientX - rect.left;
+                    const y = event.clientY - rect.top;
+                    
+                    // Vega-Liteのviewからクリック位置のデータを取得
+                    if (chartData && chartData.length > 0) {
+                      // Vega-Liteのviewのsceneからクリック位置のデータを取得
+                      try {
+                        const scene = viewRef.current.scene();
+                        if (scene && scene.items) {
+                          // クリック位置に最も近い棒グラフのアイテムを探す
+                          let closestItem: any = null;
+                          let minXDistance = Infinity;
+                          
+                          // 再帰的にシーンのアイテムを探索
+                          const findClosestItem = (items: any[]): void => {
+                            items.forEach((item: any) => {
+                              if (item.items) {
+                                // ネストされたアイテムがある場合は再帰的に探索
+                                findClosestItem(item.items);
+                              } else if (item.mark && item.mark.marktype === 'rect' && item.datum) {
+                                // 棒グラフのx座標範囲を計算
+                                const itemX1 = item.x1 || item.x || 0;
+                                const itemX2 = item.x2 || item.x || 0;
+                                const itemXCenter = (itemX1 + itemX2) / 2;
+                                
+                                // クリック位置がこの棒グラフの範囲内かチェック
+                                const xDistance = Math.abs(x - itemXCenter);
+                                
+                                // より近いアイテムを記録（x座標が最も近いもの）
+                                if (xDistance < minXDistance) {
+                                  minXDistance = xDistance;
+                                  closestItem = item;
+                                }
+                              }
+                            });
+                          };
+                          
+                          findClosestItem(scene.items);
+                          
+                          if (closestItem && closestItem.datum && closestItem.datum.themeId) {
+                            onSignal('clicked_theme', { themeId: closestItem.datum.themeId });
+                            return;
+                          }
+                        }
+                      } catch (sceneError) {
+                        console.log('Scene access failed, using fallback method:', sceneError);
+                      }
+                      
+                      // フォールバック: Vega-Liteのviewのscaleを使用
+                      try {
+                        const xScale = viewRef.current.scale('x');
+                        if (xScale && typeof xScale.invert === 'function') {
+                          // クリック位置をVega-Liteの座標系に変換
+                          const paddingLeft = 60;
+                          const adjustedX = x - paddingLeft;
+                          
+                          // scaleを使ってテーマ名を取得
+                          const clickedTheme = xScale.invert(adjustedX);
+                          
+                          if (clickedTheme !== undefined && clickedTheme !== null) {
+                            const themeName = String(clickedTheme);
+                            const themeData = chartData.find((d: any) => d.theme === themeName);
+                            if (themeData && themeData.themeId) {
+                              onSignal('clicked_theme', { themeId: themeData.themeId });
+                              return;
+                            }
+                          }
+                        }
+                      } catch (scaleError) {
+                        console.log('Scale access failed, using coordinate calculation:', scaleError);
+                      }
+                      
+                      // 最終フォールバック: x座標からテーマを特定（より正確な計算）
+                      const uniqueThemes = Array.from(new Set(chartData.map((d: any) => d.theme)));
+                      if (uniqueThemes.length > 0) {
+                        // グラフの実際の描画領域を計算（パディングを考慮）
+                        const paddingLeft = 60;
+                        const paddingRight = 20;
+                        const chartWidth = rect.width - paddingLeft - paddingRight;
+                        const themeWidth = chartWidth / uniqueThemes.length;
+                        
+                        // クリック位置からテーマのインデックスを計算（中心点で判定）
+                        const adjustedX = x - paddingLeft;
+                        const clickedThemeIndex = Math.round(adjustedX / themeWidth);
+                        
+                        if (clickedThemeIndex >= 0 && clickedThemeIndex < uniqueThemes.length) {
+                          const clickedTheme = uniqueThemes[clickedThemeIndex];
+                          const themeData = chartData.find((d: any) => d.theme === clickedTheme);
+                          if (themeData && themeData.themeId) {
+                            onSignal('clicked_theme', { themeId: themeData.themeId });
+                          }
+                        }
+                      }
+                    }
+                  } catch (e) {
+                    console.warn('Failed to get clicked item:', e);
+                  }
+                };
+                
+                viewElement.addEventListener('click', clickHandler);
+                
+                // クリーンアップ時にイベントリスナーを削除するための参照を保存
+                (viewRef.current as any)._clickHandler = clickHandler;
+                (viewRef.current as any)._viewElement = viewElement;
+              }
             }
           }
         }

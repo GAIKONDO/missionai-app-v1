@@ -53,6 +53,7 @@ export default function Login() {
         
         // 成功メッセージを表示
         setError('');
+        setLoading(false); // 新規登録成功時はローディング状態を解除
         alert('アカウント登録が完了しました。開発環境では自動承認されます。ログインしてください。');
       } else {
         // ログイン時
@@ -95,12 +96,14 @@ export default function Login() {
         console.log('ログイン成功:', { userId: userCredential.user.uid, email: userCredential.user.email });
         
         // ログイン成功後、ダッシュボードにリダイレクト
+        // ローディング状態は維持したままリダイレクト（完了まで「ログイン中」を表示）
         router.push('/');
+        // リダイレクト後はコンポーネントがアンマウントされるため、setLoading(false)は不要
+        return;
       }
     } catch (err: any) {
       setError(err.message || 'エラーが発生しました');
-    } finally {
-      setLoading(false);
+      setLoading(false); // エラー時のみローディング状態を解除
     }
   };
 

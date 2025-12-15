@@ -40,6 +40,7 @@ export interface Entity {
   aliases?: string[];            // 別名・表記ゆれ対応（例: ["トヨタ自動車", "Toyota"]）
   metadata?: EntityMetadata;     // 追加情報
   organizationId?: string;        // 所属組織ID（オプション）
+  companyId?: string;            // 所属事業会社ID（オプション）
   createdAt: string;             // 作成日時
   updatedAt: string;             // 更新日時
 }

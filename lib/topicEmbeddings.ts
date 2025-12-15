@@ -25,6 +25,7 @@ import type { TopicEmbedding, TopicMetadata, TopicSemanticCategory } from '@/typ
 import { shouldUseChroma } from './chromaConfig';
 import { calculateTopicScore, adjustWeightsForQuery } from './ragSearchScoring';
 import { handleRAGSearchError, safeHandleRAGSearchError } from './ragSearchErrors';
+import pLimit from 'p-limit';
 
 /**
  * トピック埋め込みを保存
@@ -277,6 +278,46 @@ export async function saveTopicEmbeddingAsync(
 }
 
 /**
+ * 複数のトピック埋め込みを一括取得（並列処理、パフォーマンス最適化）
+ * @param topicIds トピックIDとmeetingNoteIdのペアの配列
+ * @param concurrencyLimit 並列実行数の制限（デフォルト: 5）
+ * @returns トピック埋め込みの配列（存在しないIDは除外）
+ */
+export async function getTopicEmbeddingsByIds(
+  topicIds: Array<{ topicId: string; meetingNoteId: string }>,
+  concurrencyLimit: number = 5
+): Promise<TopicEmbedding[]> {
+  if (topicIds.length === 0) {
+    return [];
+  }
+
+  // p-limitを使用して並列数を制限
+  const limit = pLimit(concurrencyLimit);
+
+  try {
+    // 並列で取得
+    const results = await Promise.allSettled(
+      topicIds.map(({ topicId, meetingNoteId }) =>
+        limit(() => getTopicEmbedding(topicId, meetingNoteId))
+      )
+    );
+
+    // 成功した結果のみを返す
+    const embeddings: TopicEmbedding[] = [];
+    for (const result of results) {
+      if (result.status === 'fulfilled' && result.value) {
+        embeddings.push(result.value);
+      }
+    }
+
+    return embeddings;
+  } catch (error) {
+    console.error('❌ [getTopicEmbeddingsByIds] エラー:', error);
+    return [];
+  }
+}
+
+/**
  * トピック埋め込みを取得
  * 
  * @param topicId トピックのユニークID
@@ -386,13 +427,33 @@ export async function findSimilarTopicsHybrid(
     // 2. クエリに基づいて重みを調整
     const weights = adjustWeightsForQuery(queryText);
 
-    // 3. メタデータでフィルタリング・ブースト（新しいスコアリング関数を使用）
+    // 3. 一括取得でトピック埋め込みデータを取得（パフォーマンス最適化）
+    const topicIds = vectorResults.map(r => ({ topicId: r.topicId, meetingNoteId: r.meetingNoteId }));
+    const embeddings = await getTopicEmbeddingsByIds(topicIds, 5);
+    const embeddingMap = new Map(
+      embeddings.map(e => [`${e.meetingNoteId}-topic-${e.topicId}`, e])
+    );
+
+    // 4. クエリの埋め込みを1回だけ生成（メタデータ類似度計算用、優先度3の最適化）
+    let queryMetadataEmbedding: number[] | null = null;
+    const hasMetadataEmbedding = embeddings.some(e => e.metadataEmbedding && e.metadataEmbedding.length > 0);
+    if (hasMetadataEmbedding) {
+      try {
+        const { generateEmbedding } = await import('./embeddings');
+        queryMetadataEmbedding = await generateEmbedding(queryText);
+      } catch (error) {
+        console.warn('クエリのメタデータ埋め込み生成でエラー:', error);
+      }
+    }
+
+    // 5. メタデータでフィルタリング・ブースト（新しいスコアリング関数を使用）
     const enhancedResults: Array<{ topicId: string; meetingNoteId: string; similarity: number; score: number }> = [];
     
     for (const result of vectorResults) {
       try {
-        // トピック埋め込みデータを取得
-        const embeddingData = await getTopicEmbedding(result.topicId, result.meetingNoteId);
+        // トピック埋め込みデータを取得（一括取得済み）
+        const embeddingKey = `${result.meetingNoteId}-topic-${result.topicId}`;
+        const embeddingData = embeddingMap.get(embeddingKey);
         if (!embeddingData) {
           continue;
         }
@@ -424,11 +485,9 @@ export async function findSimilarTopicsHybrid(
           score = Math.min(1.0, score + matchingKeywords.length * 0.03);
         }
 
-        // メタデータ埋め込みがある場合は追加の類似度計算
-        if (embeddingData.metadataEmbedding && embeddingData.metadataEmbedding.length > 0) {
+        // メタデータ埋め込みがある場合は追加の類似度計算（クエリ埋め込みを再利用）
+        if (embeddingData.metadataEmbedding && embeddingData.metadataEmbedding.length > 0 && queryMetadataEmbedding) {
           try {
-            const { generateEmbedding } = await import('./embeddings');
-            const queryMetadataEmbedding = await generateEmbedding(queryText);
             const metadataSimilarity = cosineSimilarity(
               queryMetadataEmbedding,
               embeddingData.metadataEmbedding
@@ -452,7 +511,7 @@ export async function findSimilarTopicsHybrid(
       }
     }
 
-    // 4. スコアでソートして上位を返す
+    // 6. スコアでソートして上位を返す
     return enhancedResults
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
@@ -563,47 +622,95 @@ export async function batchUpdateTopicEmbeddings(
   meetingNoteId: string,
   organizationId: string,
   forceRegenerate: boolean = false,
-  onProgress?: (current: number, total: number, topicId: string, status: 'processing' | 'skipped' | 'error' | 'success') => void
+  onProgress?: (current: number, total: number, topicId: string, status: 'processing' | 'skipped' | 'error' | 'success') => void,
+  shouldCancel?: () => boolean
 ): Promise<{ success: number; skipped: number; errors: number }> {
   console.log(`📊 ${topics.length}件のトピック埋め込みを一括${forceRegenerate ? '再生成' : '生成'}します...`);
 
   let successCount = 0;
   let skippedCount = 0;
   let errorCount = 0;
+  let processedCount = 0;
 
-  for (let i = 0; i < topics.length; i++) {
-    const topic = topics[i];
-    try {
-      // 既に埋め込みが存在するかチェック
-      const existing = await getTopicEmbedding(topic.id, meetingNoteId);
-      if (existing && !forceRegenerate) {
-        console.log(`⏭️  トピック ${topic.id} は既に埋め込みが存在するためスキップ`);
-        skippedCount++;
-        onProgress?.(i + 1, topics.length, topic.id, 'skipped');
-        continue;
+  // 並列数を3〜5に制限（メモリ使用量を抑えるため）
+  const limit = pLimit(5);
+  
+  // 各トピックの処理を並列実行（同時実行数制限付き）
+  const promises = topics.map((topic, index) => 
+    limit(async () => {
+      // 停止チェック
+      if (shouldCancel && shouldCancel()) {
+        return { status: 'cancelled' as const };
       }
+      
+      try {
+        // SQLiteのchromaSyncedフラグをチェック（高速）
+        if (!forceRegenerate) {
+          try {
+            const topicDoc = await callTauriCommand('doc_get', {
+              collectionName: 'topics',
+              docId: topic.id,
+            });
+            
+            if (topicDoc?.exists && topicDoc?.data) {
+              const chromaSynced = topicDoc.data.chromaSynced;
+              if (chromaSynced === 1) {
+                console.log(`⏭️  トピック ${topic.id} は既に埋め込みが存在するためスキップ（SQLiteフラグ確認）`);
+                const current = ++processedCount;
+                skippedCount++;
+                onProgress?.(current, topics.length, topic.id, 'skipped');
+                return { status: 'skipped' as const };
+              }
+            }
+          } catch (sqliteError: any) {
+            // SQLiteからの取得に失敗した場合は続行（ChromaDBから確認を試みる）
+            console.debug(`SQLiteからのフラグ取得エラー（続行）: ${topic.id}`, sqliteError?.message || sqliteError);
+          }
+        }
+        
+        // SQLiteで確認できない場合、ChromaDBから確認（フォールバック）
+        if (!forceRegenerate) {
+          const existing = await getTopicEmbedding(topic.id, meetingNoteId);
+          if (existing) {
+            console.log(`⏭️  トピック ${topic.id} は既に埋め込みが存在するためスキップ（ChromaDB確認）`);
+            const current = ++processedCount;
+            skippedCount++;
+            onProgress?.(current, topics.length, topic.id, 'skipped');
+            return { status: 'skipped' as const };
+          }
+        }
 
-      await saveTopicEmbedding(
-        topic.id,
-        meetingNoteId,
-        organizationId,
-        topic.title,
-        topic.content,
-        topic.metadata
-      );
-      
-      successCount++;
-      onProgress?.(i + 1, topics.length, topic.id, 'success');
-      
-      // APIレート制限を考慮して少し待機
-      await new Promise(resolve => setTimeout(resolve, 100));
-    } catch (error) {
-      console.error(`トピック ${topic.id} の埋め込み生成エラー:`, error);
-      errorCount++;
-      onProgress?.(i + 1, topics.length, topic.id, 'error');
-      // エラーが発生しても続行
-    }
-  }
+        await saveTopicEmbedding(
+          topic.id,
+          meetingNoteId,
+          organizationId,
+          topic.title,
+          topic.content,
+          topic.metadata
+        );
+        
+        const current = ++processedCount;
+        successCount++;
+        onProgress?.(current, topics.length, topic.id, 'success');
+        return { status: 'success' as const };
+      } catch (error) {
+        const current = ++processedCount;
+        console.error(`トピック ${topic.id} の埋め込み生成エラー:`, error);
+        errorCount++;
+        onProgress?.(current, topics.length, topic.id, 'error');
+        return { status: 'error' as const };
+      } finally {
+        // 200件ごとにメモリを解放（ガベージコレクションを促す）
+        if (processedCount % 200 === 0 && typeof global !== 'undefined' && (global as any).gc) {
+          (global as any).gc();
+          console.log(`🧹 [メモリ解放] ${processedCount}件処理完了時点でガベージコレクションを実行`);
+        }
+      }
+    })
+  );
+
+  // すべての処理を待機
+  await Promise.allSettled(promises);
 
   console.log(`✅ トピック埋め込みの一括${forceRegenerate ? '再生成' : '生成'}が完了しました (成功: ${successCount}, スキップ: ${skippedCount}, エラー: ${errorCount})`);
   

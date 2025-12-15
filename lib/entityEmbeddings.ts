@@ -12,10 +12,11 @@ import {
 } from './embeddings';
 import type { EntityEmbedding, CreateEntityEmbeddingInput } from '@/types/entityEmbedding';
 import type { Entity, EntityMetadata } from '@/types/entity';
-import { getEntityById, getAllEntities } from './entityApi';
+import { getEntityById, getAllEntities, getEntitiesByIds } from './entityApi';
 import { shouldUseChroma } from './chromaConfig';
 import { calculateEntityScore, adjustWeightsForQuery } from './ragSearchScoring';
 import { handleRAGSearchError, safeHandleRAGSearchError, RAGSearchErrorType } from './ragSearchErrors';
+import pLimit from 'p-limit';
 // ChromaDB関連は動的インポート（ビルドエラーを回避）
 
 /**
@@ -318,15 +319,43 @@ export async function waitForEntityEmbedding(
  * @returns エンティティ埋め込みデータ、またはnull
  */
 export async function getEntityEmbedding(
-  entityId: string
+  entityId: string,
+  organizationId?: string
 ): Promise<EntityEmbedding | null> {
   // ChromaDBを使用する場合（動的インポート）
   if (shouldUseChroma()) {
     try {
-      const { getEntityEmbeddingFromChroma } = await import('./entityEmbeddingsChroma');
-      const embedding = await getEntityEmbeddingFromChroma(entityId);
-      if (embedding) {
-        return embedding;
+      // organizationIdが必要な場合は、エンティティから取得を試みる
+      let orgId = organizationId;
+      if (!orgId) {
+        try {
+          const entity = await getEntityById(entityId);
+          orgId = entity?.organizationId;
+        } catch (e) {
+          // エンティティの取得に失敗した場合は続行
+        }
+      }
+
+      if (orgId) {
+        try {
+          const { getEntityEmbeddingFromChroma } = await import('./entityEmbeddingsChroma');
+          const embedding = await getEntityEmbeddingFromChroma(entityId, orgId);
+          if (embedding) {
+            return embedding;
+          }
+        } catch (chromaError: any) {
+          // ChromaDBサーバーが起動していない場合など、エラーは無視してnullを返す
+          // エラーメッセージに「ChromaDBサーバーの起動に失敗しました」が含まれている場合は、サーバーが起動していないと判断
+          const errorMessage = chromaError?.message || String(chromaError);
+          if (errorMessage.includes('ChromaDBサーバーの起動に失敗しました') || 
+              errorMessage.includes('ChromaDBクライアントが初期化されていません')) {
+            // ChromaDBサーバーが起動していない場合は、埋め込みが存在しないと判断
+            console.debug(`ChromaDBサーバーが起動していないため、埋め込みの存在確認をスキップ: ${entityId}`);
+            return null;
+          }
+          // その他のエラーも無視（埋め込みが存在しない可能性）
+          console.debug(`ChromaDBからの埋め込み取得エラー（無視）: ${entityId}`, errorMessage);
+        }
       }
       // 埋め込みが見つからない場合はnullを返す
       return null;
@@ -366,18 +395,42 @@ export async function findSimilarEntities(
     try {
       console.log(`[findSimilarEntities] ChromaDB検索を試行: organizationId="${organizationId || '未指定（組織横断検索）'}", queryText="${queryText}"`);
       
-      // デバッグ: ChromaDBのコレクション件数を確認（organizationIdが指定されている場合のみ）
-      if (organizationId) {
-        try {
-          const { countEntitiesInChroma } = await import('./entityEmbeddingsChroma');
+      // デバッグ: ChromaDBのコレクション件数を確認
+      try {
+        const { countEntitiesInChroma } = await import('./entityEmbeddingsChroma');
+        if (organizationId) {
           const chromaCount = await countEntitiesInChroma(organizationId);
           console.log(`[findSimilarEntities] ChromaDBコレクション entities_${organizationId} の件数: ${chromaCount}件`);
           if (chromaCount === 0) {
             console.warn(`[findSimilarEntities] ⚠️ ChromaDBコレクションが空です。エンティティがChromaDBに保存されていない可能性があります。`);
           }
-        } catch (countError: any) {
-          console.warn(`[findSimilarEntities] ChromaDBコレクション件数の取得に失敗しました:`, countError?.message || countError);
+        } else {
+          // organizationIdが未指定の場合、すべての組織のコレクション件数を確認
+          try {
+            const { getAllOrganizationsFromTree } = await import('./orgApi');
+            const orgs = await getAllOrganizationsFromTree();
+            let totalCount = 0;
+            for (const org of orgs) {
+              try {
+                const count = await countEntitiesInChroma(org.id);
+                totalCount += count;
+                if (count > 0) {
+                  console.log(`[findSimilarEntities] 組織「${org.name}」(${org.id}): ${count}件のエンティティ埋め込み`);
+                }
+              } catch (e) {
+                // エラーは無視
+              }
+            }
+            console.log(`[findSimilarEntities] 全組織のエンティティ埋め込み合計: ${totalCount}件`);
+            if (totalCount === 0) {
+              console.warn(`[findSimilarEntities] ⚠️ すべての組織のChromaDBコレクションが空です。エンティティの埋め込みが生成されていない可能性があります。`);
+            }
+          } catch (orgError: any) {
+            console.warn(`[findSimilarEntities] 組織一覧の取得に失敗しました:`, orgError?.message || orgError);
+          }
         }
+      } catch (countError: any) {
+        console.warn(`[findSimilarEntities] ChromaDBコレクション件数の取得に失敗しました:`, countError?.message || countError);
       }
       
       const { findSimilarEntitiesChroma } = await import('./entityEmbeddingsChroma');
@@ -398,7 +451,210 @@ export async function findSimilarEntities(
 }
 
 /**
- * ハイブリッド検索: ベクトル検索 + メタデータフィルタリング・ブースト
+ * キーワードマッチスコアを計算（SQLiteのキーワード検索用）
+ * 完全一致、部分一致、エイリアス一致、メタデータ（役職など）一致などを考慮
+ */
+function calculateKeywordMatchScore(
+  queryText: string,
+  entity: Entity
+): number {
+  const queryLower = queryText.toLowerCase().trim();
+  const queryWords = queryLower.split(/\s+/).filter(w => w.length > 0);
+  
+  let score = 0;
+  const entityNameLower = entity.name.toLowerCase();
+  
+  // 1. 完全一致（最高スコア）
+  if (entityNameLower === queryLower) {
+    score = 1.0;
+  }
+  // 2. 名前の完全一致（クエリがエンティティ名の一部、またはエンティティ名がクエリの一部）
+  else if (entityNameLower.includes(queryLower) || queryLower.includes(entityNameLower)) {
+    // クエリがエンティティ名の先頭にある場合は高スコア
+    if (entityNameLower.startsWith(queryLower) || queryLower.startsWith(entityNameLower)) {
+      score = 0.9;
+    } else {
+      score = 0.7;
+    }
+  }
+  // 3. 単語レベルの一致（名前とメタデータの両方をチェック）
+  else {
+    let nameMatchedWords = 0;
+    let metadataMatchedWords = 0;
+    
+    // 名前でのマッチング
+    for (const word of queryWords) {
+      if (entityNameLower.includes(word)) {
+        nameMatchedWords++;
+      }
+    }
+    
+    // メタデータでのマッチング（役職、部署など）
+    if (entity.metadata && Object.keys(entity.metadata).length > 0) {
+      const metadataText = JSON.stringify(entity.metadata).toLowerCase();
+      for (const word of queryWords) {
+        if (metadataText.includes(word)) {
+          metadataMatchedWords++;
+        }
+      }
+    }
+    
+    // 名前とメタデータの両方でマッチした場合は高スコア
+    if (nameMatchedWords > 0 && metadataMatchedWords > 0) {
+      score = 0.8; // 「太田部長」→名前「太田」+メタデータ「部長」の場合
+    } else if (nameMatchedWords > 0) {
+      score = 0.5 * (nameMatchedWords / queryWords.length);
+    } else if (metadataMatchedWords > 0) {
+      score = 0.4 * (metadataMatchedWords / queryWords.length);
+    }
+  }
+  
+  // 4. エイリアス一致（追加スコア）
+  if (entity.aliases && entity.aliases.length > 0) {
+    for (const alias of entity.aliases) {
+      const aliasLower = alias.toLowerCase();
+      if (aliasLower === queryLower) {
+        score = Math.max(score, 0.95); // エイリアス完全一致は高スコア
+        break;
+      } else if (aliasLower.includes(queryLower) || queryLower.includes(aliasLower)) {
+        score = Math.max(score, score + 0.2); // エイリアス部分一致は追加スコア
+        break;
+      }
+    }
+  }
+  
+  // 5. メタデータ一致（役職、部署など）- 既に単語レベルでチェック済みだが、完全一致の場合は追加スコア
+  if (entity.metadata && Object.keys(entity.metadata).length > 0) {
+    const metadataText = JSON.stringify(entity.metadata).toLowerCase();
+    if (metadataText.includes(queryLower)) {
+      score = Math.min(1.0, score + 0.15); // メタデータ完全一致は追加スコア
+    }
+  }
+  
+  return Math.min(1.0, score);
+}
+
+/**
+ * SQLiteキーワード検索を実行
+ * 名前、エイリアス、メタデータ（役職、部署など）を検索対象に含める
+ * 
+ * @internal デバッグ用にエクスポート（通常は非公開）
+ */
+export async function searchEntitiesByKeywords(
+  queryText: string,
+  limit: number,
+  filters?: {
+    organizationId?: string;
+    entityType?: string;
+  }
+): Promise<Array<{ entityId: string; keywordScore: number }>> {
+  try {
+    const { getAllEntities } = await import('./entityApi');
+    
+    console.log(`[searchEntitiesByKeywords] 🔍 キーワード検索開始: queryText="${queryText}", organizationId="${filters?.organizationId || '全組織'}"`);
+    
+    // 全エンティティを取得（organizationIdでフィルタリングする場合でも、まず全件取得してからフィルタリング）
+    // これにより、メタデータ検索も確実に実行できる
+    const allEntities = await getAllEntities();
+    console.log(`[searchEntitiesByKeywords] 全エンティティ取得: ${allEntities.length}件`);
+    
+    // クエリを単語に分割（「太田部長」→「太田」「部長」）
+    const queryLower = queryText.toLowerCase().trim();
+    const queryWords = queryLower.split(/\s+/).filter(w => w.length > 0);
+    
+    // キーワードマッチング（名前、エイリアス、メタデータのすべてをチェック）
+    let keywordEntities = allEntities.filter(entity => {
+      // 組織IDでフィルタリング
+      if (filters?.organizationId && entity.organizationId !== filters.organizationId) {
+        return false;
+      }
+      
+      // エンティティタイプでフィルタリング
+      if (filters?.entityType && entity.type !== filters.entityType) {
+        return false;
+      }
+      
+      const entityNameLower = entity.name.toLowerCase();
+      const metadataText = entity.metadata && Object.keys(entity.metadata).length > 0
+        ? JSON.stringify(entity.metadata).toLowerCase()
+        : '';
+      
+      // 1. 名前でのマッチング（完全一致または部分一致）
+      if (entityNameLower.includes(queryLower) || queryLower.includes(entityNameLower)) {
+        return true;
+      }
+      
+      // 2. 単語レベルでのマッチング（名前）
+      for (const word of queryWords) {
+        if (entityNameLower.includes(word)) {
+          return true;
+        }
+      }
+      
+      // 3. エイリアスでのマッチング
+      if (entity.aliases && entity.aliases.length > 0) {
+        for (const alias of entity.aliases) {
+          const aliasLower = alias.toLowerCase();
+          if (aliasLower.includes(queryLower) || queryLower.includes(aliasLower)) {
+            return true;
+          }
+          for (const word of queryWords) {
+            if (aliasLower.includes(word)) {
+              return true;
+            }
+          }
+        }
+      }
+      
+      // 4. メタデータでのマッチング（役職、部署など）
+      // 「太田部長」→名前「太田」+メタデータ「部長」の場合を検出
+      if (metadataText) {
+        if (metadataText.includes(queryLower)) {
+          return true;
+        }
+        for (const word of queryWords) {
+          if (metadataText.includes(word)) {
+            // 名前でもマッチしている場合は確実に含める
+            if (entityNameLower.includes(queryWords.find(w => w !== word) || '')) {
+              return true;
+            }
+            // メタデータのみのマッチでも含める（役職などで検索する場合）
+            return true;
+          }
+        }
+      }
+      
+      return false;
+    });
+    
+    console.log(`[searchEntitiesByKeywords] キーワードマッチ: ${keywordEntities.length}件`);
+    
+    // キーワードマッチスコアを計算
+    const keywordResults = keywordEntities.map(entity => ({
+      entityId: entity.id,
+      keywordScore: calculateKeywordMatchScore(queryText, entity),
+    }));
+    
+    // スコアでソート
+    keywordResults.sort((a, b) => b.keywordScore - a.keywordScore);
+    
+    console.log(`[searchEntitiesByKeywords] キーワード検索完了: ${keywordResults.length}件（上位${Math.min(limit, keywordResults.length)}件を返す）`);
+    if (keywordResults.length > 0) {
+      console.log(`[searchEntitiesByKeywords] トップ5のスコア:`, keywordResults.slice(0, 5).map(r => ({
+        entityId: r.entityId,
+        keywordScore: r.keywordScore.toFixed(4),
+      })));
+    }
+    
+    return keywordResults.slice(0, limit);
+  } catch (error: any) {
+    console.warn(`[searchEntitiesByKeywords] SQLiteキーワード検索エラー:`, error?.message || error);
+    return [];
+  }
+}
+
+/**
+ * ハイブリッド検索: ChromaDBベクトル検索 + SQLiteキーワード検索 + 統合スコアリング
  * 
  * @param queryText 検索クエリテキスト
  * @param limit 返す結果の最大数（デフォルト: 20）
@@ -414,94 +670,155 @@ export async function findSimilarEntitiesHybrid(
   }
 ): Promise<Array<{ entityId: string; similarity: number; score: number }>> {
   try {
-    // 1. ベクトル検索で候補を取得（多めに取得）
-    const vectorResults = await findSimilarEntities(
-      queryText,
-      limit * 2,
-      filters?.organizationId
-    );
+    console.log(`[findSimilarEntitiesHybrid] 🔍 ハイブリッド検索開始: queryText="${queryText}", limit=${limit}, organizationId="${filters?.organizationId || '未指定（組織横断検索）'}"`);
+    
+    // 1. ChromaDBベクトル検索とSQLiteキーワード検索を並列実行
+    const [vectorResults, keywordResults] = await Promise.all([
+      findSimilarEntities(
+        queryText,
+        limit * 2,
+        filters?.organizationId
+      ).catch(error => {
+        console.warn(`[findSimilarEntitiesHybrid] ベクトル検索エラー:`, error);
+        return [];
+      }),
+      searchEntitiesByKeywords(
+        queryText,
+        limit * 2,
+        filters
+      ).catch(error => {
+        console.warn(`[findSimilarEntitiesHybrid] キーワード検索エラー:`, error);
+        return [];
+      }),
+    ]);
 
-    if (vectorResults.length === 0) {
+    console.log(`[findSimilarEntitiesHybrid] ベクトル検索結果: ${vectorResults.length}件, キーワード検索結果: ${keywordResults.length}件`);
+    
+    // ベクトル検索とキーワード検索の両方が空の場合は早期リターン
+    if (vectorResults.length === 0 && keywordResults.length === 0) {
+      console.warn(`[findSimilarEntitiesHybrid] ⚠️ ベクトル検索とキーワード検索の両方で0件の結果が返されました。`);
       return [];
     }
-
-    // 2. クエリに基づいて重みを調整
-    const weights = adjustWeightsForQuery(queryText);
-
-    // 3. メタデータでフィルタリング・ブースト（新しいスコアリング関数を使用）
-    const enhancedResults: Array<{ entityId: string; similarity: number; score: number }> = [];
     
-    // クエリテキストを小文字に変換してキーワード抽出
-    const queryLower = queryText.toLowerCase();
-    const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2); // 2文字以上の単語のみ
+    // キーワード検索のみで結果がある場合でも続行（ベクトル検索が失敗した場合のフォールバック）
+    if (vectorResults.length === 0 && keywordResults.length > 0) {
+      console.log(`[findSimilarEntitiesHybrid] ベクトル検索は0件ですが、キーワード検索で${keywordResults.length}件の結果があります。キーワード検索結果を使用します。`);
+    }
+
+    // 2. ベクトル検索とキーワード検索の結果を統合
+    // エンティティIDをキーとして、ベクトル類似度とキーワードスコアをマージ
+    const vectorMap = new Map<string, number>();
+    const keywordMap = new Map<string, number>();
     
     for (const result of vectorResults) {
+      vectorMap.set(result.entityId, result.similarity);
+    }
+    
+    for (const result of keywordResults) {
+      keywordMap.set(result.entityId, result.keywordScore);
+    }
+    
+    // すべてのユニークなエンティティIDを収集
+    const allEntityIds = new Set<string>();
+    vectorMap.forEach((_, id) => allEntityIds.add(id));
+    keywordMap.forEach((_, id) => allEntityIds.add(id));
+    
+    console.log(`[findSimilarEntitiesHybrid] 統合対象エンティティ数: ${allEntityIds.size}件（ベクトル: ${vectorMap.size}件, キーワード: ${keywordMap.size}件）`);
+
+    // 3. エンティティデータを一括取得（パフォーマンス最適化）
+    const entityIds = Array.from(allEntityIds);
+    console.log(`[findSimilarEntitiesHybrid] エンティティ一括取得開始: ${entityIds.length}件`);
+    let entities: Entity[] = [];
+    let entityMap = new Map<string, Entity>();
+    
+    try {
+      entities = await getEntitiesByIds(entityIds, 5);
+      entityMap = new Map(entities.map(e => [e.id, e]));
+      console.log(`[findSimilarEntitiesHybrid] エンティティ一括取得完了: ${entities.length}件取得（${entityIds.length}件中）`);
+    } catch (error: any) {
+      console.error(`[findSimilarEntitiesHybrid] ❌ エンティティ一括取得エラー:`, error?.message || error);
+    }
+
+    // 4. 統合スコアリング: ベクトル類似度とキーワードスコアを組み合わせ
+    const weights = adjustWeightsForQuery(queryText);
+    const enhancedResults: Array<{ entityId: string; similarity: number; score: number }> = [];
+    
+    // 重み付け: ベクトル類似度60%、キーワードスコア40%（キーワード完全一致の場合はさらにブースト）
+    const VECTOR_WEIGHT = 0.6;
+    const KEYWORD_WEIGHT = 0.4;
+    
+    for (const entityId of allEntityIds) {
       try {
-        // エンティティデータを取得
-        const entity = await getEntityById(result.entityId);
+        const entity = entityMap.get(entityId);
         if (!entity) {
+          // エンティティが見つからない場合でも、ベクトルまたはキーワードスコアがあれば含める
+          const vectorSim = vectorMap.get(entityId) || 0;
+          const keywordScore = keywordMap.get(entityId) || 0;
+          const combinedScore = vectorSim * VECTOR_WEIGHT + keywordScore * KEYWORD_WEIGHT;
+          
+          if (combinedScore > 0) {
+            enhancedResults.push({
+              entityId,
+              similarity: vectorSim,
+              score: combinedScore,
+            });
+          }
           continue;
         }
 
-        // 新しいスコアリング関数を使用
-        let score = calculateEntityScore(result.similarity, entity, weights);
-
+        // ベクトル類似度とキーワードスコアを取得
+        const vectorSim = vectorMap.get(entityId) || 0;
+        const keywordScore = keywordMap.get(entityId) || calculateKeywordMatchScore(queryText, entity);
+        
+        // キーワード完全一致または高スコアの場合は、ベクトル類似度よりも優先
+        let score: number;
+        if (keywordScore >= 0.9) {
+          // 完全一致（名前完全一致、エイリアス完全一致など）の場合は、ベクトル類似度に関係なく最上位に
+          score = 0.95 + (keywordScore - 0.9) * 0.5; // 0.95〜1.0の範囲
+          score = Math.min(1.0, score);
+        } else if (keywordScore >= 0.7) {
+          // 高スコア（名前部分一致など）の場合は、キーワードスコアを重視
+          score = keywordScore * 0.7 + vectorSim * 0.3; // キーワード70%、ベクトル30%
+          score = Math.min(1.0, score + 0.15); // 追加ブースト
+        } else {
+          // 通常の場合は、ベクトル類似度とキーワードスコアの重み付け平均
+          score = vectorSim * VECTOR_WEIGHT + keywordScore * KEYWORD_WEIGHT;
+        }
+        
+        // メタデータスコアリング（既存のロジック）
+        score = calculateEntityScore(score, entity, weights);
+        
         // エンティティタイプが一致する場合は追加ブースト
         if (filters?.entityType && entity.type === filters.entityType) {
           score = Math.min(1.0, score + 0.1);
         }
 
-        // 名前マッチのブースト（クエリのキーワードがエンティティ名に含まれる場合）
-        const entityNameLower = entity.name.toLowerCase();
-        let nameMatchCount = 0;
-        for (const word of queryWords) {
-          if (entityNameLower.includes(word)) {
-            nameMatchCount++;
-          }
-        }
-        if (nameMatchCount > 0) {
-          score = Math.min(1.0, score + 0.05 * Math.min(nameMatchCount / queryWords.length, 1.0));
-        }
-
-        // 別名マッチのブースト
-        if (entity.aliases && entity.aliases.length > 0) {
-          for (const alias of entity.aliases) {
-            const aliasLower = alias.toLowerCase();
-            for (const word of queryWords) {
-              if (aliasLower.includes(word)) {
-                score = Math.min(1.0, score + 0.03);
-                break; // 1つの別名で1回だけブースト
-              }
-            }
-          }
-        }
-
-        // メタデータマッチのブースト
-        if (entity.metadata && Object.keys(entity.metadata).length > 0) {
-          const metadataText = JSON.stringify(entity.metadata).toLowerCase();
-          for (const word of queryWords) {
-            if (metadataText.includes(word)) {
-              score = Math.min(1.0, score + 0.02);
-              break;
-            }
-          }
-        }
-
         enhancedResults.push({
-          entityId: result.entityId,
-          similarity: result.similarity,
+          entityId,
+          similarity: vectorSim,
           score,
         });
       } catch (error) {
         // エンティティ取得エラーは無視して続行
-        console.warn(`エンティティ ${result.entityId} の取得エラー:`, error);
+        console.warn(`エンティティ ${entityId} の処理エラー:`, error);
       }
     }
 
-    // 4. スコアでソートして上位を返す
-    return enhancedResults
+    // 5. スコアでソートして上位を返す
+    const sortedResults = enhancedResults
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
+    
+    console.log(`[findSimilarEntitiesHybrid] 統合検索完了: ${sortedResults.length}件の結果を返します`);
+    if (sortedResults.length > 0) {
+      console.log(`[findSimilarEntitiesHybrid] トップ5のスコア:`, sortedResults.slice(0, 5).map(r => ({
+        entityId: r.entityId,
+        score: r.score.toFixed(4),
+        similarity: r.similarity.toFixed(4),
+      })));
+    }
+    
+    return sortedResults;
   } catch (error) {
     const ragError = handleRAGSearchError(error, {
       queryText,
@@ -541,46 +858,96 @@ export async function batchUpdateEntityEmbeddings(
   entityIds: string[],
   organizationId: string,
   forceRegenerate: boolean = false,
-  onProgress?: (current: number, total: number, entityId: string, status: 'processing' | 'skipped' | 'error' | 'success') => void
+  onProgress?: (current: number, total: number, entityId: string, status: 'processing' | 'skipped' | 'error' | 'success') => void,
+  shouldCancel?: () => boolean
 ): Promise<{ success: number; skipped: number; errors: number }> {
   console.log(`📊 ${entityIds.length}件のエンティティ埋め込みを一括${forceRegenerate ? '再生成' : '生成'}します...`);
 
   let successCount = 0;
   let skippedCount = 0;
   let errorCount = 0;
+  let processedCount = 0;
 
-  for (let i = 0; i < entityIds.length; i++) {
-    const entityId = entityIds[i];
-    try {
-      // 既に埋め込みが存在するかチェック
-      const existing = await getEntityEmbedding(entityId);
-      if (existing && !forceRegenerate) {
-        console.log(`⏭️  エンティティ ${entityId} は既に埋め込みが存在するためスキップ`);
-        skippedCount++;
-        onProgress?.(i + 1, entityIds.length, entityId, 'skipped');
-        continue;
-      }
-
-      const result = await saveEntityEmbeddingAsync(entityId, organizationId);
-      if (result) {
-        successCount++;
-        onProgress?.(i + 1, entityIds.length, entityId, 'success');
-      } else {
-        // saveEntityEmbeddingAsyncがfalseを返した場合（エンティティが見つからない、既に生成中など）
-        errorCount++;
-        onProgress?.(i + 1, entityIds.length, entityId, 'error');
-        console.warn(`⚠️ エンティティ ${entityId} の埋め込み生成がスキップされました`);
+  // 並列数を3〜5に制限（メモリ使用量を抑えるため）
+  const limit = pLimit(5);
+  
+  // 各エンティティの処理を並列実行（同時実行数制限付き）
+  const promises = entityIds.map((entityId, index) => 
+    limit(async () => {
+      // 停止チェック
+      if (shouldCancel && shouldCancel()) {
+        return { status: 'cancelled' as const };
       }
       
-      // APIレート制限を考慮して少し待機
-      await new Promise(resolve => setTimeout(resolve, 100));
-    } catch (error) {
-      console.error(`エンティティ ${entityId} の埋め込み生成エラー:`, error);
-      errorCount++;
-      onProgress?.(i + 1, entityIds.length, entityId, 'error');
-      // エラーが発生しても続行
-    }
-  }
+      try {
+        // SQLiteのchromaSyncedフラグをチェック（高速）
+        if (!forceRegenerate) {
+          try {
+            const entityDoc = await callTauriCommand('doc_get', {
+              collectionName: 'entities',
+              docId: entityId,
+            });
+            
+            if (entityDoc?.exists && entityDoc?.data) {
+              const chromaSynced = entityDoc.data.chromaSynced;
+              if (chromaSynced === 1) {
+                console.log(`⏭️  エンティティ ${entityId} は既に埋め込みが存在するためスキップ（SQLiteフラグ確認）`);
+                const current = ++processedCount;
+                skippedCount++;
+                onProgress?.(current, entityIds.length, entityId, 'skipped');
+                return { status: 'skipped' as const };
+              }
+            }
+          } catch (sqliteError: any) {
+            // SQLiteからの取得に失敗した場合は続行（ChromaDBから確認を試みる）
+            console.debug(`SQLiteからのフラグ取得エラー（続行）: ${entityId}`, sqliteError?.message || sqliteError);
+          }
+        }
+        
+        // SQLiteで確認できない場合、ChromaDBから確認（フォールバック）
+        if (!forceRegenerate) {
+          const existing = await getEntityEmbedding(entityId, organizationId);
+          if (existing) {
+            console.log(`⏭️  エンティティ ${entityId} は既に埋め込みが存在するためスキップ（ChromaDB確認）`);
+            const current = ++processedCount;
+            skippedCount++;
+            onProgress?.(current, entityIds.length, entityId, 'skipped');
+            return { status: 'skipped' as const };
+          }
+        }
+
+        const result = await saveEntityEmbeddingAsync(entityId, organizationId);
+        const current = ++processedCount;
+        
+        if (result) {
+          successCount++;
+          onProgress?.(current, entityIds.length, entityId, 'success');
+          return { status: 'success' as const };
+        } else {
+          // saveEntityEmbeddingAsyncがfalseを返した場合（エンティティが見つからない、既に生成中など）
+          errorCount++;
+          onProgress?.(current, entityIds.length, entityId, 'error');
+          console.warn(`⚠️ エンティティ ${entityId} の埋め込み生成がスキップされました`);
+          return { status: 'error' as const };
+        }
+      } catch (error) {
+        const current = ++processedCount;
+        console.error(`エンティティ ${entityId} の埋め込み生成エラー:`, error);
+        errorCount++;
+        onProgress?.(current, entityIds.length, entityId, 'error');
+        return { status: 'error' as const };
+      } finally {
+        // 200件ごとにメモリを解放（ガベージコレクションを促す）
+        if (processedCount % 200 === 0 && typeof global !== 'undefined' && (global as any).gc) {
+          (global as any).gc();
+          console.log(`🧹 [メモリ解放] ${processedCount}件処理完了時点でガベージコレクションを実行`);
+        }
+      }
+    })
+  );
+
+  // すべての処理を待機
+  await Promise.allSettled(promises);
 
   console.log(`✅ エンティティ埋め込みの一括${forceRegenerate ? '再生成' : '生成'}が完了しました (成功: ${successCount}, スキップ: ${skippedCount}, エラー: ${errorCount})`);
   return { success: successCount, skipped: skippedCount, errors: errorCount };

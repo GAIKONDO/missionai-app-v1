@@ -4,6 +4,7 @@
  */
 
 import { stripHtml } from './pageMetadataUtils';
+import pLimit from 'p-limit';
 
 /**
  * 埋め込み生成のプロバイダー
@@ -215,8 +216,106 @@ async function generateEmbeddingWithOpenAI(
 }
 
 /**
+ * テキストを意味のある単位でchunk化（ストリーム処理用）
+ * 大きなテキストを適切なサイズに分割
+ * 
+ * @param text 分割するテキスト
+ * @param maxChunkSize 最大chunkサイズ（文字数、デフォルト: 8000）
+ * @returns chunk化されたテキストの配列
+ */
+function chunkText(text: string, maxChunkSize: number = 8000): string[] {
+  if (text.length <= maxChunkSize) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let currentIndex = 0;
+
+  while (currentIndex < text.length) {
+    const remainingText = text.substring(currentIndex);
+    
+    if (remainingText.length <= maxChunkSize) {
+      chunks.push(remainingText);
+      break;
+    }
+
+    // 最大サイズの範囲内で、意味のある分割点を探す
+    let chunkEnd = maxChunkSize;
+    const searchStart = Math.max(0, maxChunkSize - 500); // 後ろ500文字の範囲で分割点を探す
+    
+    // 優先順位1: 段落区切り（改行2回以上）
+    const paragraphBreak = remainingText.lastIndexOf('\n\n', maxChunkSize);
+    if (paragraphBreak > searchStart) {
+      chunkEnd = paragraphBreak + 2;
+    } else {
+      // 優先順位2: 文の終わり（句点）
+      const sentenceEnd = Math.max(
+        remainingText.lastIndexOf('。', maxChunkSize),
+        remainingText.lastIndexOf('.', maxChunkSize)
+      );
+      if (sentenceEnd > searchStart) {
+        chunkEnd = sentenceEnd + 1;
+      } else {
+        // 優先順位3: 改行
+        const lineBreak = remainingText.lastIndexOf('\n', maxChunkSize);
+        if (lineBreak > searchStart) {
+          chunkEnd = lineBreak + 1;
+        } else {
+          // 優先順位4: スペース（英語の場合）
+          const spaceBreak = remainingText.lastIndexOf(' ', maxChunkSize);
+          if (spaceBreak > searchStart) {
+            chunkEnd = spaceBreak + 1;
+          }
+        }
+      }
+    }
+
+    chunks.push(remainingText.substring(0, chunkEnd));
+    currentIndex += chunkEnd;
+  }
+
+  return chunks;
+}
+
+/**
+ * 複数のchunkの埋め込みを統合（平均化）
+ * 
+ * @param embeddings chunkごとの埋め込みベクトルの配列
+ * @returns 統合された埋め込みベクトル
+ */
+function mergeChunkEmbeddings(embeddings: number[][]): number[] {
+  if (embeddings.length === 0) {
+    throw new Error('埋め込みが空です');
+  }
+  if (embeddings.length === 1) {
+    return embeddings[0];
+  }
+
+  const dimension = embeddings[0].length;
+  const merged = new Array(dimension).fill(0);
+
+  // 各次元の平均を計算
+  for (const embedding of embeddings) {
+    if (embedding.length !== dimension) {
+      throw new Error('埋め込みの次元が一致しません');
+    }
+    for (let i = 0; i < dimension; i++) {
+      merged[i] += embedding[i];
+    }
+  }
+
+  // 平均化
+  for (let i = 0; i < dimension; i++) {
+    merged[i] /= embeddings.length;
+  }
+
+  return merged;
+}
+
+/**
  * 埋め込みを生成（リトライロジック付き）
  * OpenAIまたはOllamaを使用
+ * 大きなテキスト（8000文字超）の場合はchunk化してストリーム処理
  * 
  * @param text 埋め込みを生成するテキスト
  * @param config 設定（オプション）
@@ -234,6 +333,69 @@ export async function generateEmbedding(
   if (!cleanText) {
     throw new Error('テキストが空です');
   }
+
+  // 大きなテキストの場合はchunk化してストリーム処理
+  const MAX_CHUNK_SIZE = 8000;
+  if (cleanText.length > MAX_CHUNK_SIZE) {
+    console.log(`📦 [埋め込み生成] 大きなテキストを検出（${cleanText.length}文字）。chunk化して処理します...`);
+    const chunks = chunkText(cleanText, MAX_CHUNK_SIZE);
+    console.log(`📦 [埋め込み生成] ${chunks.length}個のchunkに分割`);
+    
+    // 各chunkの埋め込みを生成（並列処理を制限）
+    const chunkEmbeddings: number[][] = [];
+    const limit = pLimit(3); // chunk処理は3並列に制限
+    
+    const chunkPromises = chunks.map((chunk, index) =>
+      limit(async () => {
+        try {
+          console.log(`📦 [埋め込み生成] chunk ${index + 1}/${chunks.length} を処理中（${chunk.length}文字）...`);
+          const embedding = await generateEmbeddingCore(chunk, config, retries);
+          return embedding;
+        } catch (error) {
+          console.error(`❌ [埋め込み生成] chunk ${index + 1} の処理エラー:`, error);
+          throw error;
+        }
+      })
+    );
+    
+    const results = await Promise.allSettled(chunkPromises);
+    
+    // 成功したchunkの埋め込みを収集
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        chunkEmbeddings.push(result.value);
+      } else {
+        console.warn(`⚠️ [埋め込み生成] chunkの処理に失敗しました:`, result.reason);
+      }
+    }
+    
+    if (chunkEmbeddings.length === 0) {
+      throw new Error('すべてのchunkの埋め込み生成に失敗しました');
+    }
+    
+    // chunkの埋め込みを統合
+    const mergedEmbedding = mergeChunkEmbeddings(chunkEmbeddings);
+    console.log(`✅ [埋め込み生成] ${chunks.length}個のchunkを統合完了`);
+    return mergedEmbedding;
+  }
+
+  // 通常サイズのテキストはそのまま処理
+  return generateEmbeddingCore(cleanText, config, retries);
+}
+
+/**
+ * 埋め込み生成のコア処理（内部関数）
+ * 
+ * @param text 埋め込みを生成するテキスト
+ * @param config 設定（オプション）
+ * @param retries リトライ回数（デフォルト: 3）
+ * @returns 埋め込みベクトル（配列）
+ */
+async function generateEmbeddingCore(
+  text: string,
+  config: EmbeddingConfig = {},
+  retries: number = 3
+): Promise<number[]> {
 
   // プロバイダーを決定（優先順位: config > localStorage > 環境変数 > 'openai'）
   let provider: EmbeddingProvider = 'openai';
@@ -270,16 +432,16 @@ export async function generateEmbedding(
 
   try {
     if (provider === 'ollama') {
-      return await generateEmbeddingWithOllama(cleanText, config, retries);
+      return await generateEmbeddingWithOllama(text, config, retries);
     } else {
-      return await generateEmbeddingWithOpenAI(cleanText, config, retries);
+      return await generateEmbeddingWithOpenAI(text, config, retries);
     }
   } catch (error) {
     // Ollamaが失敗した場合、OpenAIにフォールバック（設定されている場合）
     if (provider === 'ollama' && process.env.NEXT_PUBLIC_OPENAI_API_KEY) {
       console.warn('Ollama埋め込み生成に失敗しました。OpenAIにフォールバックします...');
       try {
-        return await generateEmbeddingWithOpenAI(cleanText, { ...config, provider: 'openai' }, retries);
+        return await generateEmbeddingWithOpenAI(text, { ...config, provider: 'openai' }, retries);
       } catch (fallbackError) {
         console.error('フォールバックも失敗しました:', fallbackError);
         throw error; // 元のエラーを投げる

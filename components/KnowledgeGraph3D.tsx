@@ -97,7 +97,18 @@ export default function KnowledgeGraph3D({ entities, relations, isLoading, onEnt
       });
     }
 
-    setGraphData({ nodes, links });
+    // 無限ループを防ぐため、前回のデータと比較して変更がある場合のみ更新
+    setGraphData(prev => {
+      const newData = { nodes, links };
+      // 簡易的な比較（ノード数とリンク数が同じで、IDが同じなら変更なしと判断）
+      if (prev.nodes.length === newData.nodes.length && 
+          prev.links.length === newData.links.length &&
+          prev.nodes.every((n, i) => n.id === newData.nodes[i]?.id) &&
+          prev.links.every((l, i) => l.source?.id === newData.links[i]?.source?.id && l.target?.id === newData.links[i]?.target?.id)) {
+        return prev; // 変更がない場合は前回のデータを返す
+      }
+      return newData;
+    });
   }, [entities, relations, isLoading, maxNodes, highlightedEntityId, highlightedRelationId]);
 
   // ノード数制限の警告表示

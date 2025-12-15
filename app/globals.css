@@ -426,6 +426,10 @@ p {
   line-height: 1.8;
 }
 
+.markdown-content > *:first-child {
+  margin-top: 0 !important;
+}
+
 .markdown-content h1 {
   font-size: 28px;
   font-weight: 700;
@@ -436,6 +440,10 @@ p {
   padding-bottom: 8px;
 }
 
+.markdown-content h1:first-child {
+  margin-top: 0;
+}
+
 .markdown-content h2 {
   font-size: 24px;
   font-weight: 600;
@@ -444,6 +452,10 @@ p {
   color: #1F2937;
   border-bottom: 1px solid #E5E7EB;
   padding-bottom: 8px;
+}
+
+.markdown-content h2:first-child {
+  margin-top: 0;
 }
 
 .markdown-content {
@@ -690,6 +702,16 @@ p {
     opacity: 1;
     transform: translateX(0);
   }
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
 }
 
 @keyframes conceptPopupSpin {

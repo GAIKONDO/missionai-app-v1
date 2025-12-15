@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { onAuthStateChanged, signOut, type User } from '@/lib/localFirebase';
 import { callTauriCommand } from '@/lib/localFirebase';
 import { usePathname } from 'next/navigation';
@@ -13,6 +14,7 @@ import { TabProvider, useTabs } from './TabProvider';
 import TabBar from './TabBar';
 import UrlBar from './UrlBar';
 import { FiMessageSquare } from 'react-icons/fi';
+import { useEmbeddingRegeneration } from './EmbeddingRegenerationContext';
 
 const ADMIN_UID = 'PktGlRBWVZc9E0Y3OLSQ4TeRg0P2';
 
@@ -113,8 +115,30 @@ export default function Layout({ children }: LayoutProps) {
   // サイドバー幅: 70px, サイドメニュー幅: 280px
   const sidebarWidth = useMemo(() => user ? (sidebarOpen ? 350 : 70) : 0, [user, sidebarOpen]);
   
-  // AIアシスタントパネル幅: 480px
-  const aiAssistantWidth = aiAssistantOpen ? 480 : 0;
+  // AIアシスタントパネル幅（localStorageから読み込み、デフォルトは480px）
+  const [aiAssistantWidth, setAiAssistantWidth] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('aiAssistantPanelWidth');
+      return saved ? parseInt(saved, 10) : 480;
+    }
+    return 480;
+  });
+  
+  // カスタムイベントをリッスンしてリアルタイムで幅を更新
+  useEffect(() => {
+    const handleWidthChange = (e: CustomEvent<number>) => {
+      setAiAssistantWidth(e.detail);
+    };
+    
+    window.addEventListener('aiAssistantWidthChanged', handleWidthChange as EventListener);
+    
+    return () => {
+      window.removeEventListener('aiAssistantWidthChanged', handleWidthChange as EventListener);
+    };
+  }, []);
+  
+  // 開閉状態に応じて幅を設定
+  const effectiveAiAssistantWidth = aiAssistantOpen ? aiAssistantWidth : 0;
   
   // タブバーの高さ: 36px、URLバーの高さ: 40px、Headerの高さ: 60px
   const tabBarHeight = useMemo(() => {
@@ -135,12 +159,12 @@ export default function Layout({ children }: LayoutProps) {
   // コンテナを中央配置するためのスタイル
   const containerStyle = useMemo(() => ({
     marginLeft: `${sidebarWidth}px`,
-    marginRight: `${aiAssistantWidth}px`,
+    marginRight: `${effectiveAiAssistantWidth}px`,
     marginTop: `${totalTopOffset}px`,
-    width: `calc(100% - ${sidebarWidth}px - ${aiAssistantWidth}px)`,
+    width: `calc(100% - ${sidebarWidth}px - ${effectiveAiAssistantWidth}px)`,
     maxWidth: '1800px', // 1400pxから1800pxに拡大
     transition: 'margin-left 0.3s ease, margin-right 0.3s ease, width 0.3s ease, margin-top 0.3s ease',
-  }), [sidebarWidth, aiAssistantWidth, totalTopOffset]);
+  }), [sidebarWidth, effectiveAiAssistantWidth, totalTopOffset]);
 
   // 現在のページを判定
   const currentPage = useMemo(() => {
@@ -442,6 +466,7 @@ export default function Layout({ children }: LayoutProps) {
         handleAIAssistantClose={handleAIAssistantClose}
         pathname={pathname}
         isNewTabPage={isNewTabPage}
+        totalTopOffset={totalTopOffset}
       >
         {children}
       </LayoutContent>
@@ -464,6 +489,7 @@ function LayoutContent({
   handleAIAssistantClose,
   pathname,
   isNewTabPage,
+  totalTopOffset,
   children,
 }: {
   user: User | null;
@@ -479,11 +505,15 @@ function LayoutContent({
   handleAIAssistantClose: () => void;
   pathname: string;
   isNewTabPage: boolean;
+  totalTopOffset: number;
   children: React.ReactNode;
 }) {
   // アクティブなタブの情報を取得
   const { tabs, activeTabId, loading: tabsLoading } = useTabs();
   const activeTab = tabs.find(tab => tab.id === activeTabId);
+  
+  // 埋め込み再生成の状態を取得
+  const { isRegenerating, progress, openModal } = useEmbeddingRegeneration();
   
   // BrowserViewのタブがアクティブな場合を判定
   const isBrowserViewTab = activeTab?.isMainWindow === false;
@@ -570,8 +600,61 @@ function LayoutContent({
           </ErrorBoundary>
         </div>
       )}
+      {/* 埋め込み再生成中のポップアップ（右上）- Portalでbody直下に配置 */}
+      {shouldShowContent && !isPresentationMode && user && isRegenerating && progress.status === 'processing' && typeof window !== 'undefined' 
+        ? createPortal(
+            <div
+              onClick={openModal}
+              style={{
+                position: 'fixed',
+                top: `${totalTopOffset + 16}px`,
+                right: '24px',
+                backgroundColor: '#3B82F6',
+                color: '#FFFFFF',
+                padding: '12px 20px',
+                borderRadius: '8px',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.2)',
+                zIndex: 1000, // z-indexを下げる（モーダルより低く、通常のコンテンツより高く）
+                display: 'inline-flex', // inline-flexに変更してサイズを最小限に
+                alignItems: 'center',
+                gap: '12px',
+                width: 'fit-content', // コンテンツに合わせたサイズ
+                maxWidth: '400px', // 最大幅を制限
+                animation: 'pulse 2s ease-in-out infinite',
+                pointerEvents: 'auto', // クリック可能にする
+                cursor: 'pointer', // カーソルをポインターに
+                userSelect: 'none', // テキスト選択を無効化
+                isolation: 'isolate', // 新しいスタッキングコンテキストを作成
+              }}
+            >
+              <div
+                style={{
+                  width: '12px',
+                  height: '12px',
+                  borderRadius: '50%',
+                  backgroundColor: '#FFFFFF',
+                  animation: 'spin 1s linear infinite',
+                }}
+              />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '4px' }}>
+                  埋め込み再生成中
+                </div>
+                {progress.total > 0 && (
+                  <div style={{ fontSize: '12px', opacity: 0.9 }}>
+                    {progress.current} / {progress.total} 件処理中
+                    {progress.stats.success > 0 && ` (成功: ${progress.stats.success})`}
+                    {progress.stats.errors > 0 && ` (エラー: ${progress.stats.errors})`}
+                  </div>
+                )}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
       {shouldShowContent && !isPresentationMode && user && (
         <>
+
           {/* AIアシスタント固定ボタン（右下） */}
           <button
             onClick={handleAIAssistantToggle}

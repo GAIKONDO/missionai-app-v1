@@ -430,12 +430,33 @@ export default function RAGSearchPage() {
       // 検索履歴に保存
       saveSearchHistory(query, results.length);
       
-      // グラフ表示用のデータを準備
-      await prepareGraphData(results);
+      // グラフ表示用のデータを準備（タイムアウト付き）
+      try {
+        await Promise.race([
+          prepareGraphData(results),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('グラフデータの準備がタイムアウトしました')), 30000)
+          )
+        ]);
+      } catch (graphError: any) {
+        console.warn('グラフデータの準備エラー（検索は続行）:', graphError);
+        // グラフデータの準備が失敗しても検索結果は表示する
+      }
     } catch (error: any) {
       console.error('RAG検索エラー:', error);
-      alert(`検索エラー: ${error.message}`);
+      
+      // タイムアウトエラーの場合
+      if (error?.message?.includes('タイムアウト') || error?.message?.includes('timeout')) {
+        const timeoutMessage = '検索がタイムアウトしました。時間がかかりすぎたため、検索を中断しました。\n\n再度検索を試してください。';
+        alert(timeoutMessage);
+        // タイムアウトの場合は空の結果を設定して、再度検索できるようにする
+        setSearchResults([]);
+      } else {
+        // その他のエラー
+        alert(`検索エラー: ${error.message || '不明なエラーが発生しました'}`);
+      }
     } finally {
+      // 確実に検索状態をリセット（タイムアウト時も含む）
       setIsSearching(false);
     }
   };
@@ -466,10 +487,12 @@ export default function RAGSearchPage() {
       }
 
       // エンティティ間のリレーションを取得（検索結果のエンティティに関連するリレーション）
-      for (const entity of entities) {
-        try {
-          // このエンティティに関連するリレーションを取得
-          const allRelations = await getAllRelations();
+      // 最適化: getAllRelations()を1回だけ呼び出す
+      try {
+        const allRelations = await getAllRelations();
+        
+        // 各エンティティに関連するリレーションをフィルタリング
+        for (const entity of entities) {
           const relatedRelations = allRelations.filter(rel => 
             (rel.sourceEntityId === entity.id || rel.targetEntityId === entity.id) &&
             !relationIds.has(rel.id)
@@ -510,9 +533,10 @@ export default function RAGSearchPage() {
               }
             }
           }
-        } catch (error) {
-          console.warn(`エンティティ ${entity.id} の関連リレーション取得エラー:`, error);
         }
+      } catch (error) {
+        console.warn('関連リレーション取得エラー:', error);
+        // エラーが発生しても処理を続行
       }
 
       setGraphEntities(entities);
@@ -1622,7 +1646,31 @@ export default function RAGSearchPage() {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  router.push(`/knowledge-graph?entityId=${result.entity!.id}`);
+                                  // 検索結果のすべてのエンティティIDとリレーションIDを取得
+                                  const entityIds = searchResults
+                                    .filter(r => r.type === 'entity' && r.entity)
+                                    .map(r => r.entity!.id);
+                                  const relationIds = searchResults
+                                    .filter(r => r.type === 'relation' && r.relation)
+                                    .map(r => r.relation!.id);
+                                  const topicIds = searchResults
+                                    .filter(r => r.type === 'topic' && r.topicId)
+                                    .map(r => r.topicId!);
+                                  
+                                  // クエリパラメータを構築
+                                  const params = new URLSearchParams();
+                                  if (entityIds.length > 0) {
+                                    params.append('entityIds', entityIds.join(','));
+                                  }
+                                  if (relationIds.length > 0) {
+                                    params.append('relationIds', relationIds.join(','));
+                                  }
+                                  if (topicIds.length > 0) {
+                                    params.append('topicIds', topicIds.join(','));
+                                  }
+                                  params.append('fromSearch', 'true');
+                                  
+                                  router.push(`/knowledge-graph?${params.toString()}`);
                                 }}
                                 style={{
                                   padding: '4px 8px',
@@ -1652,7 +1700,31 @@ export default function RAGSearchPage() {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  router.push(`/knowledge-graph?relationId=${result.relation!.id}`);
+                                  // 検索結果のすべてのエンティティIDとリレーションIDを取得
+                                  const entityIds = searchResults
+                                    .filter(r => r.type === 'entity' && r.entity)
+                                    .map(r => r.entity!.id);
+                                  const relationIds = searchResults
+                                    .filter(r => r.type === 'relation' && r.relation)
+                                    .map(r => r.relation!.id);
+                                  const topicIds = searchResults
+                                    .filter(r => r.type === 'topic' && r.topicId)
+                                    .map(r => r.topicId!);
+                                  
+                                  // クエリパラメータを構築
+                                  const params = new URLSearchParams();
+                                  if (entityIds.length > 0) {
+                                    params.append('entityIds', entityIds.join(','));
+                                  }
+                                  if (relationIds.length > 0) {
+                                    params.append('relationIds', relationIds.join(','));
+                                  }
+                                  if (topicIds.length > 0) {
+                                    params.append('topicIds', topicIds.join(','));
+                                  }
+                                  params.append('fromSearch', 'true');
+                                  
+                                  router.push(`/knowledge-graph?${params.toString()}`);
                                 }}
                                 style={{
                                   padding: '4px 8px',

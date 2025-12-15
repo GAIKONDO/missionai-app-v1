@@ -12,6 +12,7 @@ import {
   generateEnhancedEmbedding,
   generateMetadataEmbedding,
 } from './embeddings';
+import { getMeetingNoteById } from './orgApi';
 import type { TopicEmbedding, TopicMetadata } from '@/types/topicMetadata';
 
 /**
@@ -90,6 +91,18 @@ export async function saveTopicEmbeddingToChroma(
       throw new Error(errorMessage);
     }
 
+    // 議事録タイトルを取得（出典情報としてメタデータに追加）
+    let meetingNoteTitle = '';
+    try {
+      const meetingNote = await getMeetingNoteById(meetingNoteId);
+      if (meetingNote && meetingNote.title) {
+        meetingNoteTitle = meetingNote.title;
+      }
+    } catch (error) {
+      // 議事録取得エラーは警告のみ（埋め込み保存は続行）
+      console.warn('議事録タイトルの取得に失敗しました（続行します）:', error);
+    }
+
     // メタデータを準備
     const embeddingMetadata: Record<string, any> = {
       title,
@@ -99,6 +112,7 @@ export async function saveTopicEmbeddingToChroma(
       tags: metadata?.tags ? JSON.stringify(metadata.tags) : '',
       summary: metadata?.summary || '',
       importance: metadata?.importance || '',
+      meetingNoteTitle: meetingNoteTitle, // 出典情報として追加
       titleEmbedding: titleEmbedding ? JSON.stringify(titleEmbedding) : '',
       contentEmbedding: contentEmbedding ? JSON.stringify(contentEmbedding) : '',
       metadataEmbedding: metadataEmbedding ? JSON.stringify(metadataEmbedding) : '',

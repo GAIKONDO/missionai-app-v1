@@ -96,14 +96,74 @@ export async function saveEntityEmbeddingToChroma(
 
 /**
  * ChromaDBからエンティティ埋め込みを取得
- * 注意: Rust側の実装では、IDから直接取得する機能は未実装のため、
- * SQLiteフォールバックを使用することを推奨
  */
-export async function getEntityEmbeddingFromChroma(entityId: string): Promise<EntityEmbedding | null> {
-  // Rust側のChromaDB実装では、IDから直接取得する機能が未実装のため、
-  // SQLiteフォールバックを使用
-  console.warn('getEntityEmbeddingFromChroma: Rust側のChromaDB実装では未対応。SQLiteフォールバックを使用してください。');
-  return null;
+export async function getEntityEmbeddingFromChroma(
+  entityId: string,
+  organizationId: string
+): Promise<EntityEmbedding | null> {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    // Rust側のTauriコマンドを呼び出し
+    const result = await callTauriCommand('chromadb_get_entity_embedding', {
+      entityId,
+      organizationId,
+    }) as Record<string, any> | null;
+
+    if (!result) {
+      return null;
+    }
+
+    // 埋め込みベクトルを取得
+    const combinedEmbedding = result.combinedEmbedding as number[] | undefined;
+    if (!combinedEmbedding || !Array.isArray(combinedEmbedding) || combinedEmbedding.length === 0) {
+      return null;
+    }
+
+    // メタデータから情報を取得
+    const nameEmbeddingStr = result.nameEmbedding as string | undefined;
+    const metadataEmbeddingStr = result.metadataEmbedding as string | undefined;
+    
+    let nameEmbedding: number[] | undefined;
+    let metadataEmbedding: number[] | undefined;
+
+    if (nameEmbeddingStr) {
+      try {
+        nameEmbedding = JSON.parse(nameEmbeddingStr);
+      } catch (e) {
+        console.warn('nameEmbeddingのパースに失敗しました:', e);
+      }
+    }
+
+    if (metadataEmbeddingStr) {
+      try {
+        metadataEmbedding = JSON.parse(metadataEmbeddingStr);
+      } catch (e) {
+        console.warn('metadataEmbeddingのパースに失敗しました:', e);
+      }
+    }
+
+    // EntityEmbeddingオブジェクトを構築
+    const embedding: EntityEmbedding = {
+      id: entityId,
+      entityId,
+      organizationId,
+      combinedEmbedding,
+      nameEmbedding,
+      metadataEmbedding,
+      embeddingModel: (result.embeddingModel as string) || 'text-embedding-3-small',
+      embeddingVersion: (result.embeddingVersion as string) || '1.0',
+      createdAt: (result.createdAt as string) || new Date().toISOString(),
+      updatedAt: (result.updatedAt as string) || new Date().toISOString(),
+    };
+
+    return embedding;
+  } catch (error) {
+    console.error('ChromaDBからのエンティティ埋め込み取得エラー:', error);
+    return null;
+  }
 }
 
 /**
@@ -115,6 +175,7 @@ export async function findSimilarEntitiesChroma(
   organizationId?: string
 ): Promise<Array<{ entityId: string; similarity: number }>> {
   if (typeof window === 'undefined') {
+    console.warn('[findSimilarEntitiesChroma] windowが未定義のため、空の結果を返します');
     return [];
   }
 
@@ -125,8 +186,14 @@ export async function findSimilarEntitiesChroma(
 
     // クエリの埋め込みを生成
     console.log(`[findSimilarEntitiesChroma] クエリの埋め込みベクトルを生成中...`);
-    const queryEmbedding = await generateEmbedding(queryText);
-    console.log(`[findSimilarEntitiesChroma] 埋め込みベクトル生成完了: ${queryEmbedding.length}次元`);
+    let queryEmbedding: number[];
+    try {
+      queryEmbedding = await generateEmbedding(queryText);
+      console.log(`[findSimilarEntitiesChroma] 埋め込みベクトル生成完了: ${queryEmbedding.length}次元`);
+    } catch (embeddingError: any) {
+      console.error(`[findSimilarEntitiesChroma] ❌ 埋め込みベクトルの生成に失敗しました:`, embeddingError?.message || embeddingError);
+      throw new Error(`埋め込みベクトルの生成に失敗しました: ${embeddingError?.message || embeddingError}`);
+    }
 
     // 埋め込みベクトルの次元数をチェック（text-embedding-3-smallは1536次元）
     if (queryEmbedding.length !== 1536) {
@@ -137,18 +204,41 @@ export async function findSimilarEntitiesChroma(
 
     // Rust側のTauriコマンドを呼び出し（パラメータ名はcamelCase）
     // organizationIdが未指定の場合はundefinedを渡して組織横断検索を実行
-    console.log(`[findSimilarEntitiesChroma] ChromaDB検索を実行中...`);
-    const results = await callTauriCommand('chromadb_find_similar_entities', {
-      queryEmbedding,
-      limit,
-      organizationId: organizationId || undefined, // undefinedの場合は組織横断検索
-    }) as Array<[string, number]>;
+    console.log(`[findSimilarEntitiesChroma] ChromaDB検索を実行中... (organizationId: ${organizationId || 'undefined'})`);
+    let results: Array<[string, number]>;
+    try {
+      results = await callTauriCommand('chromadb_find_similar_entities', {
+        queryEmbedding,
+        limit,
+        organizationId: organizationId || undefined, // undefinedの場合は組織横断検索
+      }) as Array<[string, number]>;
+    } catch (tauriError: any) {
+      const errorMessage = tauriError?.message || String(tauriError || '');
+      console.error(`[findSimilarEntitiesChroma] ❌ Tauriコマンドの実行に失敗しました:`, {
+        error: errorMessage,
+        errorName: tauriError?.name,
+        errorStack: tauriError?.stack,
+        command: 'chromadb_find_similar_entities',
+        organizationId: organizationId || undefined,
+      });
+      
+      // Tauri環境でない場合のエラー
+      if (errorMessage.includes('Tauri環境ではありません') || errorMessage.includes('access control checks')) {
+        throw new Error('Tauri環境で実行する必要があります。ブラウザの開発者ツールでは実行できません。');
+      }
+      
+      throw tauriError;
+    }
 
     console.log(`[findSimilarEntitiesChroma] ChromaDB検索完了: ${results.length}件の結果を取得`);
     if (results.length > 0) {
       console.log(`[findSimilarEntitiesChroma] 検索結果トップ5:`, results.slice(0, 5).map(([id, sim]) => ({ entityId: id, similarity: sim.toFixed(4) })));
     } else {
-      console.warn(`[findSimilarEntitiesChroma] 検索結果が空です。コレクション entities_${organizationId} にデータが存在しない可能性があります。`);
+      if (organizationId) {
+        console.warn(`[findSimilarEntitiesChroma] 検索結果が空です。コレクション entities_${organizationId} にデータが存在しない可能性があります。`);
+      } else {
+        console.warn(`[findSimilarEntitiesChroma] 検索結果が空です。すべての組織のコレクションを検索しましたが、データが見つかりませんでした。`);
+      }
     }
 
     // 結果を変換

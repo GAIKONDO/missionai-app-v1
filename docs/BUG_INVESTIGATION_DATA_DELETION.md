@@ -251,3 +251,6 @@ export interface OrgChartProps {
 
 これらの問題を修正することで、データ削除後もページが正常に動作するようになります。
 
+
+
+

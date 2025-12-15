@@ -47,6 +47,7 @@ export interface Relation {
   confidence?: number;           // AI抽出時の信頼度（0-1）
   metadata?: RelationMetadata;   // 追加情報
   organizationId?: string;       // 所属組織ID（オプション）
+  companyId?: string;            // 所属事業会社ID（オプション）
   createdAt: string;            // 作成日時
   updatedAt: string;            // 更新日時
 }

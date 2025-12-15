@@ -250,3 +250,75 @@ pub async fn update_chroma_sync_status(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn get_table_schema(table_name: String) -> Result<HashMap<String, String>, String> {
+    use crate::database::get_db;
+    
+    let db = get_db().ok_or("データベースが初期化されていません")?;
+    let conn = db.get_connection().map_err(|e| format!("コネクション取得エラー: {}", e))?;
+    
+    let mut schema = HashMap::new();
+    
+    // テーブルが存在するか確認
+    let table_exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+        [&table_name],
+        |row| row.get(0),
+    ).map_err(|e| format!("テーブル存在確認エラー: {}", e))?;
+    
+    if !table_exists {
+        return Err(format!("テーブル '{}' が存在しません", table_name));
+    }
+    
+    schema.insert("table_name".to_string(), table_name.clone());
+    schema.insert("exists".to_string(), "true".to_string());
+    
+    // テーブル構造を取得
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table_name))
+        .map_err(|e| format!("PRAGMA table_infoエラー: {}", e))?;
+    
+    let columns: Result<Vec<(String, String, i32, Option<String>, i32, i32)>, _> = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(1)?, // name
+            row.get::<_, String>(2)?, // type
+            row.get::<_, i32>(3)?,    // notnull
+            row.get::<_, Option<String>>(4)?, // default_value
+            row.get::<_, i32>(5)?,    // pk
+            row.get::<_, i32>(0)?,    // cid
+        ))
+    }).map_err(|e| format!("カラム情報取得エラー: {}", e))?
+    .collect();
+    
+    let columns = columns.map_err(|e| format!("カラム情報収集エラー: {}", e))?;
+    
+    // 各カラムの情報を追加
+    for (i, (name, col_type, notnull, default_value, pk, _cid)) in columns.iter().enumerate() {
+        let key = format!("column_{}_name", i);
+        schema.insert(key, name.clone());
+        
+        let key = format!("column_{}_type", i);
+        schema.insert(key, col_type.clone());
+        
+        let key = format!("column_{}_notnull", i);
+        schema.insert(key, notnull.to_string());
+        
+        let key = format!("column_{}_default", i);
+        schema.insert(key, default_value.clone().unwrap_or_else(|| "NULL".to_string()));
+        
+        let key = format!("column_{}_pk", i);
+        schema.insert(key, pk.to_string());
+    }
+    
+    schema.insert("column_count".to_string(), columns.len().to_string());
+    
+    // organizationIdカラムの詳細情報を追加（存在する場合）
+    if let Some((_, _, notnull, _, _, _)) = columns.iter().find(|(name, _, _, _, _, _)| name == "organizationId") {
+        schema.insert("organizationId_notnull".to_string(), notnull.to_string());
+        schema.insert("organizationId_nullable".to_string(), if *notnull == 0 { "true" } else { "false" }.to_string());
+    } else {
+        schema.insert("organizationId_exists".to_string(), "false".to_string());
+    }
+    
+    Ok(schema)
+}
+

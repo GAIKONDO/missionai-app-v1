@@ -89,12 +89,16 @@ fn main() {
             tauri::async_runtime::spawn(async move {
                 match database::init_chromadb(&app_handle_chroma).await {
                     Ok(_) => {
-                        #[cfg(debug_assertions)]
                         eprintln!("✅ ChromaDB Serverの初期化が完了しました");
                     }
                     Err(e) => {
-                        eprintln!("⚠️  ChromaDB Serverの初期化に失敗しました: {}", e);
-                        eprintln!("   SQLiteフォールバックが使用されます");
+                        eprintln!("❌ ChromaDB Serverの初期化に失敗しました: {}", e);
+                        eprintln!("   注意: 埋め込みベクトルの保存・検索にはChromaDBが必要です");
+                        eprintln!("   トラブルシューティング:");
+                        eprintln!("   1. Python環境がインストールされているか確認してください");
+                        eprintln!("   2. ChromaDBがインストールされているか確認してください: pip3 install chromadb");
+                        eprintln!("   3. ポート8000が使用可能か確認してください");
+                        eprintln!("   4. アプリケーションを再起動してください");
                     }
                 }
             });
@@ -158,6 +162,7 @@ fn main() {
             commands::app::reinitialize_database,
             commands::app::list_tables,
             commands::app::diagnose_database,
+            commands::app::get_table_schema,
             commands::app::update_chroma_sync_status,
             // 組織管理コマンド
             commands::organization::create_org,
@@ -198,9 +203,11 @@ fn main() {
             commands::organization_company_display::delete_all_org_company_displays_by_company,
             // ChromaDBコマンド
             commands::chromadb::chromadb_save_entity_embedding,
+            commands::chromadb::chromadb_get_entity_embedding,
             commands::chromadb::chromadb_find_similar_entities,
             commands::chromadb::chromadb_count_entities,
             commands::chromadb::chromadb_save_relation_embedding,
+            commands::chromadb::chromadb_get_relation_embedding,
             commands::chromadb::chromadb_find_similar_relations,
             commands::chromadb::chromadb_save_topic_embedding,
             commands::chromadb::chromadb_find_similar_topics,

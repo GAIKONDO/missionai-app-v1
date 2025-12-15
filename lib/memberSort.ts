@@ -33,23 +33,56 @@ function getPositionPriority(title: string | undefined, organizationName?: strin
     }
   }
   
-  // 課長が最優先
-  if (titleLower.includes('課長') && !titleLower.includes('代行')) {
-    return 1;
+  // 役職の階層を定義（数字が小さいほど上位）
+  // 部長関連
+  if (titleLower.includes('部長') && !titleLower.includes('代行') && !titleLower.includes('補佐')) {
+    return 10; // 部長
+  }
+  if (titleLower.includes('部長代行')) {
+    return 11; // 部長代行（部長より下）
+  }
+  if (titleLower.includes('部長補佐')) {
+    return 12; // 部長補佐（部長より下）
   }
   
-  // 課長代行が次
-  if (titleLower.includes('課長代行') || titleLower.includes('代行')) {
-    return 2;
+  // 課長関連
+  if (titleLower.includes('課長') && !titleLower.includes('代行') && !titleLower.includes('補佐')) {
+    return 20; // 課長
+  }
+  if (titleLower.includes('課長代行')) {
+    return 21; // 課長代行（課長より下）
+  }
+  if (titleLower.includes('課長補佐')) {
+    return 22; // 課長補佐（課長より下）
   }
   
-  // その他の役職
-  if (titleLower.includes('長') || titleLower.includes('主任') || titleLower.includes('リーダー')) {
-    return 3;
+  // その他の「長」関連（部長、課長以外）
+  if (titleLower.includes('長') && !titleLower.includes('部長') && !titleLower.includes('課長')) {
+    // 代行や補佐をチェック
+    if (titleLower.includes('代行')) {
+      return 31; // 〇〇長代行
+    }
+    if (titleLower.includes('補佐')) {
+      return 32; // 〇〇長補佐
+    }
+    return 30; // その他の長
+  }
+  
+  // 代行や補佐が単独で含まれている場合（長が含まれていない）
+  if (titleLower.includes('代行') && !titleLower.includes('長')) {
+    return 40;
+  }
+  if (titleLower.includes('補佐') && !titleLower.includes('長')) {
+    return 41;
+  }
+  
+  // その他の役職（主任、リーダーなど）
+  if (titleLower.includes('主任') || titleLower.includes('リーダー')) {
+    return 50;
   }
   
   // 役職あり（その他）
-  return 4;
+  return 60;
 }
 
 /**

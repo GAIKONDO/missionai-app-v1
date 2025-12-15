@@ -153,14 +153,76 @@ export async function saveRelationEmbeddingToChroma(
 
 /**
  * ChromaDBからリレーション埋め込みを取得
- * 注意: Rust側の実装では、IDから直接取得する機能は未実装のため、
- * SQLiteフォールバックを使用することを推奨
  */
-export async function getRelationEmbeddingFromChroma(relationId: string): Promise<RelationEmbedding | null> {
-  // Rust側のChromaDB実装では、IDから直接取得する機能が未実装のため、
-  // SQLiteフォールバックを使用
-  console.warn('getRelationEmbeddingFromChroma: Rust側のChromaDB実装では未対応。SQLiteフォールバックを使用してください。');
-  return null;
+export async function getRelationEmbeddingFromChroma(
+  relationId: string,
+  organizationId: string
+): Promise<RelationEmbedding | null> {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    // Rust側のTauriコマンドを呼び出し
+    const result = await callTauriCommand('chromadb_get_relation_embedding', {
+      relationId,
+      organizationId,
+    }) as Record<string, any> | null;
+
+    if (!result) {
+      return null;
+    }
+
+    // 埋め込みベクトルを取得
+    const combinedEmbedding = result.combinedEmbedding as number[] | undefined;
+    if (!combinedEmbedding || !Array.isArray(combinedEmbedding) || combinedEmbedding.length === 0) {
+      return null;
+    }
+
+    // メタデータから情報を取得
+    const topicId = result.topicId as string | undefined;
+    const descriptionEmbeddingStr = result.descriptionEmbedding as string | undefined;
+    const relationTypeEmbeddingStr = result.relationTypeEmbedding as string | undefined;
+    
+    let descriptionEmbedding: number[] | undefined;
+    let relationTypeEmbedding: number[] | undefined;
+
+    if (descriptionEmbeddingStr) {
+      try {
+        descriptionEmbedding = JSON.parse(descriptionEmbeddingStr);
+      } catch (e) {
+        console.warn('descriptionEmbeddingのパースに失敗しました:', e);
+      }
+    }
+
+    if (relationTypeEmbeddingStr) {
+      try {
+        relationTypeEmbedding = JSON.parse(relationTypeEmbeddingStr);
+      } catch (e) {
+        console.warn('relationTypeEmbeddingのパースに失敗しました:', e);
+      }
+    }
+    
+    // RelationEmbeddingオブジェクトを構築
+    const embedding: RelationEmbedding = {
+      id: relationId,
+      relationId,
+      topicId: topicId || '',
+      organizationId: organizationId,
+      combinedEmbedding,
+      descriptionEmbedding,
+      relationTypeEmbedding,
+      embeddingModel: (result.embeddingModel as string) || 'text-embedding-3-small',
+      embeddingVersion: (result.embeddingVersion as string) || '1.0',
+      createdAt: (result.createdAt as string) || new Date().toISOString(),
+      updatedAt: (result.updatedAt as string) || new Date().toISOString(),
+    };
+
+    return embedding;
+  } catch (error) {
+    console.error('ChromaDBからのリレーション埋め込み取得エラー:', error);
+    return null;
+  }
 }
 
 /**

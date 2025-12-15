@@ -77,6 +77,8 @@ export async function callTauriCommand(command: string, args?: any): Promise<any
           const isIPCProtocolError = errorMessage.includes('IPC custom protocol failed') ||
                                      errorMessage.includes('Load failed') ||
                                      errorMessage.includes('TypeError: Load failed') ||
+                                     errorMessage.includes('access control checks') ||
+                                     errorMessage.includes('ipc://localhost') ||
                                      (invokeError?.name === 'TypeError' && errorMessage.includes('Load failed'));
           
           if (!isNoRowsError && !isIPCProtocolError && isDev) {
@@ -92,7 +94,7 @@ export async function callTauriCommand(command: string, args?: any): Promise<any
             });
           }
           
-          // IPCプロトコルエラーの場合は、下のフォールバック処理に進む
+          // IPCプロトコルエラーやCORSエラーの場合は、下のフォールバック処理に進む
           if (isIPCProtocolError) {
             throw new Error('IPC_PROTOCOL_FALLBACK');
           }

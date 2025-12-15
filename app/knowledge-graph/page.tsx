@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
-import KnowledgeGraph2D from '@/components/KnowledgeGraph2D';
+// import KnowledgeGraph2D from '@/components/KnowledgeGraph2D';
 import KnowledgeGraph3D from '@/components/KnowledgeGraph3D';
 import { getAllEntities, getEntityById, deleteEntity } from '@/lib/entityApi';
 import { getAllRelations, getRelationById, getRelationsByEntityId, deleteRelation } from '@/lib/relationApi';
@@ -11,6 +11,7 @@ import { getAllTopicsBatch, getAllMembersBatch, getOrgTreeFromDb, getAllOrganiza
 import { batchUpdateEntityEmbeddings, findOutdatedEntityEmbeddings, CURRENT_EMBEDDING_VERSION as ENTITY_EMBEDDING_VERSION, CURRENT_EMBEDDING_MODEL as ENTITY_EMBEDDING_MODEL } from '@/lib/entityEmbeddings';
 import { batchUpdateRelationEmbeddings, findOutdatedRelationEmbeddings, CURRENT_EMBEDDING_VERSION as RELATION_EMBEDDING_VERSION, CURRENT_EMBEDDING_MODEL as RELATION_EMBEDDING_MODEL } from '@/lib/relationEmbeddings';
 import { batchUpdateTopicEmbeddings } from '@/lib/topicEmbeddings';
+import { useEmbeddingRegeneration } from '@/components/EmbeddingRegenerationContext';
 import type { Entity } from '@/types/entity';
 import type { Relation } from '@/types/relation';
 import type { TopicInfo } from '@/lib/orgApi';
@@ -23,13 +24,22 @@ function KnowledgeGraphPageContent() {
   const [organizations, setOrganizations] = useState<Array<{ id: string; name: string; title?: string }>>([]);
   const [members, setMembers] = useState<Array<{ id: string; name: string; position?: string; organizationId: string }>>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'list' | 'graph2d' | 'graph3d'>('graph2d');
+  const [viewMode, setViewMode] = useState<'list' | 'graph2d' | 'graph3d'>('graph3d');
   const [entitySearchQuery, setEntitySearchQuery] = useState('');
   const [entityTypeFilter, setEntityTypeFilter] = useState<string>('all');
   const [relationSearchQuery, setRelationSearchQuery] = useState('');
   const [relationTypeFilter, setRelationTypeFilter] = useState<string>('all');
   const [highlightedEntityId, setHighlightedEntityId] = useState<string | null>(null);
   const [highlightedRelationId, setHighlightedRelationId] = useState<string | null>(null);
+  const [selectedEntity, setSelectedEntity] = useState<Entity | null>(null);
+  const [selectedRelation, setSelectedRelation] = useState<Relation | null>(null);
+  const [searchResultEntityIds, setSearchResultEntityIds] = useState<Set<string>>(new Set());
+  const [searchResultRelationIds, setSearchResultRelationIds] = useState<Set<string>>(new Set());
+  
+  // ページネーション状態
+  const [entityPage, setEntityPage] = useState(1);
+  const [relationPage, setRelationPage] = useState(1);
+  const ITEMS_PER_PAGE = 50;
   
   // フィルター状態
   const [selectedOrganizationIds, setSelectedOrganizationIds] = useState<Set<string>>(new Set());
@@ -42,12 +52,28 @@ function KnowledgeGraphPageContent() {
   const [showMemberFilter, setShowMemberFilter] = useState(false);
   const [showImportanceFilter, setShowImportanceFilter] = useState(false);
   
-  // 埋め込み再生成の状態
+  // 埋め込み再生成のグローバル状態管理
+  const { startRegeneration, updateProgress, completeRegeneration, cancelRegeneration, openModal } = useEmbeddingRegeneration();
+  
+  // モーダルを開くイベントをリッスン
+  useEffect(() => {
+    const handleOpenModal = () => {
+      setShowRegenerationModal(true);
+    };
+    
+    window.addEventListener('openEmbeddingRegenerationModal', handleOpenModal);
+    
+    return () => {
+      window.removeEventListener('openEmbeddingRegenerationModal', handleOpenModal);
+    };
+  }, []);
+  
+  // 埋め込み再生成の状態（ローカルUI用）
   const [isRegeneratingEmbeddings, setIsRegeneratingEmbeddings] = useState(false);
   const [regenerationProgress, setRegenerationProgress] = useState<{
     current: number;
     total: number;
-    status: 'idle' | 'processing' | 'completed';
+    status: 'idle' | 'processing' | 'completed' | 'cancelled';
     logs: Array<{ type: 'info' | 'success' | 'error' | 'skip'; message: string; timestamp: Date }>;
     stats: { success: number; skipped: number; errors: number };
   }>({
@@ -57,10 +83,23 @@ function KnowledgeGraphPageContent() {
     logs: [],
     stats: { success: 0, skipped: 0, errors: 0 },
   });
+  
+  // ローカル状態とグローバル状態を同期
+  useEffect(() => {
+    if (isRegeneratingEmbeddings && regenerationProgress.status === 'processing') {
+      updateProgress(regenerationProgress);
+    } else if (regenerationProgress.status === 'completed') {
+      completeRegeneration();
+    } else if (regenerationProgress.status === 'cancelled') {
+      cancelRegeneration();
+    }
+  }, [isRegeneratingEmbeddings, regenerationProgress, updateProgress, completeRegeneration, cancelRegeneration]);
   const [showRegenerationModal, setShowRegenerationModal] = useState(false);
   const [regenerationMode, setRegenerationMode] = useState<'missing' | 'all'>('missing'); // 再生成モード
   const [missingCounts, setMissingCounts] = useState<{ entities: number; relations: number; topics: number; total: number }>({ entities: 0, relations: 0, topics: 0, total: 0 });
   const [isCountingMissing, setIsCountingMissing] = useState(false);
+  // 停止フラグ（useRefで管理して、非同期処理中でも最新の値を参照できるようにする）
+  const isCancelledRef = useRef<boolean>(false);
   const [showVersionCheck, setShowVersionCheck] = useState(false);
   const [outdatedEntities, setOutdatedEntities] = useState<Array<{ entityId: string; currentVersion: string; expectedVersion: string; model: string }>>([]);
   const [outdatedRelations, setOutdatedRelations] = useState<Array<{ relationId: string; currentVersion: string; expectedVersion: string; model: string }>>([]);
@@ -80,11 +119,29 @@ function KnowledgeGraphPageContent() {
     const loadData = async () => {
       setIsLoading(true);
       try {
-        const [allEntities, allRelations, allTopics] = await Promise.all([
+        console.log('📖 [ナレッジグラフ] データ読み込み開始');
+        
+        // Promise.allSettledを使用して、一部が失敗しても続行
+        const results = await Promise.allSettled([
           getAllEntities(),
           getAllRelations(),
           getAllTopicsBatch(),
         ]);
+        
+        const allEntities = results[0].status === 'fulfilled' ? results[0].value : [];
+        const allRelations = results[1].status === 'fulfilled' ? results[1].value : [];
+        const allTopics = results[2].status === 'fulfilled' ? results[2].value : [];
+        
+        // エラーがあった場合はログに出力
+        if (results[0].status === 'rejected') {
+          console.error('❌ [ナレッジグラフ] エンティティの読み込みエラー:', results[0].reason);
+        }
+        if (results[1].status === 'rejected') {
+          console.error('❌ [ナレッジグラフ] リレーションの読み込みエラー:', results[1].reason);
+        }
+        if (results[2].status === 'rejected') {
+          console.error('❌ [ナレッジグラフ] トピックの読み込みエラー:', results[2].reason);
+        }
         
         setEntities(allEntities);
         setRelations(allRelations);
@@ -98,20 +155,47 @@ function KnowledgeGraphPageContent() {
         // URLパラメータからエンティティIDまたはリレーションIDを取得
         const entityId = searchParams?.get('entityId');
         const relationId = searchParams?.get('relationId');
+        const entityIdsParam = searchParams?.get('entityIds');
+        const relationIdsParam = searchParams?.get('relationIds');
+        const topicIdsParam = searchParams?.get('topicIds');
+        const fromSearch = searchParams?.get('fromSearch') === 'true';
+
+        // 検索結果モードの場合、IDリストを保存
+        if (fromSearch && (entityIdsParam || relationIdsParam || topicIdsParam)) {
+          if (entityIdsParam) {
+            const ids = entityIdsParam.split(',').filter(id => id.trim());
+            setSearchResultEntityIds(new Set(ids));
+          }
+          if (relationIdsParam) {
+            const ids = relationIdsParam.split(',').filter(id => id.trim());
+            setSearchResultRelationIds(new Set(ids));
+          }
+          setViewMode('graph3d'); // グラフ表示に切り替え
+        }
 
         if (entityId) {
-          const entity = await getEntityById(entityId);
-          if (entity) {
-            setHighlightedEntityId(entityId);
-            setViewMode('graph2d'); // グラフ表示に切り替え
+          try {
+            const entity = await getEntityById(entityId);
+            if (entity) {
+              setHighlightedEntityId(entityId);
+              setSelectedEntity(entity); // 詳細表示用にエンティティを保存
+              setViewMode('graph3d'); // グラフ表示に切り替え
+            }
+          } catch (error) {
+            console.warn('⚠️ [ナレッジグラフ] エンティティIDの取得エラー:', error);
           }
         }
 
         if (relationId) {
-          const relation = await getRelationById(relationId);
-          if (relation) {
-            setHighlightedRelationId(relationId);
-            setViewMode('graph2d'); // グラフ表示に切り替え
+          try {
+            const relation = await getRelationById(relationId);
+            if (relation) {
+              setHighlightedRelationId(relationId);
+              setSelectedRelation(relation); // 詳細表示用にリレーションを保存
+              setViewMode('graph3d'); // グラフ表示に切り替え
+            }
+          } catch (error) {
+            console.warn('⚠️ [ナレッジグラフ] リレーションIDの取得エラー:', error);
           }
         }
       } catch (error: any) {
@@ -154,133 +238,72 @@ function KnowledgeGraphPageContent() {
       let relationCount = 0;
       let topicCount = 0;
 
-      // エンティティの未生成件数をカウント
-      // SQLiteのchromaSyncedカラムとChromaDBの両方を確認
+      // エンティティの未生成件数をカウント（query_getで一括取得）
       if (selectedType === 'all' || selectedType === 'entities') {
-        for (const entity of targetEntities) {
-          try {
-            // SQLiteからエンティティの詳細情報を取得（chromaSyncedを含む）
-            const { callTauriCommand } = await import('@/lib/localFirebase');
-            const entityData = await callTauriCommand('doc_get', {
-              collectionName: 'entities',
-              docId: entity.id,
-            }) as any;
-            
-            // chromaSyncedが1の場合は埋め込みが存在すると判断
-            const chromaSynced = entityData?.chromaSynced === 1 || entityData?.chromaSynced === true;
-            
-            // chromaSyncedが0または未設定の場合、ChromaDBから直接確認
-            let existsInChroma = false;
-            if (!chromaSynced && entity.organizationId) {
-              try {
-                // エンティティ名でChromaDBを検索して、結果にIDが含まれるか確認
-                const { findSimilarEntitiesChroma } = await import('@/lib/entityEmbeddingsChroma');
-                const searchResults = await findSimilarEntitiesChroma(entity.name || '', 100, entity.organizationId);
-                existsInChroma = searchResults.some(result => result.entityId === entity.id);
-              } catch (error) {
-                // 検索エラーは無視（ChromaDBに存在しない可能性）
-                console.debug(`エンティティ ${entity.id} のChromaDB検索エラー:`, error);
-              }
-            }
-            
-            if (!chromaSynced && !existsInChroma) {
-              // chromaSyncedが0または未設定で、かつChromaDBにも存在しない場合
-              entityCount++;
-            }
-          } catch (error) {
-            // エラーが発生した場合は未生成としてカウント
-            console.warn(`エンティティ ${entity.id} の埋め込み確認エラー:`, error);
-            entityCount++;
-          }
+        try {
+          const { callTauriCommand } = await import('@/lib/localFirebase');
+          // chromaSynced = 0 のエンティティを一括取得
+          const missingEntityDocs = await callTauriCommand('query_get', {
+            collectionName: 'entities',
+            conditions: {
+              chromaSynced: 0,
+              ...(selectedOrgId !== 'all' ? { organizationId: selectedOrgId } : {}),
+            },
+          }) as Array<{ id: string; data: any }>;
+          
+          // 取得したIDがtargetEntitiesに含まれているか確認
+          const missingEntityIds = new Set(missingEntityDocs.map(doc => doc.id));
+          entityCount = targetEntities.filter(entity => missingEntityIds.has(entity.id)).length;
+        } catch (error) {
+          console.warn(`⚠️ [未生成件数計算] エンティティの一括取得エラー:`, error);
+          // エラーが発生した場合は0として扱う（計算をスキップ）
+          entityCount = 0;
         }
       }
 
-      // リレーションの未生成件数をカウント
-      // SQLiteのchromaSyncedカラムとChromaDBの両方を確認
+      // リレーションの未生成件数をカウント（query_getで一括取得）
       if (selectedType === 'all' || selectedType === 'relations') {
-        for (const relation of targetRelations) {
-          try {
-            // SQLiteからリレーションの詳細情報を取得（chromaSyncedを含む）
-            const { callTauriCommand } = await import('@/lib/localFirebase');
-            const relationData = await callTauriCommand('doc_get', {
-              collectionName: 'relations',
-              docId: relation.id,
-            }) as any;
-            
-            // chromaSyncedが1の場合は埋め込みが存在すると判断
-            const chromaSynced = relationData?.chromaSynced === 1 || relationData?.chromaSynced === true;
-            
-            // chromaSyncedが0または未設定の場合、ChromaDBから直接確認
-            let existsInChroma = false;
-            if (!chromaSynced) {
-              const orgId = relation.organizationId || entities.find(e => e.id === relation.sourceEntityId || e.id === relation.targetEntityId)?.organizationId;
-              if (orgId) {
-                try {
-                  // リレーションタイプでChromaDBを検索して、結果にIDが含まれるか確認
-                  const { findSimilarRelationsChroma } = await import('@/lib/relationEmbeddingsChroma');
-                  const searchResults = await findSimilarRelationsChroma(relation.relationType || '', 100, orgId);
-                  existsInChroma = searchResults.some(result => result.relationId === relation.id);
-                } catch (error) {
-                  // 検索エラーは無視（ChromaDBに存在しない可能性）
-                  console.debug(`リレーション ${relation.id} のChromaDB検索エラー:`, error);
-                }
-              }
-            }
-            
-            if (!chromaSynced && !existsInChroma) {
-              // chromaSyncedが0または未設定で、かつChromaDBにも存在しない場合
-              relationCount++;
-            }
-          } catch (error) {
-            // エラーが発生した場合は未生成としてカウント
-            console.warn(`リレーション ${relation.id} の埋め込み確認エラー:`, error);
-            relationCount++;
-          }
+        try {
+          const { callTauriCommand } = await import('@/lib/localFirebase');
+          // chromaSynced = 0 のリレーションを一括取得
+          const missingRelationDocs = await callTauriCommand('query_get', {
+            collectionName: 'relations',
+            conditions: {
+              chromaSynced: 0,
+              ...(selectedOrgId !== 'all' ? { organizationId: selectedOrgId } : {}),
+            },
+          }) as Array<{ id: string; data: any }>;
+          
+          // 取得したIDがtargetRelationsに含まれているか確認
+          const missingRelationIds = new Set(missingRelationDocs.map(doc => doc.id));
+          relationCount = targetRelations.filter(relation => missingRelationIds.has(relation.id)).length;
+        } catch (error) {
+          console.warn(`⚠️ [未生成件数計算] リレーションの一括取得エラー:`, error);
+          // エラーが発生した場合は0として扱う（計算をスキップ）
+          relationCount = 0;
         }
       }
 
-      // トピックの未生成件数をカウント
-      // SQLiteのchromaSyncedカラムとChromaDBの両方を確認
+      // トピックの未生成件数をカウント（query_getで一括取得）
       if (selectedType === 'all' || selectedType === 'topics') {
-        for (const topic of targetTopics) {
-          if (!topic.meetingNoteId || !topic.organizationId) continue;
-          try {
-            // SQLiteからトピックの詳細情報を取得（chromaSyncedを含む）
-            const { callTauriCommand } = await import('@/lib/localFirebase');
-            const embeddingId = `${topic.meetingNoteId}-topic-${topic.id}`;
-            const topicData = await callTauriCommand('doc_get', {
-              collectionName: 'topics',
-              docId: embeddingId,
-            }) as any;
-            
-            // chromaSyncedが1の場合、または埋め込みデータが存在する場合は埋め込みが存在すると判断
-            const chromaSynced = topicData?.chromaSynced === 1 || topicData?.chromaSynced === true;
-            const hasEmbedding = topicData?.embedding && Array.isArray(topicData.embedding) && topicData.embedding.length > 0;
-            
-            // chromaSyncedが0または未設定で、かつSQLiteに埋め込みデータがない場合、ChromaDBから直接確認
-            let existsInChroma = false;
-            if (!chromaSynced && !hasEmbedding && topic.organizationId) {
-              try {
-                // トピックタイトルでChromaDBを検索して、結果にIDが含まれるか確認
-                const { findSimilarTopicsChroma } = await import('@/lib/topicEmbeddingsChroma');
-                const searchResults = await findSimilarTopicsChroma(topic.title || '', 100, topic.organizationId);
-                // ChromaDBのIDはtopicIdそのもの（meetingNoteId-topic-topicId形式ではない）
-                existsInChroma = searchResults.some(result => result.topicId === topic.id);
-              } catch (error) {
-                // 検索エラーは無視（ChromaDBに存在しない可能性）
-                console.debug(`トピック ${topic.id} のChromaDB検索エラー:`, error);
-              }
-            }
-            
-            if (!chromaSynced && !hasEmbedding && !existsInChroma) {
-              // chromaSyncedが0または未設定で、SQLiteにも埋め込みデータがなく、かつChromaDBにも存在しない場合
-              topicCount++;
-            }
-          } catch (error) {
-            // エラーが発生した場合は未生成としてカウント
-            console.warn(`トピック ${topic.id} の埋め込み確認エラー:`, error);
-            topicCount++;
-          }
+        try {
+          const { callTauriCommand } = await import('@/lib/localFirebase');
+          // chromaSynced = 0 のトピックを一括取得
+          const missingTopicDocs = await callTauriCommand('query_get', {
+            collectionName: 'topics',
+            conditions: {
+              chromaSynced: 0,
+              ...(selectedOrgId !== 'all' ? { organizationId: selectedOrgId } : {}),
+            },
+          }) as Array<{ id: string; data: any }>;
+          
+          // 取得したIDがtargetTopicsに含まれているか確認
+          const missingTopicIds = new Set(missingTopicDocs.map(doc => doc.id));
+          topicCount = targetTopics.filter(topic => missingTopicIds.has(topic.id)).length;
+        } catch (error) {
+          console.warn(`⚠️ [未生成件数計算] トピックの一括取得エラー:`, error);
+          // エラーが発生した場合は0として扱う（計算をスキップ）
+          topicCount = 0;
         }
       }
 
@@ -339,22 +362,8 @@ function KnowledgeGraphPageContent() {
       // 2. 関連するリレーションを削除
       for (const relation of relatedRelations) {
         try {
-          // relationEmbeddingsを削除（SQLite）
-          try {
-            const relationEmbeddingId = `relation_${relation.id}`;
-            await callTauriCommand('doc_delete', {
-              collectionName: 'relationEmbeddings',
-              docId: relationEmbeddingId,
-            });
-            console.log(`✅ [handleDeleteEntity] relationEmbeddings削除: ${relationEmbeddingId}`);
-          } catch (e: any) {
-            // 既に削除されている場合は無視
-            if (!e?.message?.includes('not found') && !e?.message?.includes('見つかりません')) {
-              console.warn(`⚠️ [handleDeleteEntity] relationEmbeddings削除エラー（続行します）:`, e);
-            }
-          }
-          
           // リレーションを削除（SQLite）
+          // 注意: relationEmbeddingsテーブルは廃止済み（ChromaDBに統一）
           await deleteRelation(relation.id);
           console.log(`✅ [handleDeleteEntity] リレーション削除: ${relation.id}`);
         } catch (error: any) {
@@ -362,21 +371,8 @@ function KnowledgeGraphPageContent() {
         }
       }
       
-      // 3. entityEmbeddingsを削除（SQLite）
-      try {
-        await callTauriCommand('doc_delete', {
-          collectionName: 'entityEmbeddings',
-          docId: entity.id,
-        });
-        console.log(`✅ [handleDeleteEntity] entityEmbeddings削除: ${entity.id}`);
-      } catch (error: any) {
-        // entityEmbeddingsが存在しない場合は無視
-        if (!error?.message?.includes('not found') && !error?.message?.includes('見つかりません')) {
-          console.warn(`⚠️ [handleDeleteEntity] entityEmbeddings削除エラー（続行します）:`, error);
-        }
-      }
-      
-      // 4. ChromaDBの埋め込みデータを削除（非同期、エラーは無視）
+      // 3. ChromaDBの埋め込みデータを削除（非同期、エラーは無視）
+      // 注意: entityEmbeddingsテーブルは廃止済み（ChromaDBに統一）
       if (entity.organizationId) {
         (async () => {
           try {
@@ -455,41 +451,16 @@ function KnowledgeGraphPageContent() {
           // 2. 関連するリレーションを削除
           for (const relation of relatedRelations) {
             try {
-              // relationEmbeddingsを削除（SQLite）
-              try {
-                const relationEmbeddingId = `relation_${relation.id}`;
-                await callTauriCommand('doc_delete', {
-                  collectionName: 'relationEmbeddings',
-                  docId: relationEmbeddingId,
-                });
-              } catch (e: any) {
-                // 既に削除されている場合は無視
-                if (!e?.message?.includes('not found') && !e?.message?.includes('見つかりません')) {
-                  console.warn(`⚠️ [handleBulkDeleteEntities] relationEmbeddings削除エラー（続行します）:`, e);
-                }
-              }
-              
               // リレーションを削除（SQLite）
+              // 注意: relationEmbeddingsテーブルは廃止済み（ChromaDBに統一）
               await deleteRelation(relation.id);
             } catch (error: any) {
               console.warn(`⚠️ [handleBulkDeleteEntities] リレーション削除エラー（続行します）:`, error);
             }
           }
           
-          // 3. entityEmbeddingsを削除（SQLite）
-          try {
-            await callTauriCommand('doc_delete', {
-              collectionName: 'entityEmbeddings',
-              docId: entity.id,
-            });
-          } catch (error: any) {
-            // entityEmbeddingsが存在しない場合は無視
-            if (!error?.message?.includes('not found') && !error?.message?.includes('見つかりません')) {
-              console.warn(`⚠️ [handleBulkDeleteEntities] entityEmbeddings削除エラー（続行します）:`, error);
-            }
-          }
-          
-          // 4. ChromaDBの埋め込みデータを削除（非同期、エラーは無視）
+          // 3. ChromaDBの埋め込みデータを削除（非同期、エラーは無視）
+          // 注意: entityEmbeddingsテーブルは廃止済み（ChromaDBに統一）
           if (entity.organizationId) {
             (async () => {
               try {
@@ -735,6 +706,45 @@ function KnowledgeGraphPageContent() {
 
   // フィルタリング
   const filteredEntities = useMemo(() => {
+    // 検索結果モードの場合、検索結果のエンティティ + 検索結果のリレーションに関連するエンティティを表示
+    if (searchResultEntityIds.size > 0 || searchResultRelationIds.size > 0) {
+      const entityIdsToShow = new Set<string>(searchResultEntityIds);
+      
+      // 検索結果のリレーションに関連するエンティティIDを追加
+      if (searchResultRelationIds.size > 0) {
+        for (const relation of relations) {
+          if (searchResultRelationIds.has(relation.id)) {
+            if (relation.sourceEntityId) {
+              entityIdsToShow.add(relation.sourceEntityId);
+            }
+            if (relation.targetEntityId) {
+              entityIdsToShow.add(relation.targetEntityId);
+            }
+          }
+        }
+      }
+      
+      // 検索結果のエンティティに関連するリレーションの両端のエンティティIDを追加
+      if (searchResultEntityIds.size > 0) {
+        for (const relation of relations) {
+          const sourceInResults = searchResultEntityIds.has(relation.sourceEntityId || '');
+          const targetInResults = searchResultEntityIds.has(relation.targetEntityId || '');
+          
+          if (sourceInResults || targetInResults) {
+            // このリレーションに関連するエンティティを追加
+            if (relation.sourceEntityId) {
+              entityIdsToShow.add(relation.sourceEntityId);
+            }
+            if (relation.targetEntityId) {
+              entityIdsToShow.add(relation.targetEntityId);
+            }
+          }
+        }
+      }
+      
+      return entities.filter(entity => entityIdsToShow.has(entity.id));
+    }
+    
     const hasOrganizationFilter = selectedOrganizationIds.size > 0;
     const hasMemberFilter = selectedMemberIds.size > 0;
     const hasDateFilter = dateRangeStart || dateRangeEnd;
@@ -803,9 +813,39 @@ function KnowledgeGraphPageContent() {
       
       return true;
     });
-  }, [entities, entitySearchQuery, entityTypeFilter, selectedOrganizationIds, selectedMemberIds, dateRangeStart, dateRangeEnd, selectedImportance, filteredRelationIds, relations]);
+  }, [entities, entitySearchQuery, entityTypeFilter, selectedOrganizationIds, selectedMemberIds, dateRangeStart, dateRangeEnd, selectedImportance, filteredRelationIds, relations, searchResultEntityIds, searchResultRelationIds]);
+  
+  // エンティティのページネーション
+  const paginatedEntities = useMemo(() => {
+    const startIndex = (entityPage - 1) * ITEMS_PER_PAGE;
+    const endIndex = startIndex + ITEMS_PER_PAGE;
+    return filteredEntities.slice(startIndex, endIndex);
+  }, [filteredEntities, entityPage]);
+  
+  const totalEntityPages = useMemo(() => {
+    return Math.ceil(filteredEntities.length / ITEMS_PER_PAGE);
+  }, [filteredEntities.length]);
   
   const filteredRelations = useMemo(() => {
+    // 検索結果モードの場合、検索結果のリレーション + 検索結果のエンティティに関連するリレーションを表示
+    if (searchResultEntityIds.size > 0 || searchResultRelationIds.size > 0) {
+      const relationIdsToShow = new Set<string>(searchResultRelationIds);
+      
+      // 検索結果のエンティティに関連するリレーションIDを追加
+      if (searchResultEntityIds.size > 0) {
+        for (const relation of relations) {
+          const sourceInResults = searchResultEntityIds.has(relation.sourceEntityId || '');
+          const targetInResults = searchResultEntityIds.has(relation.targetEntityId || '');
+          
+          if (sourceInResults || targetInResults) {
+            relationIdsToShow.add(relation.id);
+          }
+        }
+      }
+      
+      return relations.filter(relation => relationIdsToShow.has(relation.id));
+    }
+    
     return relations.filter((relation) => {
       // フィルタリングされたリレーションIDに含まれているかチェック
       if (!filteredRelationIds.has(relation.id)) {
@@ -833,7 +873,27 @@ function KnowledgeGraphPageContent() {
       
       return true;
     });
-  }, [relations, relationSearchQuery, relationTypeFilter, filteredRelationIds, entities, relationTypeLabels]);
+  }, [relations, relationSearchQuery, relationTypeFilter, filteredRelationIds, entities, relationTypeLabels, searchResultRelationIds]);
+  
+  // リレーションのページネーション
+  const paginatedRelations = useMemo(() => {
+    const startIndex = (relationPage - 1) * ITEMS_PER_PAGE;
+    const endIndex = startIndex + ITEMS_PER_PAGE;
+    return filteredRelations.slice(startIndex, endIndex);
+  }, [filteredRelations, relationPage]);
+  
+  const totalRelationPages = useMemo(() => {
+    return Math.ceil(filteredRelations.length / ITEMS_PER_PAGE);
+  }, [filteredRelations.length]);
+  
+  // 検索やフィルターが変更されたらページをリセット
+  useEffect(() => {
+    setEntityPage(1);
+  }, [entitySearchQuery, entityTypeFilter, selectedOrganizationIds, selectedMemberIds, dateRangeStart, dateRangeEnd, selectedImportance]);
+  
+  useEffect(() => {
+    setRelationPage(1);
+  }, [relationSearchQuery, relationTypeFilter]);
 
   return (
     <Layout>
@@ -1422,7 +1482,8 @@ function KnowledgeGraphPageContent() {
             >
               リスト
             </button>
-            <button
+            {/* 2Dグラフタブをコメントアウト */}
+            {/* <button
               onClick={() => setViewMode('graph2d')}
               style={{
                 padding: '8px 16px',
@@ -1436,7 +1497,7 @@ function KnowledgeGraphPageContent() {
               }}
             >
               2Dグラフ
-            </button>
+            </button> */}
             <button
               onClick={() => setViewMode('graph3d')}
               style={{
@@ -1531,6 +1592,11 @@ function KnowledgeGraphPageContent() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                     <h2 style={{ fontSize: '18px', fontWeight: 600, color: '#1a1a1a' }}>
                       📌 エンティティ ({filteredEntities.length}件)
+                      {totalEntityPages > 1 && (
+                        <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280', marginLeft: '8px' }}>
+                          (ページ {entityPage} / {totalEntityPages})
+                        </span>
+                      )}
                       {selectedEntityIds.size > 0 && (
                         <span style={{ fontSize: '14px', fontWeight: 500, color: '#EF4444', marginLeft: '8px' }}>
                           ({selectedEntityIds.size}件選択中)
@@ -1628,7 +1694,7 @@ function KnowledgeGraphPageContent() {
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '400px', overflowY: 'auto' }}>
-                    {filteredEntities.map((entity) => {
+                    {paginatedEntities.map((entity) => {
                       const relatedRelationsCount = relations.filter(r => 
                         r.sourceEntityId === entity.id || r.targetEntityId === entity.id
                       ).length;
@@ -1751,6 +1817,47 @@ function KnowledgeGraphPageContent() {
                       );
                     })}
                   </div>
+                  
+                  {/* エンティティのページネーションコントロール */}
+                  {totalEntityPages > 1 && (
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', marginTop: '16px' }}>
+                      <button
+                        onClick={() => setEntityPage(prev => Math.max(1, prev - 1))}
+                        disabled={entityPage === 1}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: entityPage === 1 ? '#F3F4F6' : '#3B82F6',
+                          color: entityPage === 1 ? '#9CA3AF' : '#FFFFFF',
+                          border: 'none',
+                          borderRadius: '6px',
+                          fontSize: '14px',
+                          cursor: entityPage === 1 ? 'not-allowed' : 'pointer',
+                          fontWeight: 500,
+                        }}
+                      >
+                        前へ
+                      </button>
+                      <span style={{ fontSize: '14px', color: '#6B7280' }}>
+                        {entityPage} / {totalEntityPages}
+                      </span>
+                      <button
+                        onClick={() => setEntityPage(prev => Math.min(totalEntityPages, prev + 1))}
+                        disabled={entityPage === totalEntityPages}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: entityPage === totalEntityPages ? '#F3F4F6' : '#3B82F6',
+                          color: entityPage === totalEntityPages ? '#9CA3AF' : '#FFFFFF',
+                          border: 'none',
+                          borderRadius: '6px',
+                          fontSize: '14px',
+                          cursor: entityPage === totalEntityPages ? 'not-allowed' : 'pointer',
+                          fontWeight: 500,
+                        }}
+                      >
+                        次へ
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* リレーションセクション */}
@@ -1758,6 +1865,11 @@ function KnowledgeGraphPageContent() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                     <h2 style={{ fontSize: '18px', fontWeight: 600, color: '#1a1a1a' }}>
                       🔗 リレーション ({filteredRelations.length}件)
+                      {totalRelationPages > 1 && (
+                        <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280', marginLeft: '8px' }}>
+                          (ページ {relationPage} / {totalRelationPages})
+                        </span>
+                      )}
                     </h2>
                   </div>
                   
@@ -1806,7 +1918,7 @@ function KnowledgeGraphPageContent() {
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '400px', overflowY: 'auto' }}>
-                    {filteredRelations.map((relation) => {
+                    {paginatedRelations.map((relation) => {
                       const sourceEntity = entities.find(e => e.id === relation.sourceEntityId);
                       const targetEntity = entities.find(e => e.id === relation.targetEntityId);
                       const sourceName = sourceEntity?.name || relation.sourceEntityId || '不明';
@@ -1838,12 +1950,53 @@ function KnowledgeGraphPageContent() {
                       );
                     })}
                   </div>
+                  
+                  {/* リレーションのページネーションコントロール */}
+                  {totalRelationPages > 1 && (
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', marginTop: '16px' }}>
+                      <button
+                        onClick={() => setRelationPage(prev => Math.max(1, prev - 1))}
+                        disabled={relationPage === 1}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: relationPage === 1 ? '#F3F4F6' : '#3B82F6',
+                          color: relationPage === 1 ? '#9CA3AF' : '#FFFFFF',
+                          border: 'none',
+                          borderRadius: '6px',
+                          fontSize: '14px',
+                          cursor: relationPage === 1 ? 'not-allowed' : 'pointer',
+                          fontWeight: 500,
+                        }}
+                      >
+                        前へ
+                      </button>
+                      <span style={{ fontSize: '14px', color: '#6B7280' }}>
+                        {relationPage} / {totalRelationPages}
+                      </span>
+                      <button
+                        onClick={() => setRelationPage(prev => Math.min(totalRelationPages, prev + 1))}
+                        disabled={relationPage === totalRelationPages}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: relationPage === totalRelationPages ? '#F3F4F6' : '#3B82F6',
+                          color: relationPage === totalRelationPages ? '#9CA3AF' : '#FFFFFF',
+                          border: 'none',
+                          borderRadius: '6px',
+                          fontSize: '14px',
+                          cursor: relationPage === totalRelationPages ? 'not-allowed' : 'pointer',
+                          fontWeight: 500,
+                        }}
+                      >
+                        次へ
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
-            {/* 2Dグラフ表示 */}
-            {viewMode === 'graph2d' && (
+            {/* 2Dグラフ表示をコメントアウト */}
+            {/* {viewMode === 'graph2d' && (
               <div style={{ height: '600px', border: '1px solid #E5E7EB', borderRadius: '8px', overflow: 'hidden' }}>
                 <KnowledgeGraph2D
                   entities={filteredEntities}
@@ -1857,7 +2010,7 @@ function KnowledgeGraphPageContent() {
                   highlightedRelationId={highlightedRelationId}
                 />
               </div>
-            )}
+            )} */}
 
             {/* 3Dグラフ表示 */}
             {viewMode === 'graph3d' && (
@@ -1879,7 +2032,7 @@ function KnowledgeGraphPageContent() {
         )}
       </div>
 
-      {/* 埋め込み再生成モーダル */}
+      {/* 埋め込み再生成モーダル（処理中でも表示可能） */}
       {showRegenerationModal && (
         <div
           style={{
@@ -1894,10 +2047,12 @@ function KnowledgeGraphPageContent() {
             justifyContent: 'center',
             zIndex: 1000,
           }}
-          onClick={() => {
-            if (!isRegeneratingEmbeddings) {
-              setShowRegenerationModal(false);
+          onClick={(e) => {
+            // 処理中は背景クリックで閉じない
+            if (isRegeneratingEmbeddings) {
+              return;
             }
+            setShowRegenerationModal(false);
           }}
         >
           <div
@@ -1912,9 +2067,41 @@ function KnowledgeGraphPageContent() {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 style={{ fontSize: '20px', fontWeight: 600, marginBottom: '16px' }}>
-              埋め込み再生成
-            </h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2 style={{ fontSize: '20px', fontWeight: 600, margin: 0 }}>
+                埋め込み再生成
+              </h2>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  setShowRegenerationModal(false);
+                }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  fontSize: '24px',
+                  cursor: 'pointer',
+                  color: '#6B7280',
+                  padding: '4px 8px',
+                  lineHeight: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '4px',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F3F4F6';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }}
+              >
+                ×
+              </button>
+            </div>
             
             {regenerationProgress.status === 'idle' && (
               <div>
@@ -2109,18 +2296,28 @@ function KnowledgeGraphPageContent() {
                     onClick={async () => {
                       const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
                       const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement;
-                      const selectedOrgId = orgSelect.value;
-                      const selectedType = typeSelect.value;
+                      const selectedOrgId = orgSelect?.value || 'all';
+                      const selectedType = typeSelect?.value || 'all';
                       const forceRegenerate = regenerationMode === 'all'; // 'all'の場合は強制再生成
+                      
+                      console.log(`🚀 [埋め込み再生成] 開始: regenerationMode=${regenerationMode}, forceRegenerate=${forceRegenerate}, selectedOrgId=${selectedOrgId}, selectedType=${selectedType}`);
+                      console.log(`📊 [埋め込み再生成] 現在のentities.length=${entities.length}, relations.length=${relations.length}, topics.length=${topics.length}`);
 
+                      // 停止フラグをリセット
+                      isCancelledRef.current = false;
                       setIsRegeneratingEmbeddings(true);
-                      setRegenerationProgress({
+                      // モーダルを閉じる（処理はバックグラウンドで続行）
+                      setShowRegenerationModal(false);
+                      const initialProgress = {
                         current: 0,
                         total: 0,
-                        status: 'processing',
+                        status: 'processing' as const,
                         logs: [],
                         stats: { success: 0, skipped: 0, errors: 0 },
-                      });
+                      };
+                      setRegenerationProgress(initialProgress);
+                      // グローバル状態を開始
+                      startRegeneration();
 
                       try {
                         let totalEntities = 0;
@@ -2128,10 +2325,10 @@ function KnowledgeGraphPageContent() {
                         let totalTopics = 0;
 
                         // 対象を決定
-                        const targetEntities = selectedOrgId === 'all'
+                        let targetEntities = selectedOrgId === 'all'
                           ? entities.filter(e => e.organizationId) // organizationIdがないものは除外
                           : entities.filter(e => e.organizationId === selectedOrgId);
-                        const targetRelations = selectedOrgId === 'all'
+                        let targetRelations = selectedOrgId === 'all'
                           ? relations.filter(r => {
                             // リレーション自体のorganizationIdを優先、なければ関連エンティティから取得
                             const orgId = r.organizationId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.organizationId;
@@ -2142,9 +2339,169 @@ function KnowledgeGraphPageContent() {
                             const orgId = r.organizationId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.organizationId;
                             return orgId === selectedOrgId && r.topicId; // 選択された組織IDと一致し、topicIdがあるもののみ
                           });
-                        const targetTopics = selectedOrgId === 'all'
+                        let targetTopics = selectedOrgId === 'all'
                           ? topics.filter(t => t.organizationId) // organizationIdがないものは除外
                           : topics.filter(t => t.organizationId === selectedOrgId);
+
+                        // 未生成のみの場合は、SQLiteのchromaSyncedフラグでフィルタリング
+                        if (!forceRegenerate && regenerationMode === 'missing') {
+                          console.log(`🔍 [埋め込み再生成] 未生成のみモード: フィルタリング開始`);
+                          console.log(`📊 [埋め込み再生成] フィルタリング前: エンティティ=${targetEntities.length}, リレーション=${targetRelations.length}, トピック=${targetTopics.length}`);
+                          const { callTauriCommand } = await import('@/lib/localFirebase');
+                          
+                          // エンティティのフィルタリング（query_getで一括取得）
+                          if (selectedType === 'all' || selectedType === 'entities') {
+                            try {
+                              // chromaSynced = 0 のエンティティを一括取得
+                              const missingEntityDocs = await callTauriCommand('query_get', {
+                                collectionName: 'entities',
+                                conditions: {
+                                  chromaSynced: 0,
+                                  ...(selectedOrgId !== 'all' ? { organizationId: selectedOrgId } : {}),
+                                },
+                              }) as Array<{ id: string; data: any }>;
+                              
+                              console.log(`🔍 [埋め込み再生成] query_get結果: ${missingEntityDocs.length}件`, missingEntityDocs.slice(0, 3));
+                              
+                              // query_getの結果は[{id: string, data: any}]の形式
+                              const missingEntityIds = new Set(missingEntityDocs.map(doc => doc.id || doc.data?.id));
+                              const missingEntities = targetEntities.filter(entity => missingEntityIds.has(entity.id));
+                              
+                              console.log(`🔍 [埋め込み再生成] フィルタリング: targetEntities=${targetEntities.length}, missingEntityIds=${missingEntityIds.size}, missingEntities=${missingEntities.length}`);
+                              
+                              console.log(`📊 [埋め込み再生成] エンティティフィルタリング後: ${missingEntities.length}件（一括取得: ${missingEntityDocs.length}件）`);
+                              targetEntities = missingEntities;
+                            } catch (error) {
+                              console.warn(`⚠️ [埋め込み再生成] エンティティの一括取得エラー（個別チェックにフォールバック）:`, error);
+                              // フォールバック: 個別チェック
+                              const missingEntities: Entity[] = [];
+                              for (const entity of targetEntities) {
+                                try {
+                                  const entityDoc = await callTauriCommand('doc_get', {
+                                    collectionName: 'entities',
+                                    docId: entity.id,
+                                  }) as any;
+                                  
+                                  let chromaSynced = false;
+                                  if (entityDoc?.exists && entityDoc?.data) {
+                                    chromaSynced = entityDoc.data.chromaSynced === 1 || entityDoc.data.chromaSynced === true;
+                                  }
+                                  
+                                  if (!chromaSynced) {
+                                    missingEntities.push(entity);
+                                  }
+                                } catch (err) {
+                                  console.debug(`エンティティ ${entity.id} のフラグ確認エラー:`, err);
+                                  missingEntities.push(entity);
+                                }
+                              }
+                              targetEntities = missingEntities;
+                            }
+                          }
+                          
+                          // リレーションのフィルタリング（query_getで一括取得）
+                          if (selectedType === 'all' || selectedType === 'relations') {
+                            try {
+                              // chromaSynced = 0 のリレーションを一括取得
+                              const missingRelationDocs = await callTauriCommand('query_get', {
+                                collectionName: 'relations',
+                                conditions: {
+                                  chromaSynced: 0,
+                                  ...(selectedOrgId !== 'all' ? { organizationId: selectedOrgId } : {}),
+                                },
+                              }) as Array<{ id: string; data: any }>;
+                              
+                              console.log(`🔍 [埋め込み再生成] query_get結果: ${missingRelationDocs.length}件`, missingRelationDocs.slice(0, 3));
+                              
+                              // query_getの結果は[{id: string, data: any}]の形式
+                              const missingRelationIds = new Set(missingRelationDocs.map(doc => doc.id || doc.data?.id));
+                              const missingRelations = targetRelations.filter(relation => missingRelationIds.has(relation.id));
+                              
+                              console.log(`🔍 [埋め込み再生成] フィルタリング: targetRelations=${targetRelations.length}, missingRelationIds=${missingRelationIds.size}, missingRelations=${missingRelations.length}`);
+                              
+                              console.log(`📊 [埋め込み再生成] リレーションフィルタリング後: ${missingRelations.length}件（一括取得: ${missingRelationDocs.length}件）`);
+                              targetRelations = missingRelations;
+                            } catch (error) {
+                              console.warn(`⚠️ [埋め込み再生成] リレーションの一括取得エラー（個別チェックにフォールバック）:`, error);
+                              // フォールバック: 個別チェック
+                              const missingRelations: Relation[] = [];
+                              for (const relation of targetRelations) {
+                                try {
+                                  const relationDoc = await callTauriCommand('doc_get', {
+                                    collectionName: 'relations',
+                                    docId: relation.id,
+                                  }) as any;
+                                  
+                                  let chromaSynced = false;
+                                  if (relationDoc?.exists && relationDoc?.data) {
+                                    chromaSynced = relationDoc.data.chromaSynced === 1 || relationDoc.data.chromaSynced === true;
+                                  }
+                                  
+                                  if (!chromaSynced) {
+                                    missingRelations.push(relation);
+                                  }
+                                } catch (err) {
+                                  console.debug(`リレーション ${relation.id} のフラグ確認エラー:`, err);
+                                  missingRelations.push(relation);
+                                }
+                              }
+                              targetRelations = missingRelations;
+                            }
+                          }
+                          
+                          // トピックのフィルタリング（query_getで一括取得）
+                          if (selectedType === 'all' || selectedType === 'topics') {
+                            try {
+                              // chromaSynced = 0 のトピックを一括取得
+                              const missingTopicDocs = await callTauriCommand('query_get', {
+                                collectionName: 'topics',
+                                conditions: {
+                                  chromaSynced: 0,
+                                  ...(selectedOrgId !== 'all' ? { organizationId: selectedOrgId } : {}),
+                                },
+                              }) as Array<{ id: string; data: any }>;
+                              
+                              console.log(`🔍 [埋め込み再生成] query_get結果: ${missingTopicDocs.length}件`, missingTopicDocs.slice(0, 3));
+                              
+                              // query_getの結果は[{id: string, data: any}]の形式
+                              const missingTopicIds = new Set(missingTopicDocs.map(doc => doc.id || doc.data?.id));
+                              const missingTopics = targetTopics.filter(topic => missingTopicIds.has(topic.id));
+                              
+                              console.log(`🔍 [埋め込み再生成] フィルタリング: targetTopics=${targetTopics.length}, missingTopicIds=${missingTopicIds.size}, missingTopics=${missingTopics.length}`);
+                              
+                              console.log(`📊 [埋め込み再生成] トピックフィルタリング後: ${missingTopics.length}件（一括取得: ${missingTopicDocs.length}件）`);
+                              targetTopics = missingTopics;
+                            } catch (error) {
+                              console.warn(`⚠️ [埋め込み再生成] トピックの一括取得エラー（個別チェックにフォールバック）:`, error);
+                              // フォールバック: 個別チェック
+                              const missingTopics: TopicInfo[] = [];
+                              for (const topic of targetTopics) {
+                                if (!topic.meetingNoteId || !topic.organizationId) continue;
+                                try {
+                                  const topicDoc = await callTauriCommand('doc_get', {
+                                    collectionName: 'topics',
+                                    docId: topic.id,
+                                  }) as any;
+                                  
+                                  let chromaSynced = false;
+                                  if (topicDoc?.exists && topicDoc?.data) {
+                                    chromaSynced = topicDoc.data.chromaSynced === 1 || topicDoc.data.chromaSynced === true;
+                                  }
+                                  
+                                  if (!chromaSynced) {
+                                    missingTopics.push(topic);
+                                  }
+                                } catch (err) {
+                                  console.debug(`トピック ${topic.id} のフラグ確認エラー:`, err);
+                                  missingTopics.push(topic);
+                                }
+                              }
+                              targetTopics = missingTopics;
+                            }
+                          }
+                          
+                          console.log(`✅ [埋め込み再生成] フィルタリング完了: エンティティ=${targetEntities.length}, リレーション=${targetRelations.length}, トピック=${targetTopics.length}`);
+                        }
 
                         if (selectedType === 'all' || selectedType === 'entities') {
                           totalEntities = targetEntities.length;
@@ -2157,47 +2514,56 @@ function KnowledgeGraphPageContent() {
                         }
 
                         const total = totalEntities + totalRelations + totalTopics;
+                        console.log(`📊 [埋め込み再生成] 最終的な件数: エンティティ=${totalEntities}, リレーション=${totalRelations}, トピック=${totalTopics}, 合計=${total}`);
                         setRegenerationProgress(prev => ({ ...prev, total }));
+                        
+                        if (total === 0) {
+                          console.warn(`⚠️ [埋め込み再生成] 処理対象が0件です。フィルタリング処理を確認してください。`);
+                          setRegenerationProgress(prev => ({
+                            ...prev,
+                            status: 'completed',
+                            logs: [
+                              ...prev.logs,
+                              {
+                                type: 'info',
+                                message: '処理対象が0件でした。すべてのアイテムが既に埋め込み済みの可能性があります。',
+                                timestamp: new Date(),
+                              },
+                            ],
+                          }));
+                          setIsRegeneratingEmbeddings(false);
+                          completeRegeneration();
+                          return;
+                        }
 
                         // エンティティの再生成
                         if (selectedType === 'all' || selectedType === 'entities') {
                           for (const entity of targetEntities) {
+                            // 停止チェック
+                            if (isCancelledRef.current) {
+                              setRegenerationProgress(prev => ({
+                                ...prev,
+                                status: 'cancelled',
+                                logs: [
+                                  ...prev.logs,
+                                  {
+                                    type: 'info',
+                                    message: '処理が中止されました',
+                                    timestamp: new Date(),
+                                  },
+                                ],
+                              }));
+                              break;
+                            }
+                            
                             // organizationIdがないものは既にtargetEntitiesから除外されているので、このチェックは不要だが念のため
                             if (!entity.organizationId) {
                               console.warn(`⚠️ エンティティ ${entity.id} (${entity.name}) にorganizationIdがありません。スキップします。`);
                               continue;
                             }
                             
-                            // 未生成のみの場合は、既存の埋め込みをチェック
-                            if (!forceRegenerate) {
-                              try {
-                                const { getEntityEmbedding } = await import('@/lib/entityEmbeddings');
-                                const existing = await getEntityEmbedding(entity.id);
-                                if (existing && existing.combinedEmbedding && existing.combinedEmbedding.length > 0) {
-                                  console.log(`⏭️  エンティティ ${entity.id} (${entity.name}) は既に埋め込みが存在するためスキップ`);
-                                  setRegenerationProgress(prev => ({
-                                    ...prev,
-                                    current: prev.current + 1,
-                                    logs: [
-                                      ...prev.logs,
-                                      {
-                                        type: 'skip',
-                                        message: `エンティティ: ${entity.name} (スキップ - 既に埋め込みあり)`,
-                                        timestamp: new Date(),
-                                      },
-                                    ],
-                                    stats: {
-                                      ...prev.stats,
-                                      skipped: prev.stats.skipped + 1,
-                                    },
-                                  }));
-                                  continue;
-                                }
-                              } catch (error) {
-                                console.warn(`⚠️ エンティティ ${entity.id} の埋め込み確認エラー:`, error);
-                                // エラーが発生した場合は続行（再生成を試みる）
-                              }
-                            }
+                            // 未生成のみの場合は、既にフィルタリング済みなのでチェック不要
+                            // batchUpdateEntityEmbeddings内でもSQLiteのchromaSyncedフラグをチェックするため、ここではスキップ
                             
                             const entityIds = [entity.id];
                             await batchUpdateEntityEmbeddings(
@@ -2224,14 +2590,37 @@ function KnowledgeGraphPageContent() {
                                     errors: prev.stats.errors + (status === 'error' ? 1 : 0),
                                   },
                                 }));
-                              }
+                              },
+                              () => isCancelledRef.current // shouldCancelコールバック
                             );
+                            
+                            // 停止チェック（バッチ処理後）
+                            if (isCancelledRef.current) {
+                              break;
+                            }
                           }
                         }
 
                         // リレーションの再生成
                         if (selectedType === 'all' || selectedType === 'relations') {
                           for (const relation of targetRelations) {
+                            // 停止チェック
+                            if (isCancelledRef.current) {
+                              setRegenerationProgress(prev => ({
+                                ...prev,
+                                status: 'cancelled',
+                                logs: [
+                                  ...prev.logs,
+                                  {
+                                    type: 'info',
+                                    message: '処理が中止されました',
+                                    timestamp: new Date(),
+                                  },
+                                ],
+                              }));
+                              break;
+                            }
+                            
                             // organizationIdを取得（リレーション自体のorganizationIdを優先、なければ関連エンティティから取得）
                             let organizationId = relation.organizationId;
                             if (!organizationId) {
@@ -2251,36 +2640,8 @@ function KnowledgeGraphPageContent() {
                               continue;
                             }
 
-                            // 未生成のみの場合は、既存の埋め込みをチェック
-                            if (!forceRegenerate) {
-                              try {
-                                const { getRelationEmbedding } = await import('@/lib/relationEmbeddings');
-                                const existing = await getRelationEmbedding(relation.id);
-                                if (existing && existing.combinedEmbedding && existing.combinedEmbedding.length > 0) {
-                                  console.log(`⏭️  リレーション ${relation.id} (${relation.relationType}) は既に埋め込みが存在するためスキップ`);
-                                  setRegenerationProgress(prev => ({
-                                    ...prev,
-                                    current: prev.current + 1,
-                                    logs: [
-                                      ...prev.logs,
-                                      {
-                                        type: 'skip',
-                                        message: `リレーション: ${relation.relationType} (スキップ - 既に埋め込みあり)`,
-                                        timestamp: new Date(),
-                                      },
-                                    ],
-                                    stats: {
-                                      ...prev.stats,
-                                      skipped: prev.stats.skipped + 1,
-                                    },
-                                  }));
-                                  continue;
-                                }
-                              } catch (error) {
-                                console.warn(`⚠️ リレーション ${relation.id} の埋め込み確認エラー:`, error);
-                                // エラーが発生した場合は続行（再生成を試みる）
-                              }
-                            }
+                            // 未生成のみの場合は、既にフィルタリング済みなのでチェック不要
+                            // batchUpdateRelationEmbeddings内でもチェックが行われるため、ここではスキップ
 
                             const relationIds = [relation.id];
                             await batchUpdateRelationEmbeddings(
@@ -2307,8 +2668,14 @@ function KnowledgeGraphPageContent() {
                                     errors: prev.stats.errors + (status === 'error' ? 1 : 0),
                                   },
                                 }));
-                              }
+                              },
+                              () => isCancelledRef.current // shouldCancelコールバック
                             );
+                            
+                            // 停止チェック（バッチ処理後）
+                            if (isCancelledRef.current) {
+                              break;
+                            }
                           }
                         }
 
@@ -2323,41 +2690,8 @@ function KnowledgeGraphPageContent() {
                               continue;
                             }
 
-                            // 未生成のみの場合は、既存の埋め込みをチェック
-                            // 注意: batchUpdateTopicEmbeddings内でも既存チェックが行われるが、
-                            // 進捗表示の一貫性のために、ここでもチェックする
-                            if (!forceRegenerate) {
-                              try {
-                                const { getTopicEmbedding } = await import('@/lib/topicEmbeddings');
-                                const existing = await getTopicEmbedding(topic.id, topic.meetingNoteId);
-                                // 埋め込みが存在する場合（combinedEmbeddingフィールドがある場合）はスキップ
-                                // ただし、getTopicEmbeddingはSQLiteから取得するため、ChromaDBの状態は完全には反映されない可能性がある
-                                // batchUpdateTopicEmbeddings内でもチェックが行われるため、ここでは簡易チェックのみ
-                                if (existing && existing.combinedEmbedding && Array.isArray(existing.combinedEmbedding) && existing.combinedEmbedding.length > 0) {
-                                  console.log(`⏭️  トピック ${topic.id} (${topic.title}) は既に埋め込みが存在するためスキップ`);
-                                  setRegenerationProgress(prev => ({
-                                    ...prev,
-                                    current: prev.current + 1,
-                                    logs: [
-                                      ...prev.logs,
-                                      {
-                                        type: 'skip',
-                                        message: `トピック: ${topic.title} (スキップ - 既に埋め込みあり)`,
-                                        timestamp: new Date(),
-                                      },
-                                    ],
-                                    stats: {
-                                      ...prev.stats,
-                                      skipped: prev.stats.skipped + 1,
-                                    },
-                                  }));
-                                  continue;
-                                }
-                              } catch (error) {
-                                console.warn(`⚠️ トピック ${topic.id} の埋め込み確認エラー:`, error);
-                                // エラーが発生した場合は続行（再生成を試みる）
-                              }
-                            }
+                            // 未生成のみの場合は、既にフィルタリング済みなのでチェック不要
+                            // batchUpdateTopicEmbeddings内でもチェックが行われるため、ここではスキップ
 
                             if (!topicsByMeetingNote.has(topic.meetingNoteId)) {
                               topicsByMeetingNote.set(topic.meetingNoteId, []);
@@ -2380,6 +2714,23 @@ function KnowledgeGraphPageContent() {
 
                           // 各議事録ごとにトピック埋め込みを再生成
                           for (const [meetingNoteId, topicList] of topicsByMeetingNote.entries()) {
+                            // 停止チェック
+                            if (isCancelledRef.current) {
+                              setRegenerationProgress(prev => ({
+                                ...prev,
+                                status: 'cancelled',
+                                logs: [
+                                  ...prev.logs,
+                                  {
+                                    type: 'info',
+                                    message: '処理が中止されました',
+                                    timestamp: new Date(),
+                                  },
+                                ],
+                              }));
+                              break;
+                            }
+                            
                             const firstTopic = topicList[0];
                             if (!firstTopic) continue;
 
@@ -2416,16 +2767,26 @@ function KnowledgeGraphPageContent() {
                                     errors: prev.stats.errors + (status === 'error' ? 1 : 0),
                                   },
                                 }));
-                              }
+                              },
+                              () => isCancelledRef.current // shouldCancelコールバック
                             );
+                            
+                            // 停止チェック（バッチ処理後）
+                            if (isCancelledRef.current) {
+                              break;
+                            }
                           }
                         }
 
-                        setRegenerationProgress(prev => ({ ...prev, status: 'completed' }));
+                        // 停止されていない場合のみ完了ステータスを設定
+                        if (!isCancelledRef.current) {
+                          setRegenerationProgress(prev => ({ ...prev, status: 'completed' }));
+                        }
                       } catch (error: any) {
                         console.error('埋め込み再生成エラー:', error);
                         setRegenerationProgress(prev => ({
                           ...prev,
+                          status: isCancelledRef.current ? 'cancelled' : 'completed',
                           logs: [
                             ...prev.logs,
                             {
@@ -2439,18 +2800,51 @@ function KnowledgeGraphPageContent() {
                         setIsRegeneratingEmbeddings(false);
                       }
                     }}
+                    disabled={isRegeneratingEmbeddings}
                     style={{
                       padding: '8px 16px',
-                      backgroundColor: '#3B82F6',
+                      backgroundColor: isRegeneratingEmbeddings ? '#9CA3AF' : '#3B82F6',
                       color: '#FFFFFF',
                       border: 'none',
                       borderRadius: '6px',
                       fontSize: '14px',
-                      cursor: 'pointer',
+                      cursor: isRegeneratingEmbeddings ? 'not-allowed' : 'pointer',
+                      opacity: isRegeneratingEmbeddings ? 0.6 : 1,
                     }}
                   >
                     開始
                   </button>
+                  {isRegeneratingEmbeddings && (
+                    <button
+                      onClick={() => {
+                        isCancelledRef.current = true;
+                        setRegenerationProgress(prev => ({
+                          ...prev,
+                          status: 'cancelled',
+                          logs: [
+                            ...prev.logs,
+                            {
+                              type: 'info',
+                              message: '停止がリクエストされました。処理を完了して停止します...',
+                              timestamp: new Date(),
+                            },
+                          ],
+                        }));
+                      }}
+                      style={{
+                        padding: '8px 16px',
+                        backgroundColor: '#EF4444',
+                        color: '#FFFFFF',
+                        border: 'none',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        cursor: 'pointer',
+                        marginLeft: '8px',
+                      }}
+                    >
+                      停止
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -2488,6 +2882,55 @@ function KnowledgeGraphPageContent() {
                   </div>
                 </div>
 
+                {regenerationProgress.status === 'processing' && (
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        console.log('🛑 生成を中止ボタンがクリックされました');
+                        isCancelledRef.current = true;
+                        setRegenerationProgress(prev => ({
+                          ...prev,
+                          status: 'cancelled',
+                        }));
+                        setIsRegeneratingEmbeddings(false);
+                        cancelRegeneration();
+                        // ログに追加
+                        setRegenerationProgress(prev => ({
+                          ...prev,
+                          logs: [
+                            ...prev.logs,
+                            {
+                              type: 'info',
+                              message: '処理が中止されました',
+                              timestamp: new Date(),
+                            },
+                          ],
+                        }));
+                      }}
+                      style={{
+                        padding: '8px 16px',
+                        backgroundColor: '#EF4444',
+                        color: '#FFFFFF',
+                        border: 'none',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        cursor: 'pointer',
+                        fontWeight: 500,
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = '#DC2626';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = '#EF4444';
+                      }}
+                    >
+                      生成を中止
+                    </button>
+                  </div>
+                )}
+
                 {regenerationProgress.status === 'completed' && (
                   <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#F0FDF4', borderRadius: '6px' }}>
                     <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>完了</div>
@@ -2495,6 +2938,15 @@ function KnowledgeGraphPageContent() {
                       成功: {regenerationProgress.stats.success}件 | 
                       スキップ: {regenerationProgress.stats.skipped}件 | 
                       エラー: {regenerationProgress.stats.errors}件
+                    </div>
+                  </div>
+                )}
+
+                {regenerationProgress.status === 'cancelled' && (
+                  <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#FEF2F2', borderRadius: '6px' }}>
+                    <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '8px', color: '#991B1B' }}>中止されました</div>
+                    <div style={{ fontSize: '12px', color: '#6B7280' }}>
+                      処理が中止されました。一部のデータは既に処理されている可能性があります。
                     </div>
                   </div>
                 )}
@@ -2679,6 +3131,130 @@ function KnowledgeGraphPageContent() {
                   >
                     再生成モーダルを開く
                   </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* エンティティ/リレーション詳細表示モーダル */}
+      {(selectedEntity || selectedRelation) && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => {
+            setSelectedEntity(null);
+            setSelectedRelation(null);
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: '12px',
+              padding: '24px',
+              maxWidth: '600px',
+              width: '90%',
+              maxHeight: '80vh',
+              overflow: 'auto',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2 style={{ fontSize: '20px', fontWeight: 600, color: '#1F2937' }}>
+                詳細情報
+              </h2>
+              <button
+                onClick={() => {
+                  setSelectedEntity(null);
+                  setSelectedRelation(null);
+                }}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: '#F3F4F6',
+                  color: '#6B7280',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                }}
+              >
+                閉じる
+              </button>
+            </div>
+
+            {selectedEntity && (
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: 600, color: '#1F2937', marginBottom: '12px' }}>
+                  {selectedEntity.name}
+                </h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div>
+                    <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280' }}>タイプ: </span>
+                    <span style={{ fontSize: '14px', color: '#1F2937' }}>
+                      {entityTypeLabels[selectedEntity.type] || selectedEntity.type}
+                    </span>
+                  </div>
+                  {selectedEntity.aliases && selectedEntity.aliases.length > 0 && (
+                    <div>
+                      <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280' }}>別名: </span>
+                      <span style={{ fontSize: '14px', color: '#1F2937' }}>
+                        {selectedEntity.aliases.join(', ')}
+                      </span>
+                    </div>
+                  )}
+                  {selectedEntity.metadata && Object.keys(selectedEntity.metadata).length > 0 && (
+                    <div>
+                      <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280' }}>メタデータ: </span>
+                      <pre style={{ fontSize: '12px', color: '#1F2937', margin: '8px 0', padding: '8px', backgroundColor: '#F9FAFB', borderRadius: '4px', overflow: 'auto' }}>
+                        {JSON.stringify(selectedEntity.metadata, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {selectedRelation && (
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: 600, color: '#1F2937', marginBottom: '12px' }}>
+                  {relationTypeLabels[selectedRelation.relationType] || selectedRelation.relationType}
+                </h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {selectedRelation.description && (
+                    <div>
+                      <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280' }}>説明: </span>
+                      <span style={{ fontSize: '14px', color: '#1F2937' }}>
+                        {selectedRelation.description}
+                      </span>
+                    </div>
+                  )}
+                  {selectedRelation.confidence !== undefined && (
+                    <div>
+                      <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280' }}>信頼度: </span>
+                      <span style={{ fontSize: '14px', color: '#1F2937' }}>
+                        {(selectedRelation.confidence * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  )}
+                  {selectedRelation.metadata && Object.keys(selectedRelation.metadata).length > 0 && (
+                    <div>
+                      <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280' }}>メタデータ: </span>
+                      <pre style={{ fontSize: '12px', color: '#1F2937', margin: '8px 0', padding: '8px', backgroundColor: '#F9FAFB', borderRadius: '4px', overflow: 'auto' }}>
+                        {JSON.stringify(selectedRelation.metadata, null, 2)}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

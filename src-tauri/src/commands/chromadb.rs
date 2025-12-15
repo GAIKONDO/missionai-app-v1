@@ -23,6 +23,15 @@ pub async fn chromadb_save_entity_embedding(
     ).await
 }
 
+/// エンティティ埋め込みを取得
+#[tauri::command]
+pub async fn chromadb_get_entity_embedding(
+    entityId: String,
+    organizationId: String,
+) -> Result<Option<HashMap<String, Value>>, String> {
+    chromadb::get_entity_embedding(entityId, organizationId).await
+}
+
 /// 類似エンティティを検索
 #[tauri::command]
 pub async fn chromadb_find_similar_entities(
@@ -55,6 +64,15 @@ pub async fn chromadb_save_relation_embedding(
         combinedEmbedding,
         metadata,
     ).await
+}
+
+/// リレーション埋め込みを取得
+#[tauri::command]
+pub async fn chromadb_get_relation_embedding(
+    relationId: String,
+    organizationId: String,
+) -> Result<Option<HashMap<String, Value>>, String> {
+    chromadb::get_relation_embedding(relationId, organizationId).await
 }
 
 /// 類似リレーションを検索

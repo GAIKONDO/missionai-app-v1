@@ -329,3 +329,6 @@ export default function OrgChart({ data, ... }: OrgChartProps) {
 
 これらの改善により、データ削除操作がより安全で信頼性の高いものになります。
 
+
+
+

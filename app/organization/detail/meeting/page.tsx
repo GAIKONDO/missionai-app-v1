@@ -15,7 +15,7 @@ import { marked } from 'marked';
 import type { Entity, EntityType } from '@/types/entity';
 import type { Relation, RelationType } from '@/types/relation';
 import { getRelationsByTopicId, createRelation, deleteRelation } from '@/lib/relationApi';
-import { getEntityById, createEntity, getEntitiesByOrganizationId, deleteEntity } from '@/lib/entityApi';
+import { getEntityById, createEntity, getEntitiesByOrganizationId, getEntitiesByCompanyId, deleteEntity } from '@/lib/entityApi';
 import { callTauriCommand } from '@/lib/localFirebase';
 import { deleteTopicFromChroma } from '@/lib/chromaSync';
 
@@ -96,6 +96,7 @@ function MeetingNoteDetailPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const organizationId = searchParams?.get('id') as string;
+  const companyId = searchParams?.get('companyId') as string;
   const meetingId = searchParams?.get('meetingId') as string;
   
   const [meetingNote, setMeetingNote] = useState<MeetingNote | null>(null);
@@ -290,8 +291,8 @@ function MeetingNoteDetailPageContent() {
   // データ読み込み
   useEffect(() => {
     const loadData = async () => {
-      if (!organizationId || !meetingId) {
-        setError('組織IDまたは議事録IDが指定されていません');
+      if ((!organizationId && !companyId) || !meetingId) {
+        setError('組織IDまたは事業会社ID、または議事録IDが指定されていません');
         setLoading(false);
         return;
       }
@@ -414,23 +415,28 @@ function MeetingNoteDetailPageContent() {
           }
         }
         
-        // 組織データを取得
-        const orgTree = await getOrgTreeFromDb();
-        if (orgTree) {
-          const findOrganization = (node: OrgNodeData): OrgNodeData | null => {
-            if (node.id === organizationId) {
-              return node;
-            }
-            if (node.children) {
-              for (const child of node.children) {
-                const found = findOrganization(child);
-                if (found) return found;
+        // 組織データを取得（organizationIdが指定されている場合のみ）
+        if (organizationId) {
+          const orgTree = await getOrgTreeFromDb();
+          if (orgTree) {
+            const findOrganization = (node: OrgNodeData): OrgNodeData | null => {
+              if (node.id === organizationId) {
+                return node;
               }
-            }
-            return null;
-          };
-          const foundOrg = findOrganization(orgTree);
-          setOrgData(foundOrg);
+              if (node.children) {
+                for (const child of node.children) {
+                  const found = findOrganization(child);
+                  if (found) return found;
+                }
+              }
+              return null;
+            };
+            const foundOrg = findOrganization(orgTree);
+            setOrgData(foundOrg);
+          }
+        } else {
+          // companyIdのみの場合は組織データをnullに設定
+          setOrgData(null);
         }
         
         setError(null);
@@ -443,7 +449,7 @@ function MeetingNoteDetailPageContent() {
     };
 
     loadData();
-  }, [organizationId, meetingId]);
+  }, [organizationId, companyId, meetingId]);
 
   // ページを離れる前の確認
   useEffect(() => {
@@ -479,7 +485,7 @@ function MeetingNoteDetailPageContent() {
 
   // トピック編集モーダルを開いたときにエンティティとリレーションを読み込む
   useEffect(() => {
-    if (!showTopicModal || !editingTopicId || !organizationId) {
+    if (!showTopicModal || !editingTopicId || (!organizationId && !companyId)) {
       return;
     }
 
@@ -489,7 +495,9 @@ function MeetingNoteDetailPageContent() {
         setIsLoadingRelations(true);
 
         // エンティティを読み込み
-        const entities = await getEntitiesByOrganizationId(organizationId);
+        const entities = companyId 
+          ? await getEntitiesByCompanyId(companyId)
+          : await getEntitiesByOrganizationId(organizationId);
         // トピックに関連するエンティティをフィルタリング
         const topicEmbeddingId = `${meetingId}-topic-${editingTopicId}`;
         const topicEntities = entities.filter(e => 
@@ -534,7 +542,7 @@ function MeetingNoteDetailPageContent() {
     };
 
     loadKnowledgeGraph();
-  }, [showTopicModal, editingTopicId, organizationId, meetingId]);
+  }, [showTopicModal, editingTopicId, organizationId, companyId, meetingId]);
 
 
   // 手動保存
@@ -1393,9 +1401,23 @@ ${formatInstruction}
         return summary;
       } else {
         // OpenAI APIを呼び出し
-        const apiKey = process.env.NEXT_PUBLIC_OPENAI_API_KEY;
+        // APIキーを取得: 設定ページ > localStorage > 環境変数の順
+        let apiKey: string | undefined;
+        if (typeof window !== 'undefined') {
+          try {
+            const { getAPIKey } = await import('@/lib/security');
+            apiKey = getAPIKey('openai') || undefined;
+          } catch (error) {
+            // セキュリティモジュールがない場合は直接localStorageから取得
+            apiKey = localStorage.getItem('NEXT_PUBLIC_OPENAI_API_KEY') || undefined;
+          }
+        }
         if (!apiKey) {
-          throw new Error('OpenAI APIキーが設定されていません。環境変数NEXT_PUBLIC_OPENAI_API_KEYを設定してください。');
+          apiKey = process.env.NEXT_PUBLIC_OPENAI_API_KEY;
+        }
+        
+        if (!apiKey) {
+          throw new Error('OpenAI APIキーが設定されていません。設定ページ（/settings）でAPIキーを設定してください。');
         }
         
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -1904,7 +1926,7 @@ ${formatInstruction}
     setIsAddingItem(true);
     
     const newItemId = generateUniqueId();
-    let updatedContents: typeof monthContents = monthContents;
+    let updatedContents: typeof monthContents;
     
     setMonthContents(prev => {
       const updated = { ...prev };
@@ -1984,7 +2006,11 @@ ${formatInstruction}
                   return;
                 }
               }
-              router.push(`/organization/detail?id=${organizationId}&tab=meetingNotes`);
+              if (companyId) {
+                router.push(`/companies/detail?id=${companyId}&tab=meetingNotes`);
+              } else {
+                router.push(`/organization/detail?id=${organizationId}&tab=meetingNotes`);
+              }
             }}
             style={{
               marginTop: '16px',
@@ -1997,7 +2023,7 @@ ${formatInstruction}
               fontSize: '14px',
             }}
           >
-            組織ページに戻る
+            {companyId ? '事業会社ページに戻る' : '組織ページに戻る'}
           </button>
         </div>
       </Layout>
@@ -2218,7 +2244,11 @@ ${formatInstruction}
                   return;
                 }
               }
-              router.push(`/organization/detail?id=${organizationId}&tab=meetingNotes`);
+              if (companyId) {
+                router.push(`/companies/detail?id=${companyId}&tab=meetingNotes`);
+              } else {
+                router.push(`/organization/detail?id=${organizationId}&tab=meetingNotes`);
+              }
             }}
             style={{
               display: 'flex',
@@ -2367,13 +2397,16 @@ ${formatInstruction}
         <div style={{ display: 'flex', gap: '28px', marginTop: '24px' }}>
           {/* メインコンテンツ */}
           <main style={{
-            flexGrow: 1,
+            flex: '1 1 0',
+            minWidth: 0,
+            maxWidth: 'calc(100% - 328px)',
             backgroundColor: '#FFFFFF',
             padding: '40px 36px 36px 36px',
             borderRadius: '14px',
             minHeight: '350px',
             boxShadow: '0 4px 16px rgba(15, 23, 42, 0.08), 0 1px 4px rgba(0, 0, 0, 0.04)',
             border: '1px solid #E5E7EB',
+            overflow: 'hidden',
           }}>
             {isSummaryTab ? (
               <div>
@@ -2394,35 +2427,30 @@ ${formatInstruction}
                 
                 {/* 総括サマリ */}
                 {activeSection === currentSummaryId && (
-                  <div style={{
-                    background: 'linear-gradient(135deg, #F8FAFC 0%, #F1F5F9 100%)',
-                    border: '1px solid #E2E8F0',
-                    borderRadius: '12px',
-                    padding: '28px 32px',
-                    marginBottom: '36px',
-                    boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04)',
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                      <h3 style={{ 
-                        margin: 0, 
-                        fontSize: '1.4em', 
-                        color: '#1E293B',
-                        fontWeight: '600',
-                        letterSpacing: '0.3px',
-                      }}>
-                        {SUMMARY_TABS.find(t => t.id === activeTab)?.label}サマリ
-                      </h3>
-                      {currentSummaryId && (
-                        <p style={{
-                          margin: '4px 0 0 0',
-                          fontSize: '12px',
-                          color: '#64748B',
-                          fontFamily: 'monospace',
-                          fontWeight: '500',
+                  <div style={{ marginBottom: '36px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                      <div>
+                        <h3 style={{ 
+                          margin: 0, 
+                          fontSize: '1.4em', 
+                          color: '#1E293B',
+                          fontWeight: '600',
+                          letterSpacing: '0.3px',
                         }}>
-                          ID: {currentSummaryId}
-                        </p>
-                      )}
+                          {SUMMARY_TABS.find(t => t.id === activeTab)?.label}サマリ
+                        </h3>
+                        {currentSummaryId && (
+                          <p style={{
+                            margin: '4px 0 0 0',
+                            fontSize: '12px',
+                            color: '#64748B',
+                            fontFamily: 'monospace',
+                            fontWeight: '500',
+                          }}>
+                            ID: {currentSummaryId}
+                          </p>
+                        )}
+                      </div>
                         {editingMonth === activeTab && editingSection === currentSummaryId ? (
                         <div style={{ display: 'flex', gap: '8px' }}>
                           <button
@@ -2541,9 +2569,9 @@ ${formatInstruction}
                         }}
                       />
                     ) : (
-                      <div>
+                      <div style={{ width: '100%', overflow: 'hidden' }}>
                         {currentTabData?.summary ? (
-                          <div className="markdown-content">
+                          <div className="markdown-content" style={{ width: '100%', wordBreak: 'break-word' }}>
                             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                               {currentTabData.summary}
                             </ReactMarkdown>
@@ -3409,14 +3437,7 @@ ${formatInstruction}
                 
                   {/* 月サマリ - サマリが選択されている場合のみ表示 */}
                   {activeSection === currentSummaryId && (
-                  <div style={{
-                    background: 'linear-gradient(135deg, #F8FAFC 0%, #F1F5F9 100%)',
-                    border: '1px solid #E2E8F0',
-                    borderRadius: '12px',
-                    padding: '28px 32px',
-                    marginBottom: '36px',
-                    boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04)',
-                  }}>
+                  <div style={{ marginBottom: '36px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                     <div>
                       <h3 style={{ 
@@ -3557,9 +3578,9 @@ ${formatInstruction}
                       }}
                     />
                   ) : (
-                    <div>
+                    <div style={{ width: '100%', overflow: 'hidden' }}>
                       {currentTabData?.summary ? (
-                        <div className="markdown-content">
+                        <div className="markdown-content" style={{ width: '100%', wordBreak: 'break-word' }}>
                           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                             {currentTabData.summary}
                           </ReactMarkdown>
@@ -4953,7 +4974,9 @@ ${formatInstruction}
                       setPendingEntities([]);
                     } else {
                       // トピックに関連するエンティティを再読み込み
-                      const entities = await getEntitiesByOrganizationId(organizationId);
+                      const entities = companyId 
+                        ? await getEntitiesByCompanyId(companyId)
+                        : await getEntitiesByOrganizationId(organizationId);
                       const topicEmbeddingId = `${meetingId}-topic-${editingTopicId}`;
                       const filteredEntities = entities.filter(e => 
                         e.metadata && typeof e.metadata === 'object' && 'topicId' in e.metadata && e.metadata.topicId === editingTopicId
@@ -6423,7 +6446,9 @@ ${formatInstruction}
                                     
                                     // 2. 既存のエンティティを削除（このトピックに関連するもののみ）
                                     try {
-                                      const allEntities = await getEntitiesByOrganizationId(organizationId);
+                                      const allEntities = companyId 
+                                        ? await getEntitiesByCompanyId(companyId)
+                                        : await getEntitiesByOrganizationId(organizationId);
                                       const topicRelatedEntities = allEntities.filter(e => 
                                         e.metadata && typeof e.metadata === 'object' && 'topicId' in e.metadata && e.metadata.topicId === finalTopicId
                                       );
@@ -7715,7 +7740,8 @@ ${formatInstruction}
                       const newEntity = await createEntity({
                         name,
                         type,
-                        organizationId: organizationId,
+                        organizationId: organizationId || undefined,
+                        companyId: companyId || undefined,
                         metadata: {
                           topicId: editingTopicId,
                         },

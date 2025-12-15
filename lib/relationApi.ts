@@ -74,8 +74,11 @@ export async function createRelation(relation: CreateRelationInput): Promise<Rel
             timestamp: new Date().toISOString(),
           });
         });
+      } else if (relation.companyId) {
+        // 事業会社用の埋め込み生成（将来的に実装）
+        console.log(`ℹ️ [createRelation] companyIdが設定されていますが、事業会社用の埋め込み生成は未実装です: ${relation.relationType} (${id})`);
       } else {
-        console.warn(`⚠️ [createRelation] organizationIdが設定されていないため、埋め込み生成をスキップ: ${relation.relationType} (${id})`);
+        console.warn(`⚠️ [createRelation] organizationIdもcompanyIdも設定されていないため、埋め込み生成をスキップ: ${relation.relationType} (${id})`);
       }
       
       return relationData;
@@ -87,40 +90,111 @@ export async function createRelation(relation: CreateRelationInput): Promise<Rel
 }
 
 /**
+ * 複数のリレーションIDで一括取得（並列処理、パフォーマンス最適化）
+ * @param relationIds リレーションIDの配列
+ * @param concurrencyLimit 並列実行数の制限（デフォルト: 5）
+ * @returns リレーションの配列（存在しないIDは除外）
+ */
+export async function getRelationsByIds(
+  relationIds: string[],
+  concurrencyLimit: number = 5
+): Promise<Relation[]> {
+  if (relationIds.length === 0) {
+    return [];
+  }
+
+  // p-limitを使用して並列数を制限
+  const pLimit = (await import('p-limit')).default;
+  const limit = pLimit(concurrencyLimit);
+
+  try {
+    // 並列で取得
+    const results = await Promise.allSettled(
+      relationIds.map(id => 
+        limit(async () => {
+          try {
+            return await getRelationById(id);
+          } catch (error: any) {
+            // 個別のエラーは無視してnullを返す（CORSエラーなど）
+            const errorMessage = error?.message || String(error || '');
+            if (!errorMessage.includes('access control checks') && 
+                !errorMessage.includes('CORS') &&
+                !errorMessage.includes('Tauri環境ではありません')) {
+              console.warn(`[getRelationsByIds] リレーション ${id} の取得エラー:`, error);
+            }
+            return null;
+          }
+        })
+      )
+    );
+
+    // 成功した結果のみを返す
+    const relations: Relation[] = [];
+    for (const result of results) {
+      if (result.status === 'fulfilled' && result.value) {
+        relations.push(result.value);
+      }
+    }
+
+    return relations;
+  } catch (error) {
+    console.error('❌ [getRelationsByIds] エラー:', error);
+    return [];
+  }
+}
+
+/**
  * リレーションIDで取得
  */
 export async function getRelationById(relationId: string): Promise<Relation | null> {
   try {
-    try {
-      // Rust API経由で取得（未実装の場合はフォールバック）
-      return await apiGet<Relation>(`/api/relations/${relationId}`);
-    } catch (error) {
-      // フォールバック: Tauriコマンド経由
-      console.warn('Rust API経由の取得に失敗、Tauriコマンドにフォールバック:', error);
-      const result = await callTauriCommand('doc_get', {
-        collectionName: 'relations',
-        docId: relationId,
-      });
+    // Tauri環境では直接Tauriコマンドを使用（CORSエラーを回避）
+    if (typeof window !== 'undefined' && '__TAURI__' in window) {
+      try {
+        const result = await callTauriCommand('doc_get', {
+          collectionName: 'relations',
+          docId: relationId,
+        });
 
-      // doc_getの結果は{id: ..., data: ...}の形式または直接データ
-      const relationData = (result as any)?.data || result;
-      if (!relationData || Object.keys(relationData).length === 0) {
+        // doc_getの結果は{id: ..., data: ...}の形式または直接データ
+        const relationData = (result as any)?.data || result;
+        if (!relationData || Object.keys(relationData).length === 0) {
+          return null;
+        }
+        
+        // idフィールドを追加
+        const relationIdFromResult = (result as any)?.id || relationId;
+        return { ...relationData, id: relationIdFromResult } as Relation;
+      } catch (docGetError: any) {
+        // doc_getのエラーも無視（リレーションが存在しない場合など）
+        const docGetErrorMessage = docGetError?.message || String(docGetError || '');
+        const isDocGetNoRowsError = docGetErrorMessage.includes('no rows') || 
+                                    docGetErrorMessage.includes('Query returned no rows') ||
+                                    docGetErrorMessage.includes('ドキュメント取得エラー') ||
+                                    docGetErrorMessage.includes('Tauri環境ではありません') ||
+                                    docGetErrorMessage.includes('access control checks');
+        
+        if (!isDocGetNoRowsError) {
+          console.warn('⚠️ [getRelationById] Tauriコマンド経由の取得に失敗:', relationId, docGetError);
+        }
         return null;
       }
-      
-      // idフィールドを追加
-      const relationIdFromResult = (result as any)?.id || relationId;
-      return { ...relationData, id: relationIdFromResult } as Relation;
     }
+    
+    // Tauri環境でない場合はnullを返す
+    return null;
   } catch (error: any) {
-    // 「no rows」エラーは正常な状態（リレーションが存在しない）として扱う
+    // 「no rows」エラーやTauri環境でないエラーは正常な状態として扱う
     const errorMessage = error?.message || error?.error || error?.errorString || String(error || '');
     const isNoRowsError = errorMessage.includes('no rows') || 
                           errorMessage.includes('Query returned no rows') ||
                           errorMessage.includes('ドキュメント取得エラー');
+    const isTauriEnvError = errorMessage.includes('Tauri環境ではありません') ||
+                            errorMessage.includes('access control checks') ||
+                            errorMessage.includes('ipc://localhost');
     
-    if (isNoRowsError) {
-      // リレーションが存在しない場合は正常な状態として扱い、エラーログを出力しない
+    if (isNoRowsError || isTauriEnvError) {
+      // リレーションが存在しない場合やTauri環境でない場合は正常な状態として扱い、エラーログを出力しない
       return null;
     }
     
@@ -135,14 +209,8 @@ export async function getRelationById(relationId: string): Promise<Relation | nu
  */
 export async function getAllRelations(): Promise<Relation[]> {
   try {
-    console.log('📖 [getAllRelations] 開始');
-    
-    try {
-      // Rust API経由で取得（未実装の場合はフォールバック）
-      return await apiGet<Relation[]>('/api/relations');
-    } catch (error) {
-      // フォールバック: Tauriコマンド経由
-      console.warn('Rust API経由の取得に失敗、Tauriコマンドにフォールバック:', error);
+    // Tauri環境では直接Tauriコマンドを使用（CORSエラーを回避）
+    if (typeof window !== 'undefined' && '__TAURI__' in window) {
       const result = await callTauriCommand('collection_get', {
         collectionName: 'relations',
       });
@@ -161,6 +229,7 @@ export async function getAllRelations(): Promise<Relation[]> {
           id: relationId,
           topicId: relationData.topicId || '',
           organizationId: relationData.organizationId || null,
+          companyId: relationData.companyId || null,
           sourceEntityId: relationData.sourceEntityId || '',
           targetEntityId: relationData.targetEntityId || '',
           relationType: relationData.relationType || 'related-to',
@@ -189,6 +258,9 @@ export async function getAllRelations(): Promise<Relation[]> {
       }
       return relations;
     }
+    
+    // Tauri環境でない場合は空配列を返す
+    return [];
   } catch (error: any) {
     console.error('❌ [getAllRelations] エラー:', error);
     return [];
@@ -287,12 +359,16 @@ export async function getRelationsByEntityId(entityId: string): Promise<Relation
  */
 export async function getRelationsByType(
   relationType: RelationType,
-  organizationId?: string
+  organizationId?: string,
+  companyId?: string
 ): Promise<Relation[]> {
   try {
     const filters: any = { relationType };
     if (organizationId) {
       filters.organizationId = organizationId;
+    }
+    if (companyId) {
+      filters.companyId = companyId;
     }
 
     const result = await callTauriCommand('query_get', {
@@ -362,8 +438,11 @@ export async function updateRelation(
           // エラーは既にsyncRelationToChroma内で処理されているため、ここではログのみ
           console.debug(`[updateRelation] ChromaDB同期エラー（処理は続行）: ${relationId}`, error);
         }
+      } else if (updated.companyId) {
+        // 事業会社用のChromaDB同期（将来的に実装）
+        console.log(`ℹ️ [updateRelation] companyIdが設定されていますが、事業会社用のChromaDB同期は未実装です: ${relationId}`);
       } else {
-        console.warn(`⚠️ [updateRelation] organizationIdが設定されていないため、ChromaDB同期をスキップ: ${relationId}`);
+        console.warn(`⚠️ [updateRelation] organizationIdもcompanyIdも設定されていないため、ChromaDB同期をスキップ: ${relationId}`);
       }
       
       return updated;
@@ -413,6 +492,7 @@ export async function deleteRelation(relationId: string): Promise<void> {
     // 削除前にリレーション情報を取得（ChromaDB削除用）
     const existing = await retryDbOperation(() => getRelationById(relationId));
     const organizationId = existing?.organizationId;
+    const companyId = existing?.companyId;
     
     try {
       // Rust API経由で削除（未実装の場合はフォールバック）
@@ -435,6 +515,9 @@ export async function deleteRelation(relationId: string): Promise<void> {
         // エラーは既にdeleteRelationFromChroma内で処理されているため、ここではログのみ
         console.debug(`[deleteRelation] ChromaDB削除エラー（処理は続行）: ${relationId}`, error);
       }
+    } else if (companyId) {
+      // 事業会社用のChromaDB削除（将来的に実装）
+      console.log(`ℹ️ [deleteRelation] companyIdが設定されていますが、事業会社用のChromaDB削除は未実装です: ${relationId}`);
     }
     
     // キャッシュを無効化

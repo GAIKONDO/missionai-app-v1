@@ -146,7 +146,6 @@ export default function AnalyticsPage() {
   const [orgData, setOrgData] = useState<OrgNodeData | null>(null);
   const [topics, setTopics] = useState<TopicInfo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedNode, setSelectedNode] = useState<RelationshipNode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'diagram' | 'bubble'>('diagram');
   const [showThemeModal, setShowThemeModal] = useState(false);
@@ -373,25 +372,6 @@ export default function AnalyticsPage() {
       return { nodes: [], links: [] };
     }
 
-    // 組織データが存在する場合のみ、存在する組織IDの注力施策をフィルタリング
-    const validInitiatives = orgData 
-      ? initiatives.filter(init => {
-          if (!init.organizationId) return false;
-          // 組織ツリーから組織が存在するか確認
-          const findOrg = (node: OrgNodeData): OrgNodeData | null => {
-            if (node.id === init.organizationId) return node;
-            if (node.children) {
-              for (const child of node.children) {
-                const found = findOrg(child);
-                if (found) return found;
-              }
-            }
-            return null;
-          };
-          return findOrg(orgData) !== null;
-        })
-      : initiatives;
-
     // 各テーマのノードとリンクを追加
     themesToShow.forEach((theme) => {
       // テーマノードを追加
@@ -411,8 +391,8 @@ export default function AnalyticsPage() {
       });
       }
 
-      // テーマに関連する注力施策を取得（有効な注力施策のみを使用）
-      const relatedInitiatives = validInitiatives.filter((init) => 
+      // テーマに関連する注力施策を取得
+      const relatedInitiatives = initiatives.filter((init) => 
         theme.initiativeIds?.includes(init.id) || 
         init.themeId === theme.id || 
         (Array.isArray(init.themeIds) && init.themeIds.includes(theme.id))
@@ -530,30 +510,11 @@ export default function AnalyticsPage() {
           }
         }
         
-        // 存在するトピックIDのみを使用（削除されたトピックをフィルタリング）
-        const validTopicIds = parsedTopicIds.filter(topicId => 
-          topics.some(t => t.id === topicId)
-        );
-        
-        if (validTopicIds.length > 0) {
-          // 削除されたトピックIDがある場合は警告を出力（1回だけ）
-          if (validTopicIds.length < parsedTopicIds.length) {
-            const missingTopicIds = parsedTopicIds.filter(topicId => 
-              !topics.some(t => t.id === topicId)
-            );
-            console.warn('⚠️ [2D関係性図] 削除されたトピックIDが検出されました（フィルタリング済み）:', {
-              missingTopicIds,
-              initiativeId: initiative.id,
-              initiativeTitle: initiative.title,
-              validTopicIdsCount: validTopicIds.length,
-              originalTopicIdsCount: parsedTopicIds.length,
-            });
-          }
-          
+        if (parsedTopicIds.length > 0) {
           console.log('🔍 [2D関係性図] 注力施策に紐づけられたトピック:', {
             initiativeId: initiative.id,
             initiativeTitle: initiative.title,
-            topicIds: validTopicIds,
+            topicIds: parsedTopicIds,
             topicIdsType: typeof initiative.topicIds,
             topicIdsRaw: initiative.topicIds,
             availableTopicIds: topics.map(t => t.id),
@@ -561,7 +522,10 @@ export default function AnalyticsPage() {
             availableTopicsSample: topics.slice(0, 5).map(t => ({ id: t.id, title: t.title, organizationId: t.organizationId })),
           });
           
-          validTopicIds.forEach((topicId) => {
+          // 見つからなかったトピックIDを記録（重複を避けるため）
+          const missingTopicIds = new Set<string>();
+          
+          parsedTopicIds.forEach((topicId) => {
             // デバッグ: トピックIDの比較を詳細にログ出力
             const matchingTopics = topics.filter(t => {
               const matches = t.id === topicId;
@@ -608,8 +572,31 @@ export default function AnalyticsPage() {
                 target: topicNodeId,
                 type: 'topic',
               });
+            } else {
+              // 見つからなかったトピックIDを記録（重複を避ける）
+              missingTopicIds.add(topicId);
+              console.warn('⚠️ [2D関係性図] トピックが見つかりませんでした:', {
+                topicId,
+                initiativeId: initiative.id,
+                initiativeTitle: initiative.title,
+                initiativeOrganizationId: initiative.organizationId,
+                availableTopicIds: topics.map(t => t.id),
+                availableTopicsByOrg: topics.filter(t => t.organizationId === initiative.organizationId).map(t => ({ id: t.id, title: t.title })),
+              });
             }
           });
+          
+          // 見つからなかったトピックIDがある場合のみ、1回だけ警告を出力（開発環境でのみ）
+          if (missingTopicIds.size > 0 && process.env.NODE_ENV === 'development') {
+            console.warn('⚠️ [2D関係性図] 一部のトピックが見つかりませんでした（データの不整合の可能性）:', {
+              missingTopicIds: Array.from(missingTopicIds),
+              initiativeId: initiative.id,
+              initiativeTitle: initiative.title,
+              initiativeOrganizationId: initiative.organizationId,
+              availableTopicIds: topics.map(t => t.id),
+              availableTopicsByOrg: topics.filter(t => t.organizationId === initiative.organizationId).map(t => ({ id: t.id, title: t.title })),
+            });
+          }
         }
       });
     });
@@ -664,7 +651,7 @@ export default function AnalyticsPage() {
   }, [selectedThemeId, themes, initiatives, orgData, topics]);
 
   const handleNodeClick = (node: RelationshipNode) => {
-    setSelectedNode(node);
+    // ノードクリック時の処理（必要に応じて実装）
   };
 
   // デバッグ用: BPOビジネス課のAriel社協業のトピック数を確認する関数をグローバルに公開
@@ -1110,52 +1097,6 @@ export default function AnalyticsPage() {
             marginBottom: '32px',
           }}>
             テーマを選択すると関係性図が表示されます。
-          </div>
-        )}
-
-        {/* 選択されたノードの詳細 */}
-        {selectedNode && (
-          <div
-            style={{
-              marginTop: '32px',
-              padding: '20px',
-              backgroundColor: '#FAFAFA',
-              borderRadius: '8px',
-              border: '1px solid #E0E0E0',
-            }}
-          >
-            <h3 style={{ 
-              marginBottom: '12px', 
-              fontSize: '16px', 
-              fontWeight: '600',
-              color: '#1A1A1A',
-              fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-            }}>
-              選択されたノード: {selectedNode.label}
-            </h3>
-            <div style={{ 
-              fontSize: '14px', 
-              color: '#4B5563',
-              fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-            }}>
-              <p style={{ marginBottom: '8px' }}>
-                <strong>タイプ:</strong> {selectedNode.type}
-              </p>
-              {selectedNode.data && (
-                <pre style={{ 
-                  marginTop: '12px', 
-                  padding: '16px', 
-                  backgroundColor: '#FFFFFF', 
-                  borderRadius: '6px', 
-                  overflow: 'auto', 
-                  fontSize: '12px',
-                  border: '1px solid #E0E0E0',
-                  fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-                }}>
-                  {JSON.stringify(selectedNode.data, null, 2)}
-                </pre>
-              )}
-            </div>
           </div>
         )}
 

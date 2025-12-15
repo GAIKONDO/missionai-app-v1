@@ -6,6 +6,7 @@ import ErrorBoundary from '@/components/ErrorBoundary';
 import TauriTestHelper from '@/components/TauriTestHelper';
 import TestOrgDataHelper from '@/components/TestOrgDataHelper';
 import ImportOrganizationsHelper from '@/components/ImportOrganizationsHelper';
+import { EmbeddingRegenerationProvider } from '@/components/EmbeddingRegenerationContext';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -74,7 +75,11 @@ export default function RootLayout({
         <TestOrgDataHelper />
         <ImportOrganizationsHelper />
         <ErrorBoundary>
-          <QueryProvider>{children}</QueryProvider>
+          <QueryProvider>
+            <EmbeddingRegenerationProvider>
+              {children}
+            </EmbeddingRegenerationProvider>
+          </QueryProvider>
         </ErrorBoundary>
       </body>
     </html>

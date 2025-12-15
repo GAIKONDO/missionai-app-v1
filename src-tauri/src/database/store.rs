@@ -118,25 +118,26 @@ pub fn get_doc(collection_name: &str, doc_id: &str) -> SqlResult<HashMap<String,
 }
 
 // 値をSQLite用の文字列に変換するヘルパー関数
-fn value_to_sql_string(value: &Value, is_json_field: bool) -> String {
+// Value::Nullの場合はNoneを返し、それ以外の場合はSome(String)を返す
+fn value_to_sql_string(value: &Value, is_json_field: bool) -> Option<String> {
     if is_json_field {
         // JSONフィールドの場合は、既に文字列の場合はそのまま、そうでなければJSON文字列化
         if let Some(s) = value.as_str() {
             // 既に文字列の場合は、それがJSON文字列かどうかをチェック
             // 有効なJSON文字列の場合はそのまま使用
             if serde_json::from_str::<Value>(s).is_ok() {
-                return s.to_string();
+                return Some(s.to_string());
             }
         }
         // JSONオブジェクトや配列の場合は文字列化
-        serde_json::to_string(value).unwrap_or_default()
+        Some(serde_json::to_string(value).unwrap_or_default())
     } else {
         match value {
-            Value::String(s) => s.clone(),
-            Value::Number(n) => n.to_string(),
-            Value::Bool(b) => b.to_string(),
-            Value::Null => String::new(),
-            Value::Array(_) | Value::Object(_) => serde_json::to_string(value).unwrap_or_default(),
+            Value::String(s) => Some(s.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            Value::Bool(b) => Some(b.to_string()),
+            Value::Null => None, // NULL値の場合はNoneを返す
+            Value::Array(_) | Value::Object(_) => Some(serde_json::to_string(value).unwrap_or_default()),
         }
     }
 }
@@ -257,9 +258,14 @@ pub fn set_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Value>
     // JSONフィールドを文字列化（既に文字列の場合はそのまま）
     for field in &json_fields {
         if let Some(value) = row_data.get(*field) {
-            let json_str = value_to_sql_string(value, true);
-            row_data.insert(field.to_string(), json!(json_str));
-            eprintln!("📝 [set_doc] JSONフィールド '{}' を処理: {} bytes", field, json_str.len());
+            if let Some(json_str) = value_to_sql_string(value, true) {
+                row_data.insert(field.to_string(), json!(json_str));
+                eprintln!("📝 [set_doc] JSONフィールド '{}' を処理: {} bytes", field, json_str.len());
+            } else {
+                // Value::Nullの場合はnullを設定
+                row_data.insert(field.to_string(), json!(null));
+                eprintln!("📝 [set_doc] JSONフィールド '{}' をNULLに設定", field);
+            }
         }
     }
     
@@ -319,12 +325,20 @@ pub fn set_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Value>
                     } else if let Some(b) = v.as_bool() {
                         params.push(Box::new(if b { 1i64 } else { 0i64 }));
                     } else {
-                        let sql_value = value_to_sql_string(v, false);
-                        params.push(Box::new(sql_value));
+                        if let Some(sql_value) = value_to_sql_string(v, false) {
+                            params.push(Box::new(sql_value));
+                        } else {
+                            // NULL値の場合はOption<String>としてNoneを追加
+                            params.push(Box::new(None::<String>));
+                        }
                     }
                 } else {
-                    let sql_value = value_to_sql_string(v, is_json);
-                    params.push(Box::new(sql_value));
+                    if let Some(sql_value) = value_to_sql_string(v, is_json) {
+                        params.push(Box::new(sql_value));
+                    } else {
+                        // NULL値の場合はOption<String>としてNoneを追加
+                        params.push(Box::new(None::<String>));
+                    }
                 }
             }
         }
@@ -383,12 +397,23 @@ pub fn set_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Value>
                     } else if let Some(b) = v.as_bool() {
                         params.push(Box::new(if b { 1i64 } else { 0i64 }));
                     } else {
-                        let sql_value = value_to_sql_string(v, false);
-                        params.push(Box::new(sql_value));
+                        if let Some(sql_value) = value_to_sql_string(v, false) {
+                            params.push(Box::new(sql_value));
+                        } else {
+                            // NULL値の場合はOption<String>としてNoneを追加
+                            params.push(Box::new(None::<String>));
+                        }
                     }
                 } else {
-                    let sql_value = value_to_sql_string(v, is_json);
-                    params.push(Box::new(sql_value));
+                    if let Some(sql_value) = value_to_sql_string(v, is_json) {
+                        params.push(Box::new(sql_value));
+                    } else {
+                        // NULL値の場合はOption<String>としてNoneを追加
+                        if field == "organizationId" || field == "companyId" {
+                            eprintln!("📝 [set_doc] INSERT: {} フィールドをNULLとして設定します", field);
+                        }
+                        params.push(Box::new(None::<String>));
+                    }
                 }
             }
         }
@@ -490,9 +515,14 @@ pub fn update_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Val
     // JSONフィールドを文字列化（既に文字列の場合はそのまま）
     for field in &json_fields {
         if let Some(value) = row_data.get(*field) {
-            let json_str = value_to_sql_string(value, true);
-            row_data.insert(field.to_string(), json!(json_str));
-            eprintln!("📝 [update_doc] JSONフィールド '{}' を処理: {} bytes", field, json_str.len());
+            if let Some(json_str) = value_to_sql_string(value, true) {
+                row_data.insert(field.to_string(), json!(json_str));
+                eprintln!("📝 [update_doc] JSONフィールド '{}' を処理: {} bytes", field, json_str.len());
+            } else {
+                // Value::Nullの場合はnullを設定
+                row_data.insert(field.to_string(), json!(null));
+                eprintln!("📝 [update_doc] JSONフィールド '{}' をNULLに設定", field);
+            }
         }
     }
     
@@ -542,12 +572,20 @@ pub fn update_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Val
                 } else if let Some(b) = v.as_bool() {
                     params.push(Box::new(if b { 1i64 } else { 0i64 }));
                 } else {
-                    let sql_value = value_to_sql_string(v, false);
-                    params.push(Box::new(sql_value));
+                    if let Some(sql_value) = value_to_sql_string(v, false) {
+                        params.push(Box::new(sql_value));
+                    } else {
+                        // NULL値の場合はOption<String>としてNoneを追加
+                        params.push(Box::new(None::<String>));
+                    }
                 }
             } else {
-                let sql_value = value_to_sql_string(v, is_json);
-                params.push(Box::new(sql_value));
+                if let Some(sql_value) = value_to_sql_string(v, is_json) {
+                    params.push(Box::new(sql_value));
+                } else {
+                    // NULL値の場合はOption<String>としてNoneを追加
+                    params.push(Box::new(None::<String>));
+                }
             }
         }
     }
