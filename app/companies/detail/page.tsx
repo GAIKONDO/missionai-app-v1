@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, Suspense, useRef, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
+import html2canvas from 'html2canvas';
 import { 
   getCompanyById,
   getCompanyContent,
@@ -279,6 +280,12 @@ function CompanyDetailPageContent() {
   const [editingMeetingNoteTitle, setEditingMeetingNoteTitle] = useState('');
   const [showDeleteMeetingNoteConfirmModal, setShowDeleteMeetingNoteConfirmModal] = useState(false);
   const [deleteTargetMeetingNoteId, setDeleteTargetMeetingNoteId] = useState<string | null>(null);
+
+  // 各タブのコンテンツ用のref
+  const introductionTabRef = useRef<HTMLDivElement>(null);
+  const focusBusinessesTabRef = useRef<HTMLDivElement>(null);
+  const focusInitiativesTabRef = useRef<HTMLDivElement>(null);
+  const meetingNotesTabRef = useRef<HTMLDivElement>(null);
   
   // 事業会社紹介・注力事業の編集状態
   const [editingIntroduction, setEditingIntroduction] = useState(false);
@@ -306,6 +313,82 @@ function CompanyDetailPageContent() {
     setActiveTab(tab);
     router.push(`/companies/detail?id=${companyId}&tab=${tab}`, { scroll: false });
   };
+
+  // 各タブのコンテンツを画像としてダウンロード（早期リターンの前に定義）
+  const handleDownloadTabImage = useCallback(async (tab: TabType) => {
+    let tabRef: React.RefObject<HTMLDivElement> | null = null;
+    let tabName = '';
+
+    switch (tab) {
+      case 'introduction':
+        tabRef = introductionTabRef;
+        tabName = '事業会社紹介';
+        break;
+      case 'focusBusinesses':
+        tabRef = focusBusinessesTabRef;
+        tabName = '注力事業';
+        break;
+      case 'focusInitiatives':
+        tabRef = focusInitiativesTabRef;
+        tabName = '注力施策';
+        break;
+      case 'meetingNotes':
+        tabRef = meetingNotesTabRef;
+        tabName = '議事録';
+        break;
+    }
+
+    if (!tabRef || !tabRef.current) {
+      alert('ダウンロードするコンテンツが見つかりません。');
+      return;
+    }
+
+    // ローディング表示
+    const originalCursor = document.body.style.cursor;
+    
+    try {
+      document.body.style.cursor = 'wait';
+
+      // html2canvasでキャプチャ
+      const canvas = await html2canvas(tabRef.current, {
+        backgroundColor: '#ffffff',
+        scale: 2, // 高解像度
+        useCORS: true,
+        logging: false,
+        scrollX: 0,
+        scrollY: 0,
+      });
+
+      // PNGとしてダウンロード
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          alert('画像の生成に失敗しました。');
+          document.body.style.cursor = originalCursor;
+          return;
+        }
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const companyName = company?.name || '事業会社';
+        const sanitizedCompanyName = companyName.replace(/[<>:"/\\|?*]/g, '_');
+        link.href = url;
+        link.download = `${sanitizedCompanyName}_${tabName}_${Date.now()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        setTimeout(() => {
+          URL.revokeObjectURL(url);
+        }, 100);
+
+        document.body.style.cursor = originalCursor;
+      }, 'image/png', 1.0);
+    } catch (error) {
+      console.error('画像ダウンロードエラー:', error);
+      alert('画像のダウンロードに失敗しました。');
+      document.body.style.cursor = originalCursor;
+    }
+  }, [company]);
 
   // データ読み込み
   useEffect(() => {
@@ -1297,7 +1380,49 @@ ${shareholdersText}
 
         {/* タブコンテンツ */}
         {activeTab === 'introduction' && (
-          <div>
+          <div ref={introductionTabRef}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+              <button
+                type="button"
+                onClick={() => handleDownloadTabImage('introduction')}
+                title="事業会社紹介を画像としてダウンロード"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '32px',
+                  height: '32px',
+                  padding: 0,
+                  fontSize: '14px',
+                  color: '#6B7280',
+                  backgroundColor: 'transparent',
+                  border: '1px solid #E5E7EB',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 150ms',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F3F4F6';
+                  e.currentTarget.style.borderColor = '#D1D5DB';
+                  e.currentTarget.style.color = '#374151';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.borderColor = '#E5E7EB';
+                  e.currentTarget.style.color = '#6B7280';
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M10 2.5V12.5M10 12.5L6.25 8.75M10 12.5L13.75 8.75M2.5 15V16.25C2.5 16.913 3.037 17.5 3.75 17.5H16.25C16.963 17.5 17.5 16.913 17.5 16.25V15"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--color-text)', margin: 0 }}>
                 事業会社紹介
@@ -2115,7 +2240,49 @@ ${shareholdersText}
         )}
 
         {activeTab === 'focusBusinesses' && (
-          <div>
+          <div ref={focusBusinessesTabRef}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+              <button
+                type="button"
+                onClick={() => handleDownloadTabImage('focusBusinesses')}
+                title="注力事業を画像としてダウンロード"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '32px',
+                  height: '32px',
+                  padding: 0,
+                  fontSize: '14px',
+                  color: '#6B7280',
+                  backgroundColor: 'transparent',
+                  border: '1px solid #E5E7EB',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 150ms',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F3F4F6';
+                  e.currentTarget.style.borderColor = '#D1D5DB';
+                  e.currentTarget.style.color = '#374151';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.borderColor = '#E5E7EB';
+                  e.currentTarget.style.color = '#6B7280';
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M10 2.5V12.5M10 12.5L6.25 8.75M10 12.5L13.75 8.75M2.5 15V16.25C2.5 16.913 3.037 17.5 3.75 17.5H16.25C16.963 17.5 17.5 16.913 17.5 16.25V15"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--color-text)', margin: 0 }}>
                 注力事業
@@ -2219,7 +2386,49 @@ ${shareholdersText}
         )}
 
         {activeTab === 'focusInitiatives' && (
-          <div>
+          <div ref={focusInitiativesTabRef}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+              <button
+                type="button"
+                onClick={() => handleDownloadTabImage('focusInitiatives')}
+                title="注力施策を画像としてダウンロード"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '32px',
+                  height: '32px',
+                  padding: 0,
+                  fontSize: '14px',
+                  color: '#6B7280',
+                  backgroundColor: 'transparent',
+                  border: '1px solid #E5E7EB',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 150ms',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F3F4F6';
+                  e.currentTarget.style.borderColor = '#D1D5DB';
+                  e.currentTarget.style.color = '#374151';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.borderColor = '#E5E7EB';
+                  e.currentTarget.style.color = '#6B7280';
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M10 2.5V12.5M10 12.5L6.25 8.75M10 12.5L13.75 8.75M2.5 15V16.25C2.5 16.913 3.037 17.5 3.75 17.5H16.25C16.963 17.5 17.5 16.913 17.5 16.25V15"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--color-text)', margin: 0 }}>
                 注力施策 ({focusInitiatives.length}件)
@@ -2348,7 +2557,7 @@ ${shareholdersText}
                           }}>
                             {initiative.title}
                           </h4>
-                          <div style={{ display: 'flex', gap: '4px', marginLeft: '8px', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', gap: '2px', marginLeft: '8px', alignItems: 'center' }}>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -2360,30 +2569,34 @@ ${shareholdersText}
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                width: '28px',
-                                height: '28px',
+                                width: '24px',
+                                height: '24px',
                                 padding: 0,
                                 backgroundColor: 'transparent',
-                                color: '#6B7280',
+                                color: '#9CA3AF',
                                 border: 'none',
                                 cursor: savingInitiative ? 'not-allowed' : 'pointer',
                                 borderRadius: '4px',
+                                opacity: 0.3,
+                                transition: 'all 0.2s ease',
                               }}
                               onMouseEnter={(e) => {
                                 if (!savingInitiative) {
-                                  e.currentTarget.style.backgroundColor = '#F3F4F6';
-                                  e.currentTarget.style.color = '#374151';
+                                  e.currentTarget.style.backgroundColor = 'rgba(107, 114, 128, 0.08)';
+                                  e.currentTarget.style.opacity = '0.6';
+                                  e.currentTarget.style.color = '#6B7280';
                                 }
                               }}
                               onMouseLeave={(e) => {
                                 if (!savingInitiative) {
                                   e.currentTarget.style.backgroundColor = 'transparent';
-                                  e.currentTarget.style.color = '#6B7280';
+                                  e.currentTarget.style.opacity = '0.3';
+                                  e.currentTarget.style.color = '#9CA3AF';
                                 }
                               }}
                               title="編集"
                             >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                               </svg>
@@ -2399,28 +2612,34 @@ ${shareholdersText}
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                width: '28px',
-                                height: '28px',
+                                width: '24px',
+                                height: '24px',
                                 padding: 0,
                                 backgroundColor: 'transparent',
-                                color: '#EF4444',
+                                color: '#9CA3AF',
                                 border: 'none',
                                 cursor: savingInitiative ? 'not-allowed' : 'pointer',
                                 borderRadius: '4px',
+                                opacity: 0.3,
+                                transition: 'all 0.2s ease',
                               }}
                               onMouseEnter={(e) => {
                                 if (!savingInitiative) {
-                                  e.currentTarget.style.backgroundColor = '#FEE2E2';
+                                  e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.08)';
+                                  e.currentTarget.style.opacity = '0.6';
+                                  e.currentTarget.style.color = '#9CA3AF';
                                 }
                               }}
                               onMouseLeave={(e) => {
                                 if (!savingInitiative) {
                                   e.currentTarget.style.backgroundColor = 'transparent';
+                                  e.currentTarget.style.opacity = '0.3';
+                                  e.currentTarget.style.color = '#9CA3AF';
                                 }
                               }}
                               title="削除"
                             >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                 <polyline points="3 6 5 6 21 6" />
                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                               </svg>
@@ -2437,7 +2656,49 @@ ${shareholdersText}
         )}
 
         {activeTab === 'meetingNotes' && (
-          <div>
+          <div ref={meetingNotesTabRef}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+              <button
+                type="button"
+                onClick={() => handleDownloadTabImage('meetingNotes')}
+                title="議事録を画像としてダウンロード"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '32px',
+                  height: '32px',
+                  padding: 0,
+                  fontSize: '14px',
+                  color: '#6B7280',
+                  backgroundColor: 'transparent',
+                  border: '1px solid #E5E7EB',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 150ms',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F3F4F6';
+                  e.currentTarget.style.borderColor = '#D1D5DB';
+                  e.currentTarget.style.color = '#374151';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.borderColor = '#E5E7EB';
+                  e.currentTarget.style.color = '#6B7280';
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M10 2.5V12.5M10 12.5L6.25 8.75M10 12.5L13.75 8.75M2.5 15V16.25C2.5 16.913 3.037 17.5 3.75 17.5H16.25C16.963 17.5 17.5 16.913 17.5 16.25V15"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--color-text)', margin: 0 }}>
                 議事録 ({meetingNotes.length}件)
@@ -2566,7 +2827,7 @@ ${shareholdersText}
                           }}>
                             {note.title}
                           </h4>
-                          <div style={{ display: 'flex', gap: '4px', marginLeft: '8px', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', gap: '2px', marginLeft: '8px', alignItems: 'center' }}>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -2578,18 +2839,34 @@ ${shareholdersText}
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                width: '28px',
-                                height: '28px',
+                                width: '24px',
+                                height: '24px',
                                 padding: 0,
                                 backgroundColor: 'transparent',
-                                color: '#6B7280',
+                                color: '#9CA3AF',
                                 border: 'none',
                                 cursor: savingMeetingNote ? 'not-allowed' : 'pointer',
                                 borderRadius: '4px',
+                                opacity: 0.3,
+                                transition: 'all 0.2s ease',
+                              }}
+                              onMouseEnter={(e) => {
+                                if (!savingMeetingNote) {
+                                  e.currentTarget.style.backgroundColor = 'rgba(107, 114, 128, 0.08)';
+                                  e.currentTarget.style.opacity = '0.6';
+                                  e.currentTarget.style.color = '#6B7280';
+                                }
+                              }}
+                              onMouseLeave={(e) => {
+                                if (!savingMeetingNote) {
+                                  e.currentTarget.style.backgroundColor = 'transparent';
+                                  e.currentTarget.style.opacity = '0.3';
+                                  e.currentTarget.style.color = '#9CA3AF';
+                                }
                               }}
                               title="編集"
                             >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                               </svg>
@@ -2605,18 +2882,34 @@ ${shareholdersText}
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                width: '28px',
-                                height: '28px',
+                                width: '24px',
+                                height: '24px',
                                 padding: 0,
                                 backgroundColor: 'transparent',
-                                color: '#EF4444',
+                                color: '#9CA3AF',
                                 border: 'none',
                                 cursor: savingMeetingNote ? 'not-allowed' : 'pointer',
                                 borderRadius: '4px',
+                                opacity: 0.3,
+                                transition: 'all 0.2s ease',
+                              }}
+                              onMouseEnter={(e) => {
+                                if (!savingMeetingNote) {
+                                  e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.08)';
+                                  e.currentTarget.style.opacity = '0.6';
+                                  e.currentTarget.style.color = '#9CA3AF';
+                                }
+                              }}
+                              onMouseLeave={(e) => {
+                                if (!savingMeetingNote) {
+                                  e.currentTarget.style.backgroundColor = 'transparent';
+                                  e.currentTarget.style.opacity = '0.3';
+                                  e.currentTarget.style.color = '#9CA3AF';
+                                }
                               }}
                               title="削除"
                             >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                 <polyline points="3 6 5 6 21 6" />
                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                               </svg>

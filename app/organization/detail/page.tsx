@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, Suspense, useRef, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { getOrgTreeFromDb, findOrganizationById, getOrgMembers, getFocusInitiatives, getMeetingNotes, getOrganizationContent, saveFocusInitiative, deleteFocusInitiative, generateUniqueInitiativeId, saveMeetingNote, deleteMeetingNote, generateUniqueMeetingNoteId, tauriAlert, tauriConfirm } from '@/lib/orgApi';
@@ -11,6 +11,7 @@ import { getCompaniesByOrganizationId, getCompanyById } from '@/lib/companiesApi
 import type { Company } from '@/lib/companiesApi';
 import { getCompaniesByOrganizationDisplay } from '@/lib/organizationCompanyDisplayApi';
 import type { OrganizationCompanyDisplay } from '@/lib/organizationCompanyDisplayApi';
+import html2canvas from 'html2canvas';
 
 // 開発環境でのみログを有効化するヘルパー関数（パフォーマンス最適化）
 const isDev = process.env.NODE_ENV === 'development';
@@ -43,6 +44,12 @@ function OrganizationDetailPageContent() {
   const [activeTab, setActiveTab] = useState<TabType>(tabParam || 'introduction');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // 各タブのコンテンツ用のref
+  const introductionTabRef = useRef<HTMLDivElement>(null);
+  const focusAreasTabRef = useRef<HTMLDivElement>(null);
+  const focusInitiativesTabRef = useRef<HTMLDivElement>(null);
+  const meetingNotesTabRef = useRef<HTMLDivElement>(null);
   
   // 注力施策追加モーダルの状態
   const [showAddInitiativeModal, setShowAddInitiativeModal] = useState(false);
@@ -548,6 +555,88 @@ function OrganizationDetailPageContent() {
     }
   }, [tabParam]);
 
+  // 各タブのコンテンツを画像としてダウンロード（早期リターンの前に定義）
+  const handleDownloadTabImage = useCallback(async (tab: TabType) => {
+    let tabRef: React.RefObject<HTMLDivElement> | null = null;
+    let tabName = '';
+
+    switch (tab) {
+      case 'introduction':
+        tabRef = introductionTabRef;
+        tabName = '組織紹介';
+        break;
+      case 'focusAreas':
+        tabRef = focusAreasTabRef;
+        tabName = '注力領域';
+        break;
+      case 'focusInitiatives':
+        tabRef = focusInitiativesTabRef;
+        tabName = '注力施策';
+        break;
+      case 'meetingNotes':
+        tabRef = meetingNotesTabRef;
+        tabName = '議事録';
+        break;
+    }
+
+    if (!tabRef || !tabRef.current) {
+      alert('ダウンロードするコンテンツが見つかりません。');
+      return;
+    }
+
+    // ローディング表示
+    const originalCursor = document.body.style.cursor;
+    
+    try {
+      document.body.style.cursor = 'wait';
+
+      // html2canvasでキャプチャ
+      const canvas = await html2canvas(tabRef.current, {
+        backgroundColor: '#ffffff',
+        scale: 2, // 高解像度
+        useCORS: true,
+        logging: false,
+        scrollX: 0,
+        scrollY: 0,
+      });
+
+      // PNGとしてダウンロード
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          alert('画像の生成に失敗しました。');
+          document.body.style.cursor = originalCursor;
+          return;
+        }
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const orgName = organization?.name || '組織';
+        const sanitizedOrgName = orgName.replace(/[<>:"/\\|?*]/g, '_');
+        link.href = url;
+        link.download = `${sanitizedOrgName}_${tabName}_${Date.now()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        setTimeout(() => {
+          URL.revokeObjectURL(url);
+        }, 100);
+
+        document.body.style.cursor = originalCursor;
+      }, 'image/png', 1.0);
+    } catch (error) {
+      console.error('画像ダウンロードエラー:', error);
+      alert('画像のダウンロードに失敗しました。');
+      document.body.style.cursor = originalCursor;
+    }
+  }, [organization]);
+
+  // タブ変更ハンドラー（早期リターンの前に定義）
+  const handleTabChange = (tab: TabType) => {
+    setActiveTab(tab);
+    router.push(`/organization/detail?id=${organizationId}&tab=${tab}`);
+  };
+
   if (loading) {
     return (
       <Layout>
@@ -580,11 +669,6 @@ function OrganizationDetailPageContent() {
       </Layout>
     );
   }
-
-  const handleTabChange = (tab: TabType) => {
-    setActiveTab(tab);
-    router.push(`/organization/detail?id=${organizationId}&tab=${tab}`);
-  };
 
   // 注力施策追加モーダルを開く
   const handleOpenAddInitiativeModal = () => {
@@ -1050,7 +1134,50 @@ function OrganizationDetailPageContent() {
 
         {/* タブコンテンツ */}
         {activeTab === 'introduction' && (
-          <>
+          <div ref={introductionTabRef}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+              <button
+                type="button"
+                onClick={() => handleDownloadTabImage('introduction')}
+                title="組織紹介を画像としてダウンロード"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '32px',
+                  height: '32px',
+                  padding: 0,
+                  fontSize: '14px',
+                  color: '#6B7280',
+                  backgroundColor: 'transparent',
+                  border: '1px solid #E5E7EB',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 150ms',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F3F4F6';
+                  e.currentTarget.style.borderColor = '#D1D5DB';
+                  e.currentTarget.style.color = '#374151';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.borderColor = '#E5E7EB';
+                  e.currentTarget.style.color = '#6B7280';
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M10 2.5V12.5M10 12.5L6.25 8.75M10 12.5L13.75 8.75M2.5 15V16.25C2.5 16.913 3.037 17.5 3.75 17.5H16.25C16.963 17.5 17.5 16.913 17.5 16.25V15"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+            <>
             {organization.description && (
               <div style={{ marginBottom: '24px' }}>
                 <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
@@ -1250,10 +1377,54 @@ function OrganizationDetailPageContent() {
           </div>
         )}
           </>
+          </div>
         )}
 
         {activeTab === 'focusAreas' && (
-          <div>
+          <div ref={focusAreasTabRef}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+              <button
+                type="button"
+                onClick={() => handleDownloadTabImage('focusAreas')}
+                title="注力領域を画像としてダウンロード"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '32px',
+                  height: '32px',
+                  padding: 0,
+                  fontSize: '14px',
+                  color: '#6B7280',
+                  backgroundColor: 'transparent',
+                  border: '1px solid #E5E7EB',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 150ms',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F3F4F6';
+                  e.currentTarget.style.borderColor = '#D1D5DB';
+                  e.currentTarget.style.color = '#374151';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.borderColor = '#E5E7EB';
+                  e.currentTarget.style.color = '#6B7280';
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M10 2.5V12.5M10 12.5L6.25 8.75M10 12.5L13.75 8.75M2.5 15V16.25C2.5 16.913 3.037 17.5 3.75 17.5H16.25C16.963 17.5 17.5 16.913 17.5 16.25V15"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div>
             <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
               注力領域
             </h3>
@@ -1274,11 +1445,55 @@ function OrganizationDetailPageContent() {
                 注力領域が登録されていません
               </p>
             )}
+            </div>
           </div>
         )}
 
         {activeTab === 'focusInitiatives' && (
-          <div>
+          <div ref={focusInitiativesTabRef}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+              <button
+                type="button"
+                onClick={() => handleDownloadTabImage('focusInitiatives')}
+                title="注力施策を画像としてダウンロード"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '32px',
+                  height: '32px',
+                  padding: 0,
+                  fontSize: '14px',
+                  color: '#6B7280',
+                  backgroundColor: 'transparent',
+                  border: '1px solid #E5E7EB',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 150ms',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F3F4F6';
+                  e.currentTarget.style.borderColor = '#D1D5DB';
+                  e.currentTarget.style.color = '#374151';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.borderColor = '#E5E7EB';
+                  e.currentTarget.style.color = '#6B7280';
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M10 2.5V12.5M10 12.5L6.25 8.75M10 12.5L13.75 8.75M2.5 15V16.25C2.5 16.913 3.037 17.5 3.75 17.5H16.25C16.963 17.5 17.5 16.913 17.5 16.25V15"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--color-text)', margin: 0 }}>
                 注力施策 ({focusInitiatives.length}件)
@@ -1551,7 +1766,7 @@ function OrganizationDetailPageContent() {
                                 >
                                   {initiative.title}
                                 </h4>
-                                <div style={{ display: 'flex', gap: '4px', marginLeft: '8px', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', gap: '2px', marginLeft: '8px', alignItems: 'center' }}>
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -1562,34 +1777,34 @@ function OrganizationDetailPageContent() {
                                       display: 'flex',
                                       alignItems: 'center',
                                       justifyContent: 'center',
-                                      width: '28px',
-                                      height: '28px',
+                                      width: '24px',
+                                      height: '24px',
                                       padding: 0,
                                       backgroundColor: 'transparent',
-                                      color: '#6B7280',
+                                      color: '#9CA3AF',
                                       border: 'none',
-                                      borderRadius: '6px',
+                                      borderRadius: '4px',
                                       cursor: savingInitiative ? 'not-allowed' : 'pointer',
-                                      opacity: 0.6,
+                                      opacity: 0.3,
                                       transition: 'all 0.2s ease',
                                     }}
                                     onMouseEnter={(e) => {
                                       if (!savingInitiative) {
-                                        e.currentTarget.style.backgroundColor = 'rgba(107, 114, 128, 0.1)';
-                                        e.currentTarget.style.opacity = '1';
-                                        e.currentTarget.style.color = '#374151';
+                                        e.currentTarget.style.backgroundColor = 'rgba(107, 114, 128, 0.08)';
+                                        e.currentTarget.style.opacity = '0.6';
+                                        e.currentTarget.style.color = '#6B7280';
                                       }
                                     }}
                                     onMouseLeave={(e) => {
                                       if (!savingInitiative) {
                                         e.currentTarget.style.backgroundColor = 'transparent';
-                                        e.currentTarget.style.opacity = '0.6';
-                                        e.currentTarget.style.color = '#6B7280';
+                                        e.currentTarget.style.opacity = '0.3';
+                                        e.currentTarget.style.color = '#9CA3AF';
                                       }
                                     }}
                                     title="編集"
                                   >
-                                    <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" style={{ display: 'block' }}>
+                                    <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor" style={{ display: 'block' }}>
                                       <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
                                     </svg>
                                   </button>
@@ -1603,34 +1818,34 @@ function OrganizationDetailPageContent() {
                                       display: 'flex',
                                       alignItems: 'center',
                                       justifyContent: 'center',
-                                      width: '28px',
-                                      height: '28px',
+                                      width: '24px',
+                                      height: '24px',
                                       padding: 0,
                                       backgroundColor: 'transparent',
-                                      color: '#6B7280',
+                                      color: '#9CA3AF',
                                       border: 'none',
-                                      borderRadius: '6px',
+                                      borderRadius: '4px',
                                       cursor: savingInitiative ? 'not-allowed' : 'pointer',
-                                      opacity: 0.6,
+                                      opacity: 0.3,
                                       transition: 'all 0.2s ease',
                                     }}
                                     onMouseEnter={(e) => {
                                       if (!savingInitiative) {
-                                        e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
-                                        e.currentTarget.style.opacity = '1';
-                                        e.currentTarget.style.color = '#DC2626';
+                                        e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.08)';
+                                        e.currentTarget.style.opacity = '0.6';
+                                        e.currentTarget.style.color = '#9CA3AF';
                                       }
                                     }}
                                     onMouseLeave={(e) => {
                                       if (!savingInitiative) {
                                         e.currentTarget.style.backgroundColor = 'transparent';
-                                        e.currentTarget.style.opacity = '0.6';
-                                        e.currentTarget.style.color = '#6B7280';
+                                        e.currentTarget.style.opacity = '0.3';
+                                        e.currentTarget.style.color = '#9CA3AF';
                                       }
                                     }}
                                     title="削除"
                                   >
-                                    <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" style={{ display: 'block' }}>
+                                    <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor" style={{ display: 'block' }}>
                                       <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
                                     </svg>
                                   </button>
@@ -1652,6 +1867,7 @@ function OrganizationDetailPageContent() {
                 })}
               </div>
             )}
+            </div>
           </div>
         )}
 
@@ -1954,7 +2170,49 @@ function OrganizationDetailPageContent() {
         )}
 
         {activeTab === 'meetingNotes' && (
-          <div>
+          <div ref={meetingNotesTabRef}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+              <button
+                type="button"
+                onClick={() => handleDownloadTabImage('meetingNotes')}
+                title="議事録を画像としてダウンロード"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '32px',
+                  height: '32px',
+                  padding: 0,
+                  fontSize: '14px',
+                  color: '#6B7280',
+                  backgroundColor: 'transparent',
+                  border: '1px solid #E5E7EB',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 150ms',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F3F4F6';
+                  e.currentTarget.style.borderColor = '#D1D5DB';
+                  e.currentTarget.style.color = '#374151';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.borderColor = '#E5E7EB';
+                  e.currentTarget.style.color = '#6B7280';
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M10 2.5V12.5M10 12.5L6.25 8.75M10 12.5L13.75 8.75M2.5 15V16.25C2.5 16.913 3.037 17.5 3.75 17.5H16.25C16.963 17.5 17.5 16.913 17.5 16.25V15"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--color-text)', margin: 0 }}>
                 議事録 ({meetingNotes.length}件)
@@ -2111,7 +2369,7 @@ function OrganizationDetailPageContent() {
                           >
                             {note.title}
                           </h4>
-                          <div style={{ display: 'flex', gap: '4px', marginLeft: '8px', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
+                          <div style={{ display: 'flex', gap: '2px', marginLeft: '8px', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -2122,34 +2380,34 @@ function OrganizationDetailPageContent() {
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                width: '28px',
-                                height: '28px',
+                                width: '24px',
+                                height: '24px',
                                 padding: 0,
                                 backgroundColor: 'transparent',
-                                color: '#6B7280',
+                                color: '#9CA3AF',
                                 border: 'none',
-                                borderRadius: '6px',
+                                borderRadius: '4px',
                                 cursor: savingMeetingNote ? 'not-allowed' : 'pointer',
-                                opacity: 0.6,
+                                opacity: 0.3,
                                 transition: 'all 0.2s ease',
                               }}
                               onMouseEnter={(e) => {
                                 if (!savingMeetingNote) {
-                                  e.currentTarget.style.backgroundColor = 'rgba(107, 114, 128, 0.1)';
-                                  e.currentTarget.style.opacity = '1';
-                                  e.currentTarget.style.color = '#374151';
+                                  e.currentTarget.style.backgroundColor = 'rgba(107, 114, 128, 0.08)';
+                                  e.currentTarget.style.opacity = '0.6';
+                                  e.currentTarget.style.color = '#6B7280';
                                 }
                               }}
                               onMouseLeave={(e) => {
                                 if (!savingMeetingNote) {
                                   e.currentTarget.style.backgroundColor = 'transparent';
-                                  e.currentTarget.style.opacity = '0.6';
-                                  e.currentTarget.style.color = '#6B7280';
+                                  e.currentTarget.style.opacity = '0.3';
+                                  e.currentTarget.style.color = '#9CA3AF';
                                 }
                               }}
                               title="編集"
                             >
-                              <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" style={{ display: 'block' }}>
+                              <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor" style={{ display: 'block' }}>
                                 <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
                               </svg>
                             </button>
@@ -2163,34 +2421,34 @@ function OrganizationDetailPageContent() {
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                width: '28px',
-                                height: '28px',
+                                width: '24px',
+                                height: '24px',
                                 padding: 0,
                                 backgroundColor: 'transparent',
-                                color: '#6B7280',
+                                color: '#9CA3AF',
                                 border: 'none',
-                                borderRadius: '6px',
+                                borderRadius: '4px',
                                 cursor: savingMeetingNote ? 'not-allowed' : 'pointer',
-                                opacity: 0.6,
+                                opacity: 0.3,
                                 transition: 'all 0.2s ease',
                               }}
                               onMouseEnter={(e) => {
                                 if (!savingMeetingNote) {
-                                  e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
-                                  e.currentTarget.style.opacity = '1';
-                                  e.currentTarget.style.color = '#DC2626';
+                                  e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.08)';
+                                  e.currentTarget.style.opacity = '0.6';
+                                  e.currentTarget.style.color = '#9CA3AF';
                                 }
                               }}
                               onMouseLeave={(e) => {
                                 if (!savingMeetingNote) {
                                   e.currentTarget.style.backgroundColor = 'transparent';
-                                  e.currentTarget.style.opacity = '0.6';
-                                  e.currentTarget.style.color = '#6B7280';
+                                  e.currentTarget.style.opacity = '0.3';
+                                  e.currentTarget.style.color = '#9CA3AF';
                                 }
                               }}
                               title="削除"
                             >
-                              <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" style={{ display: 'block' }}>
+                              <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor" style={{ display: 'block' }}>
                                 <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
                               </svg>
                             </button>

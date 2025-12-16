@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Layout from '@/components/Layout';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -8,6 +8,7 @@ import { getOrgTreeFromDb, getAllOrganizationsFromTree, type OrgNodeData } from 
 import { getThemes, getFocusInitiatives, type Theme, type FocusInitiative } from '@/lib/orgApi';
 import { getAllCompanies, getCompanyFocusInitiatives, updateCompany, type Company, type CompanyFocusInitiative } from '@/lib/companiesApi';
 import dynamic from 'next/dynamic';
+import html2canvas from 'html2canvas';
 
 // 開発環境でのみログを有効化するヘルパー関数（パフォーマンス最適化）
 const isDev = process.env.NODE_ENV === 'development';
@@ -204,6 +205,9 @@ export default function DashboardPage() {
   const [companyInitiatives, setCompanyInitiatives] = useState<CompanyFocusInitiative[]>([]);
   const [companyHierarchyLevels, setCompanyHierarchyLevels] = useState<HierarchyLevel[]>([]);
   const [filteredCompanyIds, setFilteredCompanyIds] = useState<Set<string>>(new Set());
+
+  // グラフと注力施策一覧を含むコンテナの参照
+  const chartAndInitiativesRef = useRef<HTMLDivElement>(null);
 
   // グローバルデバッグ関数を設定（ブラウザコンソールで使用可能）
   useEffect(() => {
@@ -1099,6 +1103,60 @@ export default function DashboardPage() {
     }
   }, [viewMode]);
 
+  // グラフと注力施策一覧を画像としてダウンロード
+  const handleDownloadImage = useCallback(async () => {
+    if (!chartAndInitiativesRef.current) {
+      alert('ダウンロードするコンテンツが見つかりません。');
+      return;
+    }
+
+    // ローディング表示（オプション）
+    const originalCursor = document.body.style.cursor;
+    
+    try {
+      document.body.style.cursor = 'wait';
+
+      // html2canvasでキャプチャ
+      const canvas = await html2canvas(chartAndInitiativesRef.current, {
+        backgroundColor: '#ffffff',
+        scale: 2, // 高解像度
+        useCORS: true,
+        logging: false,
+        scrollX: 0,
+        scrollY: 0,
+      });
+
+      // PNGとしてダウンロード
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          alert('画像の生成に失敗しました。');
+          document.body.style.cursor = originalCursor;
+          return;
+        }
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const themeTitle = selectedTheme?.title || 'ダッシュボード';
+        const sanitizedTitle = themeTitle.replace(/[<>:"/\\|?*]/g, '_'); // ファイル名に使えない文字を置換
+        link.href = url;
+        link.download = `${sanitizedTitle}_グラフと注力施策一覧_${Date.now()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        setTimeout(() => {
+          URL.revokeObjectURL(url);
+        }, 100);
+
+        document.body.style.cursor = originalCursor;
+      }, 'image/png', 1.0);
+    } catch (error) {
+      console.error('画像ダウンロードエラー:', error);
+      alert('画像のダウンロードに失敗しました。');
+      document.body.style.cursor = originalCursor;
+    }
+  }, [selectedTheme]);
+
   if (loading) {
     return (
       <Layout>
@@ -1741,80 +1799,82 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* グラフ */}
-        {chartSpec && chartData.length > 0 ? (
-          <div style={{
-            marginBottom: '32px',
-            width: '100%',
-            overflowX: 'auto',
-          }}>
+        {/* グラフと注力施策一覧を含むコンテナ（画像ダウンロード用） */}
+        <div ref={chartAndInitiativesRef}>
+          {/* グラフ */}
+          {chartSpec && chartData.length > 0 ? (
             <div style={{
-              backgroundColor: '#FFFFFF',
-              border: '1px solid #E5E7EB',
-              borderRadius: '12px',
-              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
-              padding: '24px',
-              overflow: 'hidden',
+              marginBottom: '32px',
+              width: '100%',
+              overflowX: 'auto',
             }}>
               <div style={{
-                marginBottom: '20px',
-                paddingBottom: '16px',
-                borderBottom: '1px solid #F3F4F6',
+                backgroundColor: '#FFFFFF',
+                border: '1px solid #E5E7EB',
+                borderRadius: '12px',
+                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
+                padding: '24px',
+                overflow: 'hidden',
               }}>
-                <h3 style={{
-                  fontSize: '18px',
-                  fontWeight: '600',
-                  color: '#1A1A1A',
-                  margin: 0,
-                  fontFamily: 'var(--font-inter), var(--font-noto), sans-serif',
+                <div style={{
+                  marginBottom: '20px',
+                  paddingBottom: '16px',
+                  borderBottom: '1px solid #F3F4F6',
                 }}>
-                  テーマ別施策件数
-                </h3>
-                <p style={{
-                  fontSize: '13px',
-                  color: '#6B7280',
-                  margin: '4px 0 0 0',
-                  fontFamily: 'var(--font-inter), var(--font-noto), sans-serif',
-                }}>
-                  {viewMode === 'company' ? '事業会社別' : `階層レベル${selectedLevel}`}
-                </p>
+                  <h3 style={{
+                    fontSize: '18px',
+                    fontWeight: '600',
+                    color: '#1A1A1A',
+                    margin: 0,
+                    fontFamily: 'var(--font-inter), var(--font-noto), sans-serif',
+                  }}>
+                    テーマ別施策件数
+                  </h3>
+                  <p style={{
+                    fontSize: '13px',
+                    color: '#6B7280',
+                    margin: '4px 0 0 0',
+                    fontFamily: 'var(--font-inter), var(--font-noto), sans-serif',
+                  }}>
+                    {viewMode === 'company' ? '事業会社別' : `階層レベル${selectedLevel}`}
+                  </p>
+                </div>
+                <DynamicVegaChart
+                  spec={chartSpec}
+                  language="vega-lite"
+                  onSignal={handleChartSignal}
+                  chartData={chartData}
+                  noBorder={true}
+                />
               </div>
-              <DynamicVegaChart
-                spec={chartSpec}
-                language="vega-lite"
-                onSignal={handleChartSignal}
-                chartData={chartData}
-                noBorder={true}
-              />
             </div>
-          </div>
-        ) : (
-          themes.length > 0 && 
-          ((viewMode === 'organization' && selectedLevelOrgs.length > 0) || 
-           (viewMode === 'company' && selectedLevelCompanies.length > 0)) && (
-            <div style={{
-              padding: '60px 20px',
-              textAlign: 'center',
-              color: '#808080',
-              fontSize: '14px',
-              backgroundColor: '#FAFAFA',
-              borderRadius: '8px',
-              border: '1px dashed #E0E0E0',
-            }}>
-              施策が登録されていません。
-            </div>
-          )
-        )}
+          ) : (
+            themes.length > 0 && 
+            ((viewMode === 'organization' && selectedLevelOrgs.length > 0) || 
+             (viewMode === 'company' && selectedLevelCompanies.length > 0)) && (
+              <div style={{
+                padding: '60px 20px',
+                textAlign: 'center',
+                color: '#808080',
+                fontSize: '14px',
+                backgroundColor: '#FAFAFA',
+                borderRadius: '8px',
+                border: '1px dashed #E0E0E0',
+              }}>
+                施策が登録されていません。
+              </div>
+            )
+          )}
 
-        {/* 選択されたテーマの注力施策カード */}
-        {chartData.length > 0 && (
-          <div style={{
-            marginTop: '24px',
-            padding: '16px',
-            backgroundColor: '#F9FAFB',
-            borderRadius: '8px',
-            fontSize: '14px',
-          }}>
+          {/* 選択されたテーマの注力施策カード */}
+          {chartData.length > 0 && (
+            <div style={{
+              marginTop: '24px',
+              padding: '16px',
+              backgroundColor: '#F9FAFB',
+              borderRadius: '8px',
+              fontSize: '14px',
+            }}>
             {/* 選択されたテーマの注力施策カード - 組織モード */}
             {viewMode === 'organization' && selectedTheme && selectedThemeInitiatives.length > 0 && (
               <div style={{ marginTop: '24px', borderTop: '1px solid #E5E7EB', paddingTop: '16px' }}>
@@ -2023,7 +2083,58 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
-        )}
+          )}
+
+          {/* ダウンロードボタン（テーマが選択されている時のみ表示） */}
+          {selectedTheme && (
+            <div style={{
+              marginTop: '16px',
+              display: 'flex',
+              justifyContent: 'flex-end',
+            }}>
+              <button
+                type="button"
+                onClick={handleDownloadImage}
+                title="グラフと注力施策一覧を画像としてダウンロード"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '32px',
+                  height: '32px',
+                  padding: 0,
+                  fontSize: '14px',
+                  color: '#6B7280',
+                  backgroundColor: 'transparent',
+                  border: '1px solid #E5E7EB',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 150ms',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F3F4F6';
+                  e.currentTarget.style.borderColor = '#D1D5DB';
+                  e.currentTarget.style.color = '#374151';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.borderColor = '#E5E7EB';
+                  e.currentTarget.style.color = '#6B7280';
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M10 2.5V12.5M10 12.5L6.25 8.75M10 12.5L13.75 8.75M2.5 15V16.25C2.5 16.913 3.037 17.5 3.75 17.5H16.25C16.963 17.5 17.5 16.913 17.5 16.25V15"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* フィルターモーダル */}
         {showFilterModal && (

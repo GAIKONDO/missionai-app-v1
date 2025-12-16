@@ -20,36 +20,239 @@ fn detect_java() -> Result<PathBuf> {
         }
     }
     
-    // 2. PATHからjavaコマンドを検索
+    // 2. macOSの場合、複数の方法でJavaを検索
+    #[cfg(target_os = "macos")]
+    {
+        // 2-1. HomebrewのOpenJDKを確認（/opt/homebrew/opt/openjdk/bin/java）
+        let homebrew_java_paths = vec![
+            PathBuf::from("/opt/homebrew/opt/openjdk/bin/java"),
+            PathBuf::from("/opt/homebrew/opt/openjdk@17/bin/java"),
+            PathBuf::from("/opt/homebrew/opt/openjdk@21/bin/java"),
+            PathBuf::from("/opt/homebrew/bin/java"),
+            PathBuf::from("/usr/local/opt/openjdk/bin/java"),
+            PathBuf::from("/usr/local/bin/java"),
+        ];
+        
+        for java_path in homebrew_java_paths {
+            if java_path.exists() {
+                if let Ok(output) = Command::new(&java_path).arg("-version").output() {
+                    if output.status.success() {
+                        return Ok(java_path);
+                    }
+                }
+            }
+        }
+        
+        // 2-2. /usr/libexec/java_homeでデフォルトのJavaを取得
+        if let Ok(output) = Command::new("/usr/libexec/java_home").output() {
+            if output.status.success() {
+                if let Ok(java_home_str) = String::from_utf8(output.stdout) {
+                    let java_home = java_home_str.trim();
+                    if !java_home.is_empty() {
+                        let java_path = PathBuf::from(java_home).join("bin").join("java");
+                        if java_path.exists() {
+                            if let Ok(version_output) = Command::new(&java_path).arg("-version").output() {
+                                if version_output.status.success() {
+                                    return Ok(java_path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 2-3. /usr/libexec/java_home -Vで利用可能なJavaをリストアップ
+        if let Ok(output) = Command::new("/usr/libexec/java_home").arg("-V").output() {
+            // -Vオプションはstderrに出力される
+            if let Ok(stderr_str) = String::from_utf8(output.stderr) {
+                // 各行からJavaのパスを抽出
+                for line in stderr_str.lines() {
+                    if let Some(start) = line.find("(/") {
+                        if let Some(end) = line[start+2..].find(")") {
+                            let java_home = &line[start+1..start+2+end];
+                            let java_path = PathBuf::from(java_home).join("bin").join("java");
+                            if java_path.exists() {
+                                if let Ok(version_output) = Command::new(&java_path).arg("-version").output() {
+                                    if version_output.status.success() {
+                                        return Ok(java_path);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 2-4. /usr/bin/javaを確認（シンボリックリンクの場合もある）
+        let usr_bin_java = PathBuf::from("/usr/bin/java");
+        if usr_bin_java.exists() {
+            if let Ok(output) = Command::new("/usr/bin/java").arg("-version").output() {
+                if output.status.success() {
+                    return Ok(usr_bin_java);
+                }
+            }
+        }
+        
+        // 2-5. JavaVirtualMachinesディレクトリ内を検索
+        let jvm_dirs = vec![
+            PathBuf::from("/Library/Java/JavaVirtualMachines"),
+            PathBuf::from("/System/Library/Java/JavaVirtualMachines"),
+            PathBuf::from("/opt/homebrew/Cellar/openjdk"),
+        ];
+        
+        for jvm_dir in jvm_dirs {
+            if let Ok(entries) = std::fs::read_dir(&jvm_dir) {
+                // ディレクトリをソートして、最新のバージョンを優先
+                let mut jvm_paths: Vec<PathBuf> = entries
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .collect();
+                jvm_paths.sort_by(|a, b| b.cmp(a)); // 降順ソート
+                
+                for jvm_path in jvm_paths {
+                    // 標準的なJVM構造を確認
+                    let java_paths = vec![
+                        jvm_path.join("Contents").join("Home").join("bin").join("java"),
+                        jvm_path.join("bin").join("java"),
+                    ];
+                    
+                    for java_path in java_paths {
+                        if java_path.exists() {
+                            if let Ok(output) = Command::new(&java_path).arg("-version").output() {
+                                if output.status.success() {
+                                    return Ok(java_path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // 3. PATHからjavaコマンドを検索（GUIアプリでも動作するように、環境変数を明示的に設定）
     let java_cmd = if cfg!(target_os = "windows") {
         "java.exe"
     } else {
         "java"
     };
     
-    if let Ok(output) = Command::new(java_cmd).arg("-version").output() {
-        if output.status.success() {
-            return Ok(PathBuf::from(java_cmd));
+    // macOSの場合、PATHにHomebrewのパスを追加してから検索
+    #[cfg(target_os = "macos")]
+    {
+        // PATH環境変数を設定（GUIアプリから起動した場合でも動作するように）
+        let path_env = std::env::var("PATH").unwrap_or_default();
+        let homebrew_paths = "/opt/homebrew/bin:/opt/homebrew/opt/openjdk/bin:/usr/local/bin:/usr/bin:/bin";
+        let new_path = if path_env.is_empty() {
+            homebrew_paths.to_string()
+        } else {
+            format!("{}:{}", homebrew_paths, path_env)
+        };
+        
+        let mut cmd = Command::new(java_cmd);
+        cmd.arg("-version");
+        cmd.env("PATH", &new_path);
+        
+        if let Ok(output) = cmd.output() {
+            if output.status.success() {
+                // javaコマンドが見つかった場合、フルパスを取得
+                let mut which_cmd = Command::new("which");
+                which_cmd.arg(java_cmd);
+                which_cmd.env("PATH", &new_path);
+                if let Ok(which_output) = which_cmd.output() {
+                    if which_output.status.success() {
+                        if let Ok(path_str) = String::from_utf8(which_output.stdout) {
+                            let java_path = PathBuf::from(path_str.trim());
+                            if java_path.exists() {
+                                return Ok(java_path);
+                            }
+                        }
+                    }
+                }
+                // whichが失敗した場合でも、javaコマンド自体は動作しているので、それを返す
+                return Ok(PathBuf::from(java_cmd));
+            }
         }
     }
     
-    anyhow::bail!("Javaが見つかりません。Javaをインストールしてください。\n\n対処法:\n1. Javaをインストールしてください（https://www.java.com/）\n2. JAVA_HOME環境変数を設定してください\n3. PATHにjavaコマンドが含まれているか確認してください");
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Ok(output) = Command::new(java_cmd).arg("-version").output() {
+            if output.status.success() {
+                return Ok(PathBuf::from(java_cmd));
+            }
+        }
+    }
+    
+    // 4. Windowsの場合、レジストリから検索（オプション）
+    #[cfg(target_os = "windows")]
+    {
+        // Windowsの標準的なJavaの場所を確認
+        let windows_java_paths = vec![
+            PathBuf::from("C:\\Program Files\\Java"),
+            PathBuf::from("C:\\Program Files (x86)\\Java"),
+        ];
+        
+        for java_dir in windows_java_paths {
+            if let Ok(entries) = std::fs::read_dir(&java_dir) {
+                for entry in entries.flatten() {
+                    let java_path = entry.path().join("bin").join("java.exe");
+                    if java_path.exists() {
+                        if let Ok(output) = Command::new(&java_path).arg("-version").output() {
+                            if output.status.success() {
+                                return Ok(java_path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    anyhow::bail!("Javaが見つかりません。Javaをインストールしてください。\n\n対処法:\n1. Javaをインストールしてください（https://www.java.com/）\n2. JAVA_HOME環境変数を設定してください\n3. PATHにjavaコマンドが含まれているか確認してください\n4. macOSの場合、ターミナルから以下のコマンドでJavaの場所を確認できます:\n   /usr/libexec/java_home -V");
 }
 
 /// PlantUML JARファイルのパスを取得
 fn get_plantuml_jar_path(app_handle: &AppHandle) -> Result<PathBuf> {
-    // 1. リソースディレクトリからplantuml.jarを探す
+    // 1. リソースディレクトリからplantuml.jarを探す（本番環境で最も重要）
     if let Ok(resource_dir) = app_handle.path().resource_dir() {
+        eprintln!("🔍 [PlantUML] リソースディレクトリを確認: {}", resource_dir.display());
+        
+        // 1-1. 直接リソースディレクトリ内を確認
         let jar_path = resource_dir.join("plantuml.jar");
+        eprintln!("🔍 [PlantUML] JARパスを確認: {}", jar_path.display());
         if jar_path.exists() {
+            eprintln!("✅ [PlantUML] JARファイルが見つかりました: {}", jar_path.display());
             return Ok(jar_path);
         }
+        
+        // 1-2. resourcesサブディレクトリ内を確認（tauri.conf.jsonでresources/plantuml.jarと指定した場合）
+        let jar_path = resource_dir.join("resources").join("plantuml.jar");
+        eprintln!("🔍 [PlantUML] resourcesサブディレクトリのJARパスを確認: {}", jar_path.display());
+        if jar_path.exists() {
+            eprintln!("✅ [PlantUML] resourcesサブディレクトリからJARファイルが見つかりました: {}", jar_path.display());
+            return Ok(jar_path);
+        }
+        
+        eprintln!("⚠️ [PlantUML] JARファイルが見つかりませんでした");
+        // リソースディレクトリ内のファイル一覧を確認（デバッグ用）
+        if let Ok(entries) = std::fs::read_dir(&resource_dir) {
+            eprintln!("📁 [PlantUML] リソースディレクトリの内容:");
+            for entry in entries.flatten() {
+                eprintln!("   - {}", entry.path().display());
+            }
+        }
+    } else {
+        eprintln!("⚠️ [PlantUML] リソースディレクトリの取得に失敗しました");
     }
     
     // 2. アプリのデータディレクトリを確認
     if let Ok(app_data_dir) = app_handle.path().app_data_dir() {
         let jar_path = app_data_dir.join("plantuml.jar");
         if jar_path.exists() {
+            eprintln!("✅ [PlantUML] アプリデータディレクトリからJARファイルが見つかりました: {}", jar_path.display());
             return Ok(jar_path);
         }
     }
@@ -68,20 +271,41 @@ fn get_plantuml_jar_path(app_handle: &AppHandle) -> Result<PathBuf> {
     
     for path in dev_paths {
         if path.exists() {
+            eprintln!("✅ [PlantUML] 開発環境からJARファイルが見つかりました: {}", path.display());
             return Ok(path);
         }
     }
     
-    // 4. 実行ファイルのディレクトリを確認
+    // 4. 実行ファイルのディレクトリを確認（macOSアプリバンドルの場合）
     if let Ok(exe_path) = std::env::current_exe() {
+        eprintln!("🔍 [PlantUML] 実行ファイルのパス: {}", exe_path.display());
         if let Some(exe_dir) = exe_path.parent() {
+            // macOSアプリバンドルの場合、Contents/Resources/を確認
+            #[cfg(target_os = "macos")]
+            {
+                // MissionAI.app/Contents/Resources/plantuml.jar
+                if let Some(contents_dir) = exe_dir.parent() {
+                    if let Some(app_dir) = contents_dir.parent() {
+                        let resources_dir = contents_dir.join("Resources");
+                        let jar_path = resources_dir.join("plantuml.jar");
+                        eprintln!("🔍 [PlantUML] macOSアプリバンドルのリソースパスを確認: {}", jar_path.display());
+                        if jar_path.exists() {
+                            eprintln!("✅ [PlantUML] macOSアプリバンドルからJARファイルが見つかりました: {}", jar_path.display());
+                            return Ok(jar_path);
+                        }
+                    }
+                }
+            }
+            
             let jar_path = exe_dir.join("plantuml.jar");
             if jar_path.exists() {
+                eprintln!("✅ [PlantUML] 実行ファイルディレクトリからJARファイルが見つかりました: {}", jar_path.display());
                 return Ok(jar_path);
             }
             // resourcesサブディレクトリも確認
             let jar_path = exe_dir.join("resources").join("plantuml.jar");
             if jar_path.exists() {
+                eprintln!("✅ [PlantUML] 実行ファイルディレクトリのresourcesサブディレクトリからJARファイルが見つかりました: {}", jar_path.display());
                 return Ok(jar_path);
             }
         }
