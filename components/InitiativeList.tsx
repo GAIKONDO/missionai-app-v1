@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Theme, FocusInitiative, OrgNodeData } from '@/lib/orgApi';
+import type { Company, CompanyFocusInitiative } from '@/lib/companiesApi';
 
 // ReactMarkdown用の共通コンポーネント設定（カード内の説明文用 - 一律小さな文字）
 const markdownComponents = {
@@ -62,8 +63,10 @@ const markdownComponents = {
 
 interface InitiativeListProps {
   theme: Theme | null;
-  initiatives: FocusInitiative[];
+  initiatives: FocusInitiative[] | CompanyFocusInitiative[];
   orgTree: OrgNodeData | null;
+  companies?: Company[];
+  viewMode?: 'organization' | 'company';
 }
 
 // 組織ツリーから組織名を取得する関数
@@ -85,7 +88,7 @@ function findOrganizationNameById(orgTree: OrgNodeData | null, organizationId: s
   return found?.name || organizationId;
 }
 
-export default function InitiativeList({ theme, initiatives, orgTree }: InitiativeListProps) {
+export default function InitiativeList({ theme, initiatives, orgTree, companies, viewMode = 'organization' }: InitiativeListProps) {
   const router = useRouter();
 
   // 選択されたテーマに紐づく注力施策を取得
@@ -93,16 +96,47 @@ export default function InitiativeList({ theme, initiatives, orgTree }: Initiati
     if (!theme) return [];
     
     return initiatives.filter(initiative => {
-      // themeIds配列に含まれているか、またはthemeIdが一致するか
-      return (
-        (initiative.themeIds && initiative.themeIds.includes(theme.id)) ||
-        initiative.themeId === theme.id
-      );
+      if (viewMode === 'organization') {
+        const orgInitiative = initiative as FocusInitiative;
+        // themeIds配列に含まれているか、またはthemeIdが一致するか
+        return (
+          (orgInitiative.themeIds && orgInitiative.themeIds.includes(theme.id)) ||
+          orgInitiative.themeId === theme.id
+        );
+      } else {
+        const companyInitiative = initiative as CompanyFocusInitiative;
+        // themeIds配列に含まれているかチェック
+        const themeIds = Array.isArray(companyInitiative.themeIds) 
+          ? companyInitiative.themeIds 
+          : (typeof companyInitiative.themeIds === 'string' 
+              ? JSON.parse(companyInitiative.themeIds) 
+              : []);
+        return themeIds.includes(theme.id);
+      }
     });
-  }, [theme, initiatives]);
+  }, [theme, initiatives, viewMode]);
 
-  const handleInitiativeClick = (initiative: FocusInitiative) => {
-    router.push(`/organization/initiative?organizationId=${initiative.organizationId}&initiativeId=${initiative.id}`);
+  const handleInitiativeClick = (initiative: FocusInitiative | CompanyFocusInitiative) => {
+    if (viewMode === 'organization') {
+      const orgInitiative = initiative as FocusInitiative;
+      router.push(`/organization/initiative?organizationId=${orgInitiative.organizationId}&initiativeId=${orgInitiative.id}`);
+    } else {
+      const companyInitiative = initiative as CompanyFocusInitiative;
+      router.push(`/companies/initiative?companyId=${companyInitiative.companyId}&initiativeId=${companyInitiative.id}`);
+    }
+  };
+
+  // 組織名または事業会社名を取得
+  const getEntityName = (initiative: FocusInitiative | CompanyFocusInitiative): string => {
+    if (viewMode === 'organization') {
+      const orgInitiative = initiative as FocusInitiative;
+      if (!orgInitiative.organizationId) return '不明な組織';
+      return findOrganizationNameById(orgTree, orgInitiative.organizationId);
+    } else {
+      const companyInitiative = initiative as CompanyFocusInitiative;
+      const company = companies?.find(c => c.id === companyInitiative.companyId);
+      return company?.name || companyInitiative.companyId;
+    }
   };
 
   if (!theme) {
@@ -212,7 +246,7 @@ export default function InitiativeList({ theme, initiatives, orgTree }: Initiati
                   whiteSpace: 'nowrap',
                   flexShrink: 0,
                 }}>
-                  {findOrganizationNameById(orgTree, initiative.organizationId)}
+                  {getEntityName(initiative)}
                 </span>
               </div>
               {initiative.description && (

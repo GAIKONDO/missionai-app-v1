@@ -256,17 +256,48 @@ export async function getAllEntities(): Promise<Entity[]> {
         return [];
       }
       
+      // デバッグ: companyIdを持つアイテムを事前に確認（全件チェック）
+      let companyIdFoundCount = 0;
+      const sampleWithCompanyId: any[] = [];
+      for (const item of result) { // 全件をチェック
+        const itemData = item.data || item;
+        // companyIdが存在し、nullでも空文字列でもない場合
+        if (itemData.companyId !== null && itemData.companyId !== undefined && itemData.companyId !== '' && itemData.companyId !== 'null') {
+          companyIdFoundCount++;
+          if (sampleWithCompanyId.length < 5) {
+            sampleWithCompanyId.push({
+              id: item.id || itemData.id,
+              name: itemData.name,
+              companyId: itemData.companyId,
+              companyIdType: typeof itemData.companyId,
+              rawCompanyId: itemData.companyId,
+            });
+          }
+        }
+      }
+      if (companyIdFoundCount > 0) {
+        console.log(`🔍 [getAllEntities] 全${result.length}件中、companyIdを持つエンティティ: ${companyIdFoundCount}件`, sampleWithCompanyId);
+      } else {
+        console.log(`⚠️ [getAllEntities] 全${result.length}件中、companyIdを持つエンティティが見つかりませんでした`);
+      }
+      
       const entities: Entity[] = result.map((item: any) => {
         // collection_getの結果は[{id: ..., data: ...}, ...]の形式または直接データ
         const itemData = item.data || item;
         const itemId = item.id || itemData.id;
+        
+        // companyIdを正しく処理（null, undefined, 空文字列をnullに統一）
+        let companyId: string | null = null;
+        if (itemData.companyId !== null && itemData.companyId !== undefined && itemData.companyId !== '' && itemData.companyId !== 'null') {
+          companyId = String(itemData.companyId);
+        }
         
         const entity: Entity = {
           id: itemId,
           name: itemData.name || '',
           type: itemData.type || 'other',
           organizationId: itemData.organizationId || null,
-          companyId: itemData.companyId || null,
+          companyId: companyId || undefined,
           aliases: [],
           metadata: {},
           createdAt: itemData.createdAt || new Date().toISOString(),
@@ -302,9 +333,24 @@ export async function getAllEntities(): Promise<Entity[]> {
         return entity;
       });
       
+      // デバッグ: companyIdを持つエンティティの数を確認
+      const entitiesWithCompanyId = entities.filter(e => e.companyId);
       console.log('✅ [getAllEntities] 取得成功:', entities.length, '件');
+      console.log('📊 [getAllEntities] companyIdを持つエンティティ:', entitiesWithCompanyId.length, '件');
       if (entities.length > 0) {
-        console.log('🔍 [getAllEntities] サンプルエンティティ:', entities[0]);
+        console.log('🔍 [getAllEntities] サンプルエンティティ:', {
+          id: entities[0].id,
+          name: entities[0].name,
+          companyId: entities[0].companyId,
+          organizationId: entities[0].organizationId,
+        });
+      }
+      if (entitiesWithCompanyId.length > 0) {
+        console.log('🔍 [getAllEntities] companyIdを持つエンティティのサンプル:', entitiesWithCompanyId.slice(0, 3).map(e => ({
+          id: e.id,
+          name: e.name,
+          companyId: e.companyId,
+        })));
       }
       return entities;
     }

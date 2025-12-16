@@ -18,6 +18,19 @@ import MonetizationDiagramUpdateModal from '@/components/MonetizationDiagramUpda
 import RelationDiagramUpdateModal from '@/components/RelationDiagramUpdateModal';
 import { generateUniqueId } from '@/lib/orgApi';
 
+// 開発環境でのみログを有効化するヘルパー関数（パフォーマンス最適化）
+const isDev = process.env.NODE_ENV === 'development';
+const devLog = (...args: any[]) => {
+  if (isDev) {
+    console.log(...args);
+  }
+};
+const devWarn = (...args: any[]) => {
+  if (isDev) {
+    console.warn(...args);
+  }
+};
+
 // アイコンコンポーネント
 const SaveIcon = ({ size = 18, color = 'currentColor' }: { size?: number; color?: string }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -447,16 +460,11 @@ ${formatInstruction}
       })(),
     };
     
-    console.log('💾 [handleManualSave] 保存開始:', {
+    devLog('💾 [handleManualSave] 保存開始:', {
       initiativeId,
-      assignee: dataToSave.assignee,
-      description: dataToSave.description,
       contentLength: dataToSave.content?.length || 0,
-      method: dataToSave.method,
-      means: dataToSave.means,
-      themeIds: dataToSave.themeIds,
-      topicIds: dataToSave.topicIds,
-      localTopicIds: localTopicIds,
+      themeIdsCount: Array.isArray(dataToSave.themeIds) ? dataToSave.themeIds.length : 0,
+      topicIdsCount: Array.isArray(dataToSave.topicIds) ? dataToSave.topicIds.length : 0,
     });
     
     try {
@@ -465,7 +473,7 @@ ${formatInstruction}
       // データを保存
       await saveFocusInitiative(dataToSave);
       
-      console.log('✅ [handleManualSave] 保存成功');
+      devLog('✅ [handleManualSave] 保存成功');
       
       // 保存したデータでinitiative状態を更新（再取得せずに保存したデータを使用）
       const updatedInitiative: FocusInitiative = {
@@ -494,14 +502,6 @@ ${formatInstruction}
       setLocalRelationDiagram(dataToSave.relationDiagram || '');
       setLocalThemeIds(Array.isArray(dataToSave.themeIds) ? dataToSave.themeIds : (dataToSave.themeId ? [dataToSave.themeId] : []));
       setLocalTopicIds(Array.isArray(dataToSave.topicIds) ? dataToSave.topicIds : []);
-      
-      console.log('✅ [handleManualSave] 状態更新完了:', {
-        assignee: dataToSave.assignee,
-        description: dataToSave.description,
-        contentLength: dataToSave.content?.length || 0,
-        themeIds: dataToSave.themeIds,
-        localThemeIds: Array.isArray(dataToSave.themeIds) ? dataToSave.themeIds : (dataToSave.themeId ? [dataToSave.themeId] : []),
-      });
       
       setSavingStatus('saved');
       setTimeout(() => setSavingStatus('idle'), 2000);
@@ -580,7 +580,7 @@ ${formatInstruction}
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
       
-      console.log('✅ [handleDownloadJson] JSONファイルのダウンロード成功:', initiative.id);
+      devLog('✅ [handleDownloadJson] JSONファイルのダウンロード成功:', initiative.id);
     } catch (error: any) {
       console.error('❌ [handleDownloadJson] JSONファイルのダウンロードに失敗しました:', error);
       alert(`JSONファイルのダウンロードに失敗しました: ${error?.message || '不明なエラー'}`);
@@ -630,7 +630,7 @@ ${formatInstruction}
               const companyData = await getCompanyById(companyId);
               setCompany(companyData);
             } catch (companyError: any) {
-              console.warn('⚠️ [ページ] 事業会社データの取得に失敗:', companyError);
+              devWarn('⚠️ [ページ] 事業会社データの取得に失敗:', companyError);
               setCompany(null);
             }
           }
@@ -649,7 +649,7 @@ ${formatInstruction}
           try {
             modalOrgTree = await getOrgTreeFromDb();
           } catch (treeError: any) {
-            console.warn('⚠️ [ページ] モーダル用組織ツリー取得に失敗:', treeError);
+            devWarn('⚠️ [ページ] モーダル用組織ツリー取得に失敗:', treeError);
           }
         }
         
@@ -672,7 +672,7 @@ ${formatInstruction}
               position: member.position || undefined,
             }));
             setOrgMembers(membersList);
-            console.log('✅ [ページ] メンバー取得完了:', { count: membersList.length, members: membersList });
+            devLog('✅ [ページ] メンバー取得完了:', { count: membersList.length });
           } catch (memberError: any) {
             console.warn('⚠️ [ページ] メンバー取得に失敗:', memberError);
             setOrgMembers([]);
@@ -696,7 +696,7 @@ ${formatInstruction}
                   }));
                   allMembersList.push(...orgMembersList);
                 } catch (err) {
-                  console.warn(`⚠️ [ページ] 組織 ${org.id} のメンバー取得に失敗:`, err);
+                  devWarn(`⚠️ [ページ] 組織 ${org.id} のメンバー取得に失敗:`, err);
                 }
               }
               
@@ -709,9 +709,9 @@ ${formatInstruction}
               });
               
               setAllOrgMembers(Array.from(uniqueMembers.values()));
-              console.log('✅ [ページ] 全組織メンバー取得完了:', { count: Array.from(uniqueMembers.values()).length });
+              devLog('✅ [ページ] 全組織メンバー取得完了:', { count: Array.from(uniqueMembers.values()).length });
             } catch (allMemberError: any) {
-              console.warn('⚠️ [ページ] 全組織メンバー取得に失敗:', allMemberError);
+              devWarn('⚠️ [ページ] 全組織メンバー取得に失敗:', allMemberError);
               setAllOrgMembers([]);
             }
           }
@@ -737,13 +737,13 @@ ${formatInstruction}
               const companyNotes = await getCompanyMeetingNotes(comp.id);
               allCompanyNotes.push(...companyNotes);
             } catch (error: any) {
-              console.warn(`⚠️ [ページ] 事業会社 ${comp.id} の議事録取得に失敗:`, error);
+              devWarn(`⚠️ [ページ] 事業会社 ${comp.id} の議事録取得に失敗:`, error);
             }
           }
           setAllCompanyMeetingNotes(allCompanyNotes);
-          console.log('✅ [ページ] 事業会社議事録取得完了:', { count: allCompanyNotes.length });
+          devLog('✅ [ページ] 事業会社議事録取得完了:', { count: allCompanyNotes.length });
         } catch (companiesError: any) {
-          console.warn('⚠️ [ページ] 事業会社データの取得に失敗:', companiesError);
+          devWarn('⚠️ [ページ] 事業会社データの取得に失敗:', companiesError);
           setAllCompanies([]);
           setAllCompanyMeetingNotes([]);
         }
@@ -758,13 +758,40 @@ ${formatInstruction}
         
         // companyIdが指定されている場合、取得したデータのcompanyIdと一致するか確認
         if (companyId) {
-          console.log('🔍 [ページ] companyId検証:', {
+          devLog('🔍 [ページ] companyId検証:', {
             urlCompanyId: companyId,
             dataCompanyId: initiativeData.companyId,
+            dataOrganizationId: initiativeData.organizationId,
+            hasCompanyId: !!initiativeData.companyId,
+            hasOrganizationId: !!initiativeData.organizationId,
+            companyIdType: typeof initiativeData.companyId,
+            organizationIdType: typeof initiativeData.organizationId,
+            companyIdIsNull: initiativeData.companyId === null,
+            organizationIdIsNull: initiativeData.organizationId === null,
             match: initiativeData.companyId === companyId,
+            fullInitiativeData: JSON.stringify(initiativeData, null, 2),
           });
-          if (initiativeData.companyId !== companyId) {
+          // 事業会社の注力施策の場合、companyIdが存在し、organizationIdがnullまたはundefinedである必要がある
+          // companyIdがundefined、null、または空文字列の場合はエラー
+          if (!initiativeData.companyId || initiativeData.companyId === '' || initiativeData.companyId !== companyId) {
+            console.error('❌ [ページ] companyId不一致:', {
+              urlCompanyId: companyId,
+              dataCompanyId: initiativeData.companyId,
+              dataCompanyIdType: typeof initiativeData.companyId,
+              dataCompanyIdIsNull: initiativeData.companyId === null,
+              dataCompanyIdIsUndefined: initiativeData.companyId === undefined,
+            });
             setError('注力施策が見つかりませんでした（事業会社IDが一致しません）');
+            setLoading(false);
+            return;
+          }
+          // organizationIdが存在する場合は、組織の注力施策として扱うべきなのでエラー
+          if (initiativeData.organizationId && initiativeData.organizationId !== null) {
+            console.error('❌ [ページ] organizationIdが設定されています:', {
+              organizationId: initiativeData.organizationId,
+              companyId: initiativeData.companyId,
+            });
+            setError('注力施策が見つかりませんでした（組織IDが設定されています）');
             setLoading(false);
             return;
           }
@@ -772,33 +799,32 @@ ${formatInstruction}
         
         // organizationIdが指定されている場合、取得したデータのorganizationIdと一致するか確認
         if (organizationId) {
-          console.log('🔍 [ページ] organizationId検証:', {
+          devLog('🔍 [ページ] organizationId検証:', {
             urlOrganizationId: organizationId,
             dataOrganizationId: initiativeData.organizationId,
+            dataCompanyId: initiativeData.companyId,
+            hasOrganizationId: !!initiativeData.organizationId,
+            hasCompanyId: !!initiativeData.companyId,
             match: initiativeData.organizationId === organizationId,
           });
-          if (initiativeData.organizationId !== organizationId) {
+          // 組織の注力施策の場合、organizationIdが存在し、companyIdがnullまたはundefinedである必要がある
+          if (!initiativeData.organizationId || initiativeData.organizationId !== organizationId) {
             setError('注力施策が見つかりませんでした（組織IDが一致しません）');
+            setLoading(false);
+            return;
+          }
+          // companyIdが存在する場合は、事業会社の注力施策として扱うべきなのでエラー
+          if (initiativeData.companyId) {
+            setError('注力施策が見つかりませんでした（事業会社IDが設定されています）');
             setLoading(false);
             return;
           }
         }
         
-        console.log('📖 [ページ] データ読み込み:', {
+        devLog('📖 [ページ] データ読み込み:', {
           id: initiativeData.id,
           title: initiativeData.title,
-          assignee: initiativeData.assignee,
-          description: initiativeData.description,
           contentLength: initiativeData.content?.length || 0,
-          method: initiativeData.method,
-          means: initiativeData.means,
-          objective: initiativeData.objective,
-          considerationPeriod: initiativeData.considerationPeriod,
-          executionPeriod: initiativeData.executionPeriod,
-          monetizationPeriod: initiativeData.monetizationPeriod,
-          monetizationDiagram: initiativeData.monetizationDiagram,
-          relationDiagram: initiativeData.relationDiagram,
-          fullData: JSON.stringify(initiativeData, null, 2),
         });
         
         // monetizationDiagramIdが存在しない場合は生成
@@ -811,7 +837,7 @@ ${formatInstruction}
               monetizationDiagramId: initiativeData.monetizationDiagramId,
             });
           } catch (saveError: any) {
-            console.warn('⚠️ [ページ] monetizationDiagramId保存エラー（続行します）:', saveError);
+            devWarn('⚠️ [ページ] monetizationDiagramId保存エラー（続行します）:', saveError);
           }
         }
         
@@ -825,15 +851,13 @@ ${formatInstruction}
               relationDiagramId: initiativeData.relationDiagramId,
             });
           } catch (saveError: any) {
-            console.warn('⚠️ [ページ] relationDiagramId保存エラー（続行します）:', saveError);
+            devWarn('⚠️ [ページ] relationDiagramId保存エラー（続行します）:', saveError);
           }
         }
         
-        console.log('✅ [ページ] setInitiative呼び出し前:', {
+        devLog('✅ [ページ] setInitiative呼び出し前:', {
           initiativeId: initiativeData.id,
           title: initiativeData.title,
-          organizationId: initiativeData.organizationId,
-          companyId: initiativeData.companyId,
         });
         setInitiative(initiativeData);
         console.log('✅ [ページ] setInitiative呼び出し後');
@@ -910,40 +934,16 @@ ${formatInstruction}
         const topicsData = await getAllTopicsBatch();
         setTopics(topicsData);
         
-        console.log('📖 [ページ] 取得したトピック:', {
+        devLog('📖 [ページ] 取得したトピック:', {
           count: topicsData.length,
-          // 紐づけられているトピックIDが存在するか確認
-          topicIdsFromInitiative: Array.isArray(initiativeData.topicIds) ? initiativeData.topicIds : [],
-          matchingTopics: Array.isArray(initiativeData.topicIds) 
-            ? initiativeData.topicIds.map(topicId => {
-                const topic = topicsData.find(t => t.id === topicId);
-                return {
-                  topicId,
-                  found: !!topic,
-                  title: topic?.title,
-                  organizationId: topic?.organizationId,
-                  isOtherOrg: topic?.organizationId !== organizationId,
-                };
-              })
-            : [],
+          topicIdsFromInitiativeCount: Array.isArray(initiativeData.topicIds) ? initiativeData.topicIds.length : 0,
         });
         
         // topicIdsを設定
         const topicIdsValue = Array.isArray(initiativeData.topicIds) ? initiativeData.topicIds : [];
         setLocalTopicIds(topicIdsValue);
         
-        console.log('📖 [ページ] ローカル状態設定完了:', {
-          localAssignee: assigneeValue,
-          localDescription: descriptionValue,
-          localMethod: methodValue,
-          localMeans: meansValue,
-          localObjective: objectiveValue,
-          localConsiderationPeriod: considerationPeriodValue,
-          localExecutionPeriod: executionPeriodValue,
-          localMonetizationPeriod: monetizationPeriodValue,
-          localMonetizationDiagram: monetizationDiagramValue,
-          localRelationDiagram: relationDiagramValue,
-        });
+        devLog('📖 [ページ] ローカル状態設定完了');
         
         setError(null);
         
@@ -4017,7 +4017,7 @@ graph LR
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              console.log('🖱️ [モーダル] トピックカードがクリックされました:', {
+                              devLog('🖱️ [モーダル] トピックカードがクリックされました:', {
                                 topicId: topic.id,
                                 topicTitle: topic.title,
                                 currentLocalTopicIds: localTopicIds,
@@ -4025,20 +4025,16 @@ graph LR
                               });
                               if (isSelected) {
                                 const newTopicIds = localTopicIds.filter(id => id !== topic.id);
-                                console.log('🗑️ [モーダル] トピックを削除:', {
+                                devLog('🗑️ [モーダル] トピックを削除:', {
                                   topicId: topic.id,
                                   topicTitle: topic.title,
-                                  before: localTopicIds,
-                                  after: newTopicIds,
                                 });
                                 setLocalTopicIds(newTopicIds);
                               } else {
                                 const newTopicIds = [...localTopicIds, topic.id];
-                                console.log('➕ [モーダル] トピックを追加:', {
+                                devLog('➕ [モーダル] トピックを追加:', {
                                   topicId: topic.id,
                                   topicTitle: topic.title,
-                                  before: localTopicIds,
-                                  after: newTopicIds,
                                 });
                                 setLocalTopicIds(newTopicIds);
                               }
@@ -4149,26 +4145,25 @@ graph LR
                 onClick={async () => {
                   try {
                     setSavingStatus('saving');
-                    console.log('💾 [モーダル保存] 保存開始:', {
+                    devLog('💾 [モーダル保存] 保存開始:', {
                       localTopicIds,
                       localTopicIdsLength: localTopicIds.length,
                     });
                     await handleManualSave();
-                    console.log('✅ [モーダル保存] 保存完了');
+                    devLog('✅ [モーダル保存] 保存完了');
                     
                     // 保存成功後、データを再読み込み
                     try {
                       const updatedInitiative = await getFocusInitiativeById(initiativeId);
                       if (updatedInitiative) {
-                        console.log('📖 [モーダル保存] 再読み込み完了:', {
-                          topicIds: updatedInitiative.topicIds,
+                        devLog('📖 [モーダル保存] 再読み込み完了:', {
                           topicIdsLength: updatedInitiative.topicIds?.length || 0,
                         });
                         setInitiative(updatedInitiative);
                         setLocalTopicIds(Array.isArray(updatedInitiative.topicIds) ? updatedInitiative.topicIds : []);
                       }
                     } catch (reloadError) {
-                      console.warn('⚠️ [モーダル保存] 再読み込みに失敗:', reloadError);
+                      devWarn('⚠️ [モーダル保存] 再読み込みに失敗:', reloadError);
                     }
                     
                     // モーダルを閉じる
@@ -4744,12 +4739,12 @@ graph LR
                       const selectedTopics = linkedTopics.filter(topic => selectedTopicIdsForAI.includes(topic.id));
                       const summary = await generateAISummary(aiGenerationInput, selectedTopics);
                       
-                      console.log('✅ [AI生成] 要約生成完了:', summary);
+                      devLog('✅ [AI生成] 要約生成完了:', summary?.substring(0, 100) + '...');
                       
                       // 既存の内容を保存
                       const currentContent = aiGenerationTarget === 'description' ? localDescription : localObjective;
-                      console.log('📝 [AI生成] 既存の内容:', currentContent);
-                      console.log('🎯 [AI生成] ターゲット:', aiGenerationTarget);
+                      devLog('📝 [AI生成] 既存の内容長:', currentContent?.length || 0);
+                      devLog('🎯 [AI生成] ターゲット:', aiGenerationTarget);
                       
                       // 状態を設定（比較ビューを表示するため）
                       setOriginalContent(currentContent || '');

@@ -27,7 +27,7 @@ async function getInitiativeJsonPath(initiativeId: string): Promise<string> {
 /**
  * JSONファイルに保存
  */
-async function saveInitiativeToJson(initiative: FocusInitiative): Promise<void> {
+export async function saveInitiativeToJson(initiative: FocusInitiative): Promise<void> {
   try {
     const filePath = await getInitiativeJsonPath(initiative.id);
     
@@ -795,6 +795,7 @@ export interface Theme {
   title: string;
   description?: string;
   initiativeIds?: string[]; // 関連する注力施策のIDリスト
+  position?: number; // 表示順序
   createdAt?: any;
   updatedAt?: any;
 }
@@ -871,6 +872,7 @@ export function generateUniqueMeetingNoteId(): string {
 export interface MeetingNote {
   id: string;
   organizationId: string;
+  companyId?: string; // 事業会社ID（事業会社の議事録の場合）
   title: string;
   description?: string;
   content?: string; // 詳細コンテンツ（マークダウン）
@@ -1095,8 +1097,20 @@ export async function getFocusInitiativeById(initiativeId: string): Promise<Focu
     // まずJSONファイルから読み込みを試みる
     const jsonData = await loadInitiativeFromJson(initiativeId);
     if (jsonData) {
-      console.log('✅ [getFocusInitiativeById] JSONファイルから読み込み成功');
-      return jsonData;
+      console.log('✅ [getFocusInitiativeById] JSONファイルから読み込み成功:', {
+        hasCompanyId: !!jsonData.companyId,
+        hasOrganizationId: !!jsonData.organizationId,
+        companyId: jsonData.companyId,
+        organizationId: jsonData.organizationId,
+      });
+      // JSONファイルにcompanyIdまたはorganizationIdが含まれていない場合は、データベースから再取得
+      // （古いJSONファイルの可能性があるため）
+      if (!jsonData.companyId && !jsonData.organizationId) {
+        console.warn('⚠️ [getFocusInitiativeById] JSONファイルにcompanyId/organizationIdが含まれていません。データベースから再取得します。');
+        // データベースから再取得するために続行
+      } else {
+        return jsonData;
+      }
     }
     
     // JSONファイルがない場合、データベースから読み込みを試みる
@@ -1112,8 +1126,20 @@ export async function getFocusInitiativeById(initiativeId: string): Promise<Focu
       console.log('📖 [getFocusInitiativeById] doc_get結果:', result);
       console.log('📖 [getFocusInitiativeById] doc_get結果の型:', typeof result, 'keys:', result ? Object.keys(result) : []);
       
+      // result.existsをチェック
+      if (result && (result.exists === false || (result.exists === undefined && !result.data))) {
+        console.warn('📖 [getFocusInitiativeById] ドキュメントが存在しません:', { initiativeId, exists: result.exists });
+        return null;
+      }
+      
       // 結果の構造を確認（result.data または result 自体がデータ）
       const data = (result && result.data) ? result.data : result;
+      
+      // dataが存在しない場合はnullを返す
+      if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) {
+        console.warn('📖 [getFocusInitiativeById] データが存在しません:', { initiativeId, result });
+        return null;
+      }
       console.log('📖 [getFocusInitiativeById] データ構造確認:', {
         hasData: !!data,
         dataKeys: data ? Object.keys(data) : [],
@@ -1145,10 +1171,32 @@ export async function getFocusInitiativeById(initiativeId: string): Promise<Focu
       
       if (data && (data.id || data.title || data.organizationId || data.companyId)) {
         // データをFocusInitiative形式に変換
+        // companyIdとorganizationIdの処理を改善
+        // nullは有効な値として扱う（事業会社の注力施策の場合、organizationIdはnull）
+        // undefinedや空文字列の場合のみundefinedに変換
+        const processedOrganizationId = (data.organizationId !== undefined && data.organizationId !== '') 
+          ? data.organizationId 
+          : undefined;
+        const processedCompanyId = (data.companyId !== undefined && data.companyId !== '') 
+          ? data.companyId 
+          : undefined;
+        
+        console.log('📖 [getFocusInitiativeById] ID処理:', {
+          rawOrganizationId: data.organizationId,
+          rawCompanyId: data.companyId,
+          rawOrganizationIdType: typeof data.organizationId,
+          rawCompanyIdType: typeof data.companyId,
+          rawOrganizationIdIsNull: data.organizationId === null,
+          rawCompanyIdIsNull: data.companyId === null,
+          processedOrganizationId,
+          processedCompanyId,
+          allDataKeys: Object.keys(data),
+        });
+        
         const initiative: FocusInitiative = {
           id: data.id || initiativeId,
-          organizationId: data.organizationId !== null && data.organizationId !== undefined ? data.organizationId : undefined,
-          companyId: data.companyId !== null && data.companyId !== undefined ? data.companyId : undefined,
+          organizationId: processedOrganizationId,
+          companyId: processedCompanyId,
           title: data.title || '',
           description: data.description || '',
           content: data.content || '',
@@ -1563,6 +1611,7 @@ export async function saveFocusInitiative(initiative: Partial<FocusInitiative>):
       const fullInitiative: FocusInitiative = {
         id: initiativeId,
         organizationId: data.organizationId,
+        companyId: data.companyId,
         title: data.title,
         description: data.description,
         content: data.content,
@@ -1730,12 +1779,13 @@ export async function getAllMeetingNotes(): Promise<MeetingNote[]> {
         return {
           id: data.id || item.id,
           organizationId: data.organizationId,
+          companyId: data.companyId || undefined, // 事業会社IDも含める
           title: data.title || '',
           description: data.description || '',
           content: data.content || '',
           createdAt: data.createdAt,
           updatedAt: data.updatedAt,
-        } as MeetingNote;
+        } as MeetingNote & { companyId?: string };
       });
       
       // createdAtでソート（新しい順）
@@ -2039,6 +2089,7 @@ export async function getMeetingNoteById(noteId: string): Promise<MeetingNote | 
         const note: MeetingNote = {
           id: data.id || noteId,
           organizationId: data.organizationId || '',
+          companyId: data.companyId || undefined, // 事業会社IDも含める
           title: data.title || '',
           description: data.description || '',
           content: data.content || '',
@@ -2051,6 +2102,7 @@ export async function getMeetingNoteById(noteId: string): Promise<MeetingNote | 
           title: note.title,
           description: note.description,
           contentLength: note.content?.length || 0,
+          companyId: note.companyId,
         });
         return note;
       }
@@ -2324,9 +2376,8 @@ export async function getThemes(): Promise<Theme[]> {
       const { callTauriCommand } = await import('./localFirebase');
       
       try {
-        const result = await callTauriCommand('collection_get', {
-          collectionName: 'themes',
-        });
+        // SQLiteから直接取得するコマンドを使用
+        const result = await callTauriCommand('get_themes_cmd', {});
         
         if (!result || !Array.isArray(result)) {
           console.log('⚠️ [getThemes] 結果が配列ではありません:', result);
@@ -2334,35 +2385,34 @@ export async function getThemes(): Promise<Theme[]> {
         }
         
         const themes: Theme[] = result.map((item: any) => {
-          const themeData = item.data || item;
-          const themeId = item.id || themeData.id;
-          
-          // initiativeIdsをJSON文字列から配列に変換
+          // initiativeIdsを配列に変換
           let initiativeIds: string[] = [];
-          if (themeData.initiativeIds) {
-            if (typeof themeData.initiativeIds === 'string') {
+          if (item.initiativeIds) {
+            if (Array.isArray(item.initiativeIds)) {
+              initiativeIds = item.initiativeIds;
+            } else if (typeof item.initiativeIds === 'string') {
               try {
-                initiativeIds = JSON.parse(themeData.initiativeIds);
+                initiativeIds = JSON.parse(item.initiativeIds);
               } catch (e) {
                 console.warn('⚠️ [getThemes] initiativeIdsのパースエラー:', e);
                 initiativeIds = [];
               }
-            } else if (Array.isArray(themeData.initiativeIds)) {
-              initiativeIds = themeData.initiativeIds;
             }
           }
           
           return {
-            id: themeId,
-            title: themeData.title || '',
-            description: themeData.description || '',
+            id: item.id,
+            title: item.title || '',
+            description: item.description || '',
             initiativeIds: initiativeIds,
-            createdAt: themeData.createdAt,
-            updatedAt: themeData.updatedAt,
+            position: item.position ?? null,
+            createdAt: item.createdAt || null,
+            updatedAt: item.updatedAt || null,
           };
         }).filter((theme: Theme) => theme.id && theme.title);
         
-        console.log('✅ [getThemes] 取得成功（Tauriコマンド経由）:', themes.length, '件');
+        console.log('✅ [getThemes] 取得成功（SQLiteから直接取得）:', themes.length, '件');
+        console.log('📊 [getThemes] position一覧:', themes.map(t => `${t.id}:${t.position ?? 'null'}`).join(', '));
         return themes;
       } catch (error: any) {
         console.error('❌ [getThemes] Tauriコマンドエラー:', error);
@@ -2551,6 +2601,37 @@ export async function deleteTheme(themeId: string): Promise<void> {
 }
 
 /**
+ * 複数のテーマのpositionを一括更新
+ */
+export async function updateThemePositions(
+  updates: Array<{ themeId: string; position: number }>
+): Promise<void> {
+  try {
+    console.log('🔄 [updateThemePositions] 開始:', updates.length, '件');
+    
+    if (typeof window !== 'undefined' && '__TAURI__' in window) {
+      const { callTauriCommand } = await import('./localFirebase');
+      
+      // Tauriコマンド経由で更新
+      // updatesをタプルの配列に変換
+      const updatesArray: Array<[string, number]> = updates.map(u => [u.themeId, u.position]);
+      await callTauriCommand('update_theme_positions_cmd', {
+        updates: updatesArray,
+      });
+      
+      console.log('✅ [updateThemePositions] 更新完了');
+    } else {
+      // フォールバック: Rust API経由
+      const { apiPost } = await import('./apiClient');
+      await apiPost('/api/themes/positions', { updates });
+    }
+  } catch (error: any) {
+    console.error('❌ [updateThemePositions] 更新に失敗しました:', error);
+    throw error;
+  }
+}
+
+/**
  * すべての個別トピックを取得
  * すべての議事録から個別トピックを抽出して返す
  */
@@ -2562,6 +2643,7 @@ export interface TopicInfo {
   meetingNoteTitle: string;
   itemId: string;
   organizationId: string;
+  companyId?: string; // 事業会社ID（事業会社の議事録の場合）
   topicDate?: string | null; // トピックの日時（isAllPeriodsがtrueの場合は無視される）
   isAllPeriods?: boolean; // 全期間に反映するかどうか（trueの場合は日付に関係なく全期間に表示）
   // メタデータ
@@ -2629,6 +2711,7 @@ export async function getTopicsByMeetingNote(meetingNoteId: string): Promise<Top
               meetingNoteTitle: meetingNote.title,
               itemId: item.id,
               organizationId: meetingNote.organizationId,
+              companyId: (meetingNote as any).companyId || undefined, // 事業会社IDも含める
               topicDate: topicDate,
               isAllPeriods: isAllPeriods,
             });
@@ -2724,6 +2807,7 @@ export async function getAllTopics(organizationId: string): Promise<TopicInfo[]>
                 meetingNoteTitle: note.title,
                 itemId: item.id,
                 organizationId: note.organizationId,
+                companyId: (note as any).companyId || undefined, // 事業会社IDも含める
                 topicDate: topicDate,
                 isAllPeriods: isAllPeriods,
                 semanticCategory: topic.semanticCategory as TopicInfo['semanticCategory'],
@@ -2829,6 +2913,7 @@ export async function getAllTopicsBatch(): Promise<TopicInfo[]> {
                 meetingNoteTitle: note.title,
                 itemId: item.id,
                 organizationId: note.organizationId,
+                companyId: (note as any).companyId || undefined, // 事業会社IDも含める
                 topicDate: topicDate,
                 isAllPeriods: isAllPeriods,
                 semanticCategory: topic.semanticCategory as TopicInfo['semanticCategory'],

@@ -4,7 +4,9 @@ import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { getMeetingNoteById, saveMeetingNote, getOrgTreeFromDb, generateUniqueId } from '@/lib/orgApi';
+import { saveCompanyMeetingNote } from '@/lib/companiesApi';
 import type { MeetingNote, OrgNodeData } from '@/lib/orgApi';
+import type { CompanyMeetingNote } from '@/lib/companiesApi';
 import type { Topic, TopicSemanticCategory, TopicImportance } from '@/types/topicMetadata';
 import { saveTopicEmbeddingAsync, findSimilarTopics } from '@/lib/topicEmbeddings';
 import { generateTopicMetadata, extractEntities, extractRelations } from '@/lib/topicMetadataGeneration';
@@ -18,6 +20,19 @@ import { getRelationsByTopicId, createRelation, deleteRelation } from '@/lib/rel
 import { getEntityById, createEntity, getEntitiesByOrganizationId, getEntitiesByCompanyId, deleteEntity } from '@/lib/entityApi';
 import { callTauriCommand } from '@/lib/localFirebase';
 import { deleteTopicFromChroma } from '@/lib/chromaSync';
+
+// 開発環境でのみログを有効化するヘルパー関数（パフォーマンス最適化）
+const isDev = process.env.NODE_ENV === 'development';
+const devLog = (...args: any[]) => {
+  if (isDev) {
+    console.log(...args);
+  }
+};
+const devWarn = (...args: any[]) => {
+  if (isDev) {
+    console.warn(...args);
+  }
+};
 
 // ReactMarkdown用の共通コンポーネント設定（リンクを新しいタブで開くように）
 const markdownComponents = {
@@ -525,7 +540,7 @@ function MeetingNoteDetailPageContent() {
               relationEntities.push(entity);
             }
           } catch (error) {
-            console.warn(`⚠️ エンティティ取得エラー (${entityId}):`, error);
+            devWarn(`⚠️ エンティティ取得エラー (${entityId}):`, error);
           }
         }
         
@@ -555,13 +570,21 @@ function MeetingNoteDetailPageContent() {
       // 現在のコンテンツをJSON文字列に変換
       const contentJson = JSON.stringify(monthContents, null, 2);
       
-      // データを保存
-      await saveMeetingNote({
-        ...meetingNote,
-        content: contentJson,
-      });
+      // データを保存（companyIdが存在する場合は事業会社用の関数を使用）
+      if (companyId) {
+        await saveCompanyMeetingNote({
+          ...meetingNote as Partial<CompanyMeetingNote>,
+          companyId,
+          content: contentJson,
+        });
+      } else {
+        await saveMeetingNote({
+          ...meetingNote,
+          content: contentJson,
+        });
+      }
       
-      console.log('✅ [handleManualSave] 保存成功');
+      devLog('✅ [handleManualSave] 保存成功');
       
       setSavingStatus('saved');
       setHasUnsavedChanges(false); // 保存完了後、未保存フラグをリセット
@@ -571,7 +594,7 @@ function MeetingNoteDetailPageContent() {
       alert(`保存に失敗しました: ${error?.message || '不明なエラー'}`);
       setSavingStatus('idle');
     }
-  }, [meetingNote, monthContents]);
+  }, [meetingNote, monthContents, companyId]);
 
   // JSONダウンロード
   const handleDownloadJson = useCallback(async () => {
@@ -596,7 +619,7 @@ function MeetingNoteDetailPageContent() {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
       
-      console.log('✅ [handleDownloadJson] JSONファイルのダウンロード成功');
+      devLog('✅ [handleDownloadJson] JSONファイルのダウンロード成功');
       
       // 少し遅延を入れてから状態をリセット（視覚的なフィードバックのため）
       setTimeout(() => {
@@ -1211,7 +1234,7 @@ function MeetingNoteDetailPageContent() {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
       
-      console.log('✅ [handleDownloadHtml] HTMLファイルのダウンロード成功');
+      devLog('✅ [handleDownloadHtml] HTMLファイルのダウンロード成功');
       
       // 少し遅延を入れてから状態をリセット（視覚的なフィードバックのため）
       setTimeout(() => {
@@ -1646,11 +1669,19 @@ ${formatInstruction}
     if (meetingNote && updatedContents) {
       try {
         const contentJson = JSON.stringify(updatedContents, null, 2);
-        await saveMeetingNote({
-          ...meetingNote,
-          content: contentJson,
-        });
-        console.log('✅ [handleSaveEdit] 保存成功');
+        if (companyId) {
+          await saveCompanyMeetingNote({
+            ...meetingNote as Partial<CompanyMeetingNote>,
+            companyId,
+            content: contentJson,
+          });
+        } else {
+          await saveMeetingNote({
+            ...meetingNote,
+            content: contentJson,
+          });
+        }
+        devLog('✅ [handleSaveEdit] 保存成功');
         setHasUnsavedChanges(false); // 保存完了後、未保存フラグをリセット
         setSavingStatus('saved'); // 保存完了ステータスを設定
         setTimeout(() => {
@@ -1679,14 +1710,14 @@ ${formatInstruction}
   // 議事録アイテムの削除実行
   const confirmDeleteItem = async () => {
     if (!deleteTargetTab || !deleteTargetItemId) {
-      console.warn('⚠️ [confirmDeleteItem] 削除対象が設定されていません');
+      devWarn('⚠️ [confirmDeleteItem] 削除対象が設定されていません');
       return;
     }
     
     const tab = deleteTargetTab;
     const itemId = deleteTargetItemId;
     
-    console.log('✅ [confirmDeleteItem] 削除実行開始:', { tab, itemId });
+    devLog('✅ [confirmDeleteItem] 削除実行開始:', { tab, itemId });
     
     // モーダルを閉じる
     setShowDeleteConfirmModal(false);
@@ -1695,7 +1726,7 @@ ${formatInstruction}
     
     let updatedContents: typeof monthContents = monthContents;
     setMonthContents(prev => {
-      console.log('📝 [confirmDeleteItem] 状態更新前:', { 
+      devLog('📝 [confirmDeleteItem] 状態更新前:', { 
         prevItems: (prev[tab] as MonthContent | undefined)?.items?.length || 0,
         itemId 
       });
@@ -1708,13 +1739,13 @@ ${formatInstruction}
           items: tabData.items.filter(i => i.id !== itemId),
         };
         const afterCount = (updated[tab] as MonthContent).items.length;
-        console.log('📝 [confirmDeleteItem] 状態更新後:', { 
+        devLog('📝 [confirmDeleteItem] 状態更新後:', { 
           beforeCount, 
           afterCount,
           deleted: beforeCount > afterCount
         });
       } else {
-        console.warn('⚠️ [confirmDeleteItem] tabDataが見つかりません:', { tab });
+        devWarn('⚠️ [confirmDeleteItem] tabDataが見つかりません:', { tab });
       }
       updatedContents = updated;
       return updated;
@@ -1722,13 +1753,13 @@ ${formatInstruction}
     
     // 削除されたアイテムが現在選択されている場合は、summaryに戻す
     if (activeSection === itemId && currentSummaryId) {
-      console.log('🔄 [confirmDeleteItem] activeSectionをsummaryに変更');
+      devLog('🔄 [confirmDeleteItem] activeSectionをsummaryに変更');
       setActiveSection(currentSummaryId);
     }
     
     // 編集モードをキャンセル
     if (editingSection === itemId || editingSection === `${itemId}-title`) {
-      console.log('🔄 [confirmDeleteItem] 編集モードをキャンセル');
+        devLog('🔄 [confirmDeleteItem] 編集モードをキャンセル');
       handleCancelEdit();
     }
     
@@ -1737,20 +1768,28 @@ ${formatInstruction}
     // JSONファイルに自動保存
     if (meetingNote && updatedContents) {
       try {
-        console.log('💾 [confirmDeleteItem] 保存開始...');
+        devLog('💾 [confirmDeleteItem] 保存開始...');
         const contentJson = JSON.stringify(updatedContents, null, 2);
-        await saveMeetingNote({
-          ...meetingNote,
-          content: contentJson,
-        });
-        console.log('✅ [confirmDeleteItem] 自動保存成功');
+        if (companyId) {
+          await saveCompanyMeetingNote({
+            ...meetingNote as Partial<CompanyMeetingNote>,
+            companyId,
+            content: contentJson,
+          });
+        } else {
+          await saveMeetingNote({
+            ...meetingNote,
+            content: contentJson,
+          });
+        }
+        devLog('✅ [confirmDeleteItem] 自動保存成功');
         setHasUnsavedChanges(false); // 保存完了後、未保存フラグをリセット
       } catch (error: any) {
         console.error('❌ [confirmDeleteItem] 自動保存に失敗しました:', error);
         // エラーは警告のみで続行（未保存フラグはtrueのまま）
       }
     } else {
-      console.warn('⚠️ [confirmDeleteItem] 保存スキップ:', { 
+      devWarn('⚠️ [confirmDeleteItem] 保存スキップ:', { 
         hasMeetingNote: !!meetingNote, 
         hasUpdatedContents: updatedContents !== undefined 
       });
@@ -1759,7 +1798,7 @@ ${formatInstruction}
   
   // 削除確認モーダルをキャンセル
   const cancelDeleteItem = () => {
-    console.log('🗑️ [cancelDeleteItem] 削除をキャンセルしました');
+    devLog('🗑️ [cancelDeleteItem] 削除をキャンセルしました');
     setShowDeleteConfirmModal(false);
     setDeleteTargetTab(null);
     setDeleteTargetItemId(null);
@@ -1785,7 +1824,7 @@ ${formatInstruction}
       } catch (error: any) {
         lastError = error;
         if (error?.message?.includes('database is locked') && i < maxRetries - 1) {
-          console.log(`⚠️ [retryDbOperation] データベースロック検出、${delayMs}ms後にリトライ... (${i + 1}/${maxRetries})`);
+          devLog(`⚠️ [retryDbOperation] データベースロック検出、${delayMs}ms後にリトライ... (${i + 1}/${maxRetries})`);
           await new Promise(resolve => setTimeout(resolve, delayMs * (i + 1)));
           continue;
         }
@@ -1798,14 +1837,14 @@ ${formatInstruction}
   // トピック削除実行
   const confirmDeleteTopic = async () => {
     if (!deleteTargetTopicItemId || !deleteTargetTopicId) {
-      console.warn('⚠️ [confirmDeleteTopic] 削除対象が設定されていません');
+      devWarn('⚠️ [confirmDeleteTopic] 削除対象が設定されていません');
       return;
     }
     
     const itemId = deleteTargetTopicItemId;
     const topicId = deleteTargetTopicId;
     
-    console.log('✅ [confirmDeleteTopic] 削除実行開始:', { itemId, topicId });
+    devLog('✅ [confirmDeleteTopic] 削除実行開始:', { itemId, topicId });
     
     // モーダルを閉じる
     setShowDeleteTopicModal(false);
@@ -1843,19 +1882,19 @@ ${formatInstruction}
         const topicEmbeddingId = `${meetingId}-topic-${topicId}`;
         try {
           const relations = await retryDbOperation(() => getRelationsByTopicId(topicEmbeddingId));
-          console.log(`📊 [confirmDeleteTopic] 関連リレーション: ${relations.length}件`);
+          devLog(`📊 [confirmDeleteTopic] 関連リレーション: ${relations.length}件`);
           
           // リレーションを順次削除
           for (const relation of relations) {
             try {
               await retryDbOperation(() => deleteRelation(relation.id));
-              console.log(`✅ [confirmDeleteTopic] リレーション削除: ${relation.id}`);
+              devLog(`✅ [confirmDeleteTopic] リレーション削除: ${relation.id}`);
             } catch (error: any) {
-              console.warn(`⚠️ [confirmDeleteTopic] リレーション削除エラー（続行します）: ${relation.id}`, error);
+              devWarn(`⚠️ [confirmDeleteTopic] リレーション削除エラー（続行します）: ${relation.id}`, error);
             }
           }
         } catch (error: any) {
-          console.warn('⚠️ [confirmDeleteTopic] リレーション取得エラー（続行します）:', error);
+          devWarn('⚠️ [confirmDeleteTopic] リレーション取得エラー（続行します）:', error);
         }
         
         // 2. トピックを削除（topicsテーブルから）
@@ -1866,27 +1905,40 @@ ${formatInstruction}
             collectionName: 'topics',
             docId: topicEmbeddingId,
           }));
-          console.log(`✅ [confirmDeleteTopic] トピック削除: ${topicEmbeddingId}`);
+          devLog(`✅ [confirmDeleteTopic] トピック削除: ${topicEmbeddingId}`);
         } catch (error: any) {
-          console.warn('⚠️ [confirmDeleteTopic] トピック削除エラー（続行します）:', error);
+          devWarn('⚠️ [confirmDeleteTopic] トピック削除エラー（続行します）:', error);
         }
         
         // 3. ChromaDBからも削除（非同期、エラーは無視）
-        try {
-          await deleteTopicFromChroma(topicId, meetingId, organizationId);
-          console.log(`✅ [confirmDeleteTopic] ChromaDBトピックエンベディング削除: ${topicId}`);
-        } catch (error: any) {
-          console.warn('⚠️ [confirmDeleteTopic] ChromaDBトピックエンベディング削除エラー（続行します）:', error);
+        // organizationIdが存在する場合のみ実行（事業会社の場合はスキップ）
+        if (organizationId) {
+          try {
+            await deleteTopicFromChroma(topicId, meetingId, organizationId);
+            devLog(`✅ [confirmDeleteTopic] ChromaDBトピックエンベディング削除: ${topicId}`);
+          } catch (error: any) {
+            devWarn('⚠️ [confirmDeleteTopic] ChromaDBトピックエンベディング削除エラー（続行します）:', error);
+          }
+        } else {
+          devLog('⚠️ [confirmDeleteTopic] organizationIdが存在しないため、ChromaDB削除をスキップ');
         }
         
         // 4. 議事録を保存（最後に実行）
         const contentJson = JSON.stringify(updated, null, 2);
-        await retryDbOperation(() => saveMeetingNote({
-          ...meetingNote,
-          content: contentJson,
-        }));
+        if (companyId) {
+          await retryDbOperation(() => saveCompanyMeetingNote({
+            ...meetingNote as Partial<CompanyMeetingNote>,
+            companyId,
+            content: contentJson,
+          }));
+        } else {
+          await retryDbOperation(() => saveMeetingNote({
+            ...meetingNote,
+            content: contentJson,
+          }));
+        }
         
-        console.log('✅ [confirmDeleteTopic] 自動保存成功');
+        devLog('✅ [confirmDeleteTopic] 自動保存成功');
         setHasUnsavedChanges(false);
         setSavingStatus('saved');
         setTimeout(() => setSavingStatus('idle'), 2000);
@@ -1918,7 +1970,7 @@ ${formatInstruction}
     
     // 既に追加処理中の場合は何もしない
     if (isAddingItemRef.current) {
-      console.log('追加処理中のためスキップ');
+      devLog('追加処理中のためスキップ');
       return;
     }
     
@@ -1957,14 +2009,22 @@ ${formatInstruction}
     setEditingItemTitle('新しい議事録');
     
     // JSONファイルに自動保存
-    if (meetingNote && updatedContents) {
+    if (meetingNote && updatedContents!) {
       try {
-        const contentJson = JSON.stringify(updatedContents, null, 2);
-        await saveMeetingNote({
-          ...meetingNote,
-          content: contentJson,
-        });
-        console.log('✅ [handleAddItem] 自動保存成功');
+        const contentJson = JSON.stringify(updatedContents!, null, 2);
+        if (companyId) {
+          await saveCompanyMeetingNote({
+            ...meetingNote as Partial<CompanyMeetingNote>,
+            companyId,
+            content: contentJson,
+          });
+        } else {
+          await saveMeetingNote({
+            ...meetingNote,
+            content: contentJson,
+          });
+        }
+        devLog('✅ [handleAddItem] 自動保存成功');
         setHasUnsavedChanges(false); // 保存完了後、未保存フラグをリセット
       } catch (error: any) {
         console.error('❌ [handleAddItem] 自動保存に失敗しました:', error);
@@ -2758,7 +2818,7 @@ ${formatInstruction}
                                 </button>
                                 <button
                                   onClick={(e) => {
-                                    console.log('🔴 [削除ボタン] クリックイベント発火:', { itemId: item.id, activeTab });
+                                    devLog('🔴 [削除ボタン] クリックイベント発火:', { itemId: item.id, activeTab });
                                     e.preventDefault();
                                     e.stopPropagation();
                                     handleDeleteItem(activeTab, item.id);
@@ -4964,9 +5024,9 @@ ${formatInstruction}
                     for (const entity of entitiesToDelete) {
                       try {
                         await deleteEntity(entity.id);
-                        console.log(`✅ エンティティを削除しました: ${entity.id}`);
+                        devLog(`✅ エンティティを削除しました: ${entity.id}`);
                       } catch (error: any) {
-                        console.warn(`⚠️ エンティティ削除エラー: ${entity.id}`, error);
+                        devWarn(`⚠️ エンティティ削除エラー: ${entity.id}`, error);
                       }
                     }
                     // pendingEntitiesの場合はクリア、topicEntitiesの場合は再読み込み
@@ -5122,9 +5182,9 @@ ${formatInstruction}
                     for (const relation of relationsToDelete) {
                       try {
                         await deleteRelation(relation.id);
-                        console.log(`✅ リレーションを削除しました: ${relation.id}`);
+                        devLog(`✅ リレーションを削除しました: ${relation.id}`);
                       } catch (error: any) {
-                        console.warn(`⚠️ リレーション削除エラー: ${relation.id}`, error);
+                        devWarn(`⚠️ リレーション削除エラー: ${relation.id}`, error);
                       }
                     }
                     
@@ -5530,14 +5590,14 @@ ${formatInstruction}
                               }
                               
                               // エンティティとリレーションを生成
-                              console.log('🤖 エンティティ・リレーション抽出を開始...');
+                              devLog('🤖 エンティティ・リレーション抽出を開始...');
                               const extractedEntities = await extractEntities(topicTitle, topicContent, topicMetadataSelectedModel);
-                              console.log('✅ エンティティ抽出完了:', extractedEntities.length, '件');
+                              devLog('✅ エンティティ抽出完了:', extractedEntities.length, '件');
                               
                               const extractedRelations = extractedEntities.length > 0
                                 ? await extractRelations(topicTitle, topicContent, extractedEntities, topicMetadataSelectedModel)
                                 : [];
-                              console.log('✅ リレーション抽出完了:', extractedRelations.length, '件');
+                              devLog('✅ リレーション抽出完了:', extractedRelations.length, '件');
                               
                               // エンティティにorganizationIdを設定
                               const entitiesWithOrgId = extractedEntities.map(entity => ({
@@ -5559,7 +5619,7 @@ ${formatInstruction}
                               setPendingMetadata(finalMetadata);
                               setPendingEntities(entitiesWithOrgId);
                               setPendingRelations(relationsWithIds);
-                              console.log('✅ AI生成完了:', finalMetadata);
+                              devLog('✅ AI生成完了:', finalMetadata);
                             } catch (error: any) {
                               console.error('❌ AI生成エラー:', error);
                               alert(`メタデータの生成に失敗しました: ${error?.message || '不明なエラー'}`);
@@ -6365,7 +6425,7 @@ ${formatInstruction}
                           // Phase 2: エンティティとリレーションを保存
                           // 埋め込みはChromaDB側で一元管理されているため、Topics生成時には実行しない
                           // クライアント側でのみ実行（サーバーサイドレンダリングを回避）
-                          if (typeof window !== 'undefined' && organizationId && meetingId) {
+                          if (typeof window !== 'undefined' && (organizationId || companyId) && meetingId) {
                             const savedTopic = editingTopicId 
                               ? updatedItems[itemIndex].topics?.find(t => t.id === editingTopicId)
                               : updatedItems[itemIndex].topics?.[updatedItems[itemIndex].topics.length - 1];
@@ -6390,6 +6450,9 @@ ${formatInstruction}
                                     } else {
                                       // レコードが存在しない場合は作成
                                       const now = new Date().toISOString();
+                                      // CHECK制約: organizationIdとcompanyIdのどちらか一方のみが設定されている必要がある
+                                      const finalOrganizationId = companyId ? null : (organizationId || null);
+                                      const finalCompanyId = companyId || null;
                                       await callTauriCommand('doc_set', {
                                         collectionName: 'topics',
                                         docId: topicEmbeddingId,
@@ -6397,7 +6460,8 @@ ${formatInstruction}
                                           id: topicEmbeddingId,
                                           topicId: finalTopicId,
                                           meetingNoteId: meetingId,
-                                          organizationId: organizationId,
+                                          organizationId: finalOrganizationId,
+                                          companyId: finalCompanyId,
                                           title: savedTopic.title || '',
                                           content: savedTopic.content || '',
                                           createdAt: now,
@@ -6408,6 +6472,9 @@ ${formatInstruction}
                                   } catch (error: any) {
                                     // エラーの場合はレコードを作成
                                     const now = new Date().toISOString();
+                                    // CHECK制約: organizationIdとcompanyIdのどちらか一方のみが設定されている必要がある
+                                    const finalOrganizationId = companyId ? null : (organizationId || null);
+                                    const finalCompanyId = companyId || null;
                                     await callTauriCommand('doc_set', {
                                       collectionName: 'topics',
                                       docId: topicEmbeddingId,
@@ -6415,7 +6482,8 @@ ${formatInstruction}
                                         id: topicEmbeddingId,
                                         topicId: finalTopicId,
                                         meetingNoteId: meetingId,
-                                        organizationId: organizationId,
+                                        organizationId: finalOrganizationId,
+                                        companyId: finalCompanyId,
                                         title: savedTopic.title || '',
                                         content: savedTopic.content || '',
                                         createdAt: now,
@@ -6426,22 +6494,22 @@ ${formatInstruction}
                                   
                                   // 既存のエンティティとリレーションを削除（置き換えモードの場合）
                                   if (replaceExistingEntities) {
-                                    console.log('🔄 [トピック保存] 既存のエンティティとリレーションを削除します');
+                                    devLog('🔄 [トピック保存] 既存のエンティティとリレーションを削除します');
                                     
                                     // 1. 既存のリレーションを削除
                                     try {
                                       const existingRelations = await getRelationsByTopicId(topicEmbeddingRecordId);
-                                      console.log(`📊 [トピック保存] 既存のリレーション: ${existingRelations.length}件`);
+                                      devLog(`📊 [トピック保存] 既存のリレーション: ${existingRelations.length}件`);
                                       for (const relation of existingRelations) {
                                         try {
                                           await deleteRelation(relation.id);
-                                          console.log(`✅ [トピック保存] リレーション削除: ${relation.id}`);
+                                          devLog(`✅ [トピック保存] リレーション削除: ${relation.id}`);
                                         } catch (error: any) {
-                                          console.warn(`⚠️ [トピック保存] リレーション削除エラー（続行します）: ${relation.id}`, error);
+                                          devWarn(`⚠️ [トピック保存] リレーション削除エラー（続行します）: ${relation.id}`, error);
                                         }
                                       }
                                     } catch (error: any) {
-                                      console.warn('⚠️ [トピック保存] 既存リレーション取得エラー（続行します）:', error);
+                                      devWarn('⚠️ [トピック保存] 既存リレーション取得エラー（続行します）:', error);
                                     }
                                     
                                     // 2. 既存のエンティティを削除（このトピックに関連するもののみ）
@@ -6452,17 +6520,17 @@ ${formatInstruction}
                                       const topicRelatedEntities = allEntities.filter(e => 
                                         e.metadata && typeof e.metadata === 'object' && 'topicId' in e.metadata && e.metadata.topicId === finalTopicId
                                       );
-                                      console.log(`📊 [トピック保存] 既存のエンティティ: ${topicRelatedEntities.length}件`);
+                                      devLog(`📊 [トピック保存] 既存のエンティティ: ${topicRelatedEntities.length}件`);
                                       for (const entity of topicRelatedEntities) {
                                         try {
                                           await deleteEntity(entity.id);
-                                          console.log(`✅ [トピック保存] エンティティ削除: ${entity.id}`);
+                                          devLog(`✅ [トピック保存] エンティティ削除: ${entity.id}`);
                                         } catch (error: any) {
-                                          console.warn(`⚠️ [トピック保存] エンティティ削除エラー（続行します）: ${entity.id}`, error);
+                                          devWarn(`⚠️ [トピック保存] エンティティ削除エラー（続行します）: ${entity.id}`, error);
                                         }
                                       }
                                     } catch (error: any) {
-                                      console.warn('⚠️ [トピック保存] 既存エンティティ取得エラー（続行します）:', error);
+                                      devWarn('⚠️ [トピック保存] 既存エンティティ取得エラー（続行します）:', error);
                                     }
                                   }
                                   
@@ -6482,6 +6550,8 @@ ${formatInstruction}
                                             ...entity.metadata,
                                             topicId: finalTopicId,
                                           },
+                                          organizationId: organizationId || undefined,
+                                          companyId: companyId || undefined,
                                         };
                                         // idが存在する場合は追加（createEntity関数内で処理される）
                                         if (entity.id) {
@@ -6489,13 +6559,13 @@ ${formatInstruction}
                                         }
                                         const createdEntity = await createEntity(entityData);
                                         entityIdMap.set(entity.id, createdEntity.id);
-                                        console.log(`✅ エンティティを作成しました: ${entity.id} -> ${createdEntity.id}`);
+                                        devLog(`✅ エンティティを作成しました: ${entity.id} -> ${createdEntity.id}`);
                                       } else {
                                         entityIdMap.set(entity.id, existingEntity.id);
-                                        console.log(`✅ エンティティは既に存在します: ${entity.id}`);
+                                        devLog(`✅ エンティティは既に存在します: ${entity.id}`);
                                       }
                                     } catch (error: any) {
-                                      console.warn('⚠️ エンティティ保存エラー:', error);
+                                      devWarn('⚠️ エンティティ保存エラー:', error);
                                     }
                                   }
                                   
@@ -6517,7 +6587,7 @@ ${formatInstruction}
                                       if (mappedSourceEntityId) {
                                         const sourceEntity = await getEntityById(mappedSourceEntityId);
                                         if (!sourceEntity) {
-                                          console.warn(`⚠️ 起点エンティティが見つかりません: ${mappedSourceEntityId}（元のID: ${relation.sourceEntityId}）（リレーション作成をスキップ）`);
+                                          devWarn(`⚠️ 起点エンティティが見つかりません: ${mappedSourceEntityId}（元のID: ${relation.sourceEntityId}）（リレーション作成をスキップ）`);
                                           canCreateRelation = false;
                                         }
                                       }
@@ -6525,7 +6595,7 @@ ${formatInstruction}
                                       if (mappedTargetEntityId) {
                                         const targetEntity = await getEntityById(mappedTargetEntityId);
                                         if (!targetEntity) {
-                                          console.warn(`⚠️ 終点エンティティが見つかりません: ${mappedTargetEntityId}（元のID: ${relation.targetEntityId}）（リレーション作成をスキップ）`);
+                                          devWarn(`⚠️ 終点エンティティが見つかりません: ${mappedTargetEntityId}（元のID: ${relation.targetEntityId}）（リレーション作成をスキップ）`);
                                           canCreateRelation = false;
                                         }
                                       }
@@ -6536,11 +6606,13 @@ ${formatInstruction}
                                           sourceEntityId: mappedSourceEntityId,
                                           targetEntityId: mappedTargetEntityId,
                                           topicId: topicEmbeddingRecordId,
+                                          organizationId: organizationId || undefined,
+                                          companyId: companyId || undefined,
                                         });
-                                        console.log(`✅ リレーションを作成しました: ${relation.relationType} (${mappedSourceEntityId} -> ${mappedTargetEntityId})`);
+                                        devLog(`✅ リレーションを作成しました: ${relation.relationType} (${mappedSourceEntityId} -> ${mappedTargetEntityId})`);
                                       }
                                     } catch (error: any) {
-                                      console.warn('⚠️ リレーション保存エラー:', error);
+                                      devWarn('⚠️ リレーション保存エラー:', error);
                                     }
                                   }
                                   
@@ -6548,7 +6620,7 @@ ${formatInstruction}
                                   setPendingEntities(null);
                                   setPendingRelations(null);
                                 } catch (error: any) {
-                                  console.warn('⚠️ エンティティ・リレーション保存エラー:', error);
+                                  devWarn('⚠️ エンティティ・リレーション保存エラー:', error);
                                 }
                               })();
                             }

@@ -48,6 +48,9 @@ export async function saveRelationEmbedding(
     throw new Error('リレーション埋め込みの保存はクライアント側でのみ実行可能です');
   }
   
+  // companyIdがある場合はそれを使用、なければorganizationIdを使用
+  const orgOrCompanyId = relation.companyId || organizationId || relation.organizationId || '';
+  
   try {
     const now = new Date().toISOString();
     const embeddingVersion = CURRENT_EMBEDDING_VERSION;
@@ -152,7 +155,7 @@ export async function saveRelationEmbedding(
       id: relationId,
       relationId,
       topicId,
-      organizationId,
+      organizationId: orgOrCompanyId,
       combinedEmbedding,
       descriptionEmbedding,
       relationTypeEmbedding,
@@ -166,7 +169,7 @@ export async function saveRelationEmbedding(
     if (shouldUseChroma()) {
       try {
         const { saveRelationEmbeddingToChroma } = await import('./relationEmbeddingsChroma');
-        await saveRelationEmbeddingToChroma(relationId, topicId, organizationId, relation);
+        await saveRelationEmbeddingToChroma(relationId, topicId, orgOrCompanyId, relation);
         console.log(`✅ ChromaDBにリレーション埋め込みを保存しました: ${relationId}`);
         
         // ChromaDB同期状態を更新（relationsテーブルのchromaSyncedカラムを1に設定）
@@ -256,10 +259,13 @@ export async function saveRelationEmbeddingAsync(
       return false;
     }
     
+    // companyIdがある場合はそれを使用、なければorganizationIdを使用
+    const orgOrCompanyId = relation.companyId || organizationId || relation.organizationId || '';
+    
     console.log(`🔄 [埋め込み生成] 開始: ${relation.relationType} (${relationId})`);
     
     // 埋め込みを生成
-    await saveRelationEmbedding(relationId, topicId, organizationId, relation);
+    await saveRelationEmbedding(relationId, topicId, orgOrCompanyId, relation);
     
     console.log(`✅ [埋め込み生成] 完了: ${relation.relationType} (${relationId})`);
     return true;
@@ -761,6 +767,18 @@ export async function batchUpdateRelationEmbeddings(
           }
         }
         
+        // リレーションを取得してtopicIdとorganizationIdまたはcompanyIdを取得
+        const relation = await getRelationById(relationId);
+        if (!relation) {
+          console.warn(`⚠️ リレーションが見つかりません: ${relationId}`);
+          const current = ++processedCount;
+          errorCount++;
+          onProgress?.(current, relationIds.length, relationId, 'error');
+          return { status: 'error' as const };
+        }
+        
+        const orgOrCompanyId = relation.companyId || relation.organizationId || organizationId || '';
+        
         // SQLiteで確認できない場合、ChromaDBから確認（フォールバック）
         if (!forceRegenerate) {
           const existing = await getRelationEmbedding(relationId);
@@ -773,17 +791,7 @@ export async function batchUpdateRelationEmbeddings(
           }
         }
 
-        // リレーションを取得してtopicIdを取得
-        const relation = await getRelationById(relationId);
-        if (!relation) {
-          console.warn(`⚠️ リレーションが見つかりません: ${relationId}`);
-          const current = ++processedCount;
-          errorCount++;
-          onProgress?.(current, relationIds.length, relationId, 'error');
-          return { status: 'error' as const };
-        }
-
-        const result = await saveRelationEmbeddingAsync(relationId, relation.topicId, organizationId);
+        const result = await saveRelationEmbeddingAsync(relationId, relation.topicId, orgOrCompanyId);
         const current = ++processedCount;
         
         if (result) {

@@ -17,6 +17,19 @@ import { RAGSearchIcon } from '@/components/Icons';
 import { printEmbeddingStats, checkAllEmbeddings } from '@/lib/checkEmbeddings';
 import { getAllEntities } from '@/lib/entityApi';
 
+// 開発環境でのみログを有効化するヘルパー関数（パフォーマンス最適化）
+const isDev = process.env.NODE_ENV === 'development';
+const devLog = (...args: any[]) => {
+  if (isDev) {
+    console.log(...args);
+  }
+};
+const devWarn = (...args: any[]) => {
+  if (isDev) {
+    console.warn(...args);
+  }
+};
+
 interface SearchHistory {
   query: string;
   timestamp: string;
@@ -76,69 +89,70 @@ export default function RAGSearchPage() {
     if (typeof window !== 'undefined') {
       (window as any).checkEmbeddings = async (organizationId?: string) => {
         const stats = await checkAllEmbeddings(organizationId);
-        console.log('📊 埋め込みベクトルの統計情報:', stats);
+        devLog('📊 埋め込みベクトルの統計情報:', stats);
         return stats;
       };
       (window as any).printEmbeddingStats = async (organizationId?: string) => {
         await printEmbeddingStats(organizationId);
       };
       (window as any).diagnoseRAGSearch = async () => {
-        console.log('🔍 RAG検索の診断を開始します...\n');
+        devLog('🔍 RAG検索の診断を開始します...\n');
         
         // 1. ChromaDB設定の確認
         const { shouldUseChroma } = await import('@/lib/chromaConfig');
         const useChroma = shouldUseChroma();
         const localStorageValue = localStorage.getItem('useChromaDB');
-        console.log('1️⃣ ChromaDB設定:');
-        console.log(`   - shouldUseChroma(): ${useChroma}`);
-        console.log(`   - localStorage['useChromaDB']: "${localStorageValue}"`);
-        console.log(`   - 推奨: ${useChroma ? '✅ ChromaDBが有効です' : '⚠️ ChromaDBが無効です。有効化するには: localStorage.setItem("useChromaDB", "true")'}\n`);
+        devLog('1️⃣ ChromaDB設定:');
+        devLog(`   - shouldUseChroma(): ${useChroma}`);
+        devLog(`   - localStorage['useChromaDB']: "${localStorageValue}"`);
+        devLog(`   - 推奨: ${useChroma ? '✅ ChromaDBが有効です' : '⚠️ ChromaDBが無効です。有効化するには: localStorage.setItem("useChromaDB", "true")'}\n`);
         
         // 2. エンティティの存在確認
         const { getAllEntities } = await import('@/lib/entityApi');
         const allEntities = await getAllEntities();
-        console.log('2️⃣ エンティティの存在確認:');
-        console.log(`   - 総エンティティ数: ${allEntities.length}件`);
+        devLog('2️⃣ エンティティの存在確認:');
+        devLog(`   - 総エンティティ数: ${allEntities.length}件`);
         if (allEntities.length > 0) {
-          console.log(`   - サンプルエンティティ:`, allEntities.slice(0, 3).map(e => ({ id: e.id, name: e.name, organizationId: e.organizationId })));
+          // サンプルデータのログを簡略化（パフォーマンス最適化）
+          devLog(`   - サンプルエンティティ数: ${Math.min(3, allEntities.length)}件`);
         } else {
-          console.log('   ⚠️ エンティティが存在しません。エンティティを作成してください。\n');
+          devLog('   ⚠️ エンティティが存在しません。エンティティを作成してください。\n');
         }
         
         // 3. 埋め込みの状態確認
         const stats = await checkAllEmbeddings();
-        console.log('3️⃣ 埋め込みベクトルの状態:');
-        console.log(`   - エンティティ: 総数=${stats.entities.total}, 埋め込みあり=${stats.entities.withEmbeddings}, 埋め込みなし=${stats.entities.withoutEmbeddings}`);
-        console.log(`   - リレーション: 総数=${stats.relations.total}, 埋め込みあり=${stats.relations.withEmbeddings}, 埋め込みなし=${stats.relations.withoutEmbeddings}`);
-        console.log(`   - トピック: 総数=${stats.topics.total}, 埋め込みあり=${stats.topics.withEmbeddings}, 埋め込みなし=${stats.topics.withoutEmbeddings}`);
+        devLog('3️⃣ 埋め込みベクトルの状態:');
+        devLog(`   - エンティティ: 総数=${stats.entities.total}, 埋め込みあり=${stats.entities.withEmbeddings}, 埋め込みなし=${stats.entities.withoutEmbeddings}`);
+        devLog(`   - リレーション: 総数=${stats.relations.total}, 埋め込みあり=${stats.relations.withEmbeddings}, 埋め込みなし=${stats.relations.withoutEmbeddings}`);
+        devLog(`   - トピック: 総数=${stats.topics.total}, 埋め込みあり=${stats.topics.withEmbeddings}, 埋め込みなし=${stats.topics.withoutEmbeddings}`);
         if (stats.entities.actualTotal !== undefined) {
-          console.log(`   - 実際のエンティティ総数: ${stats.entities.actualTotal}件`);
+          devLog(`   - 実際のエンティティ総数: ${stats.entities.actualTotal}件`);
         }
-        console.log('');
+        devLog('');
         
         // 4. ChromaDBコレクションの確認（ChromaDBが有効な場合）
         if (useChroma && allEntities.length > 0) {
           const orgIds = [...new Set(allEntities.map(e => e.organizationId).filter(Boolean))];
-          console.log('4️⃣ ChromaDBコレクションの確認:');
+          devLog('4️⃣ ChromaDBコレクションの確認:');
           if (orgIds.length === 0) {
-            console.log('   ⚠️ organizationIdが設定されているエンティティがありません。');
+            devLog('   ⚠️ organizationIdが設定されているエンティティがありません。');
           } else {
+            // ループ内のログを簡略化（パフォーマンス最適化）
+            let totalCount = 0;
             for (const orgId of orgIds.slice(0, 5)) {
               if (!orgId) continue;
               try {
                 const { countEntitiesInChroma } = await import('@/lib/entityEmbeddingsChroma');
                 const count = await countEntitiesInChroma(orgId);
-                console.log(`   - entities_${orgId}: ${count}件`);
-                if (count === 0) {
-                  const orgEntities = allEntities.filter(e => e.organizationId === orgId);
-                  console.log(`     ⚠️ コレクションが空です。この組織には${orgEntities.length}件のエンティティがありますが、ChromaDBに保存されていません。`);
-                }
+                totalCount += count;
+                // ループ内のログを削除（パフォーマンス最適化）
               } catch (error: any) {
-                console.log(`   - entities_${orgId}: エラー - ${error?.message || error}`);
+                devLog(`   - entities_${orgId}: エラー - ${error?.message || error}`);
               }
             }
+            devLog(`   - 確認したコレクション数: ${Math.min(5, orgIds.length)}件, 総エンティティ数: ${totalCount}件`);
           }
-          console.log('');
+          devLog('');
         }
         
         // 5. 検索テスト（エンティティ名で検索）
@@ -146,52 +160,47 @@ export default function RAGSearchPage() {
           const testEntity = allEntities[0];
           const testOrgId = testEntity.organizationId;
           if (testOrgId) {
-            console.log('5️⃣ 検索テスト:');
-            console.log(`   - テストクエリ: "${testEntity.name}"`);
-            console.log(`   - organizationId: "${testOrgId}"`);
+            devLog('5️⃣ 検索テスト:');
+            devLog(`   - テストクエリ: "${testEntity.name}"`);
+            devLog(`   - organizationId: "${testOrgId}"`);
             try {
               const { findSimilarEntities } = await import('@/lib/entityEmbeddings');
               const searchResults = await findSimilarEntities(testEntity.name, 5, testOrgId);
-              console.log(`   - 検索結果: ${searchResults.length}件`);
-              if (searchResults.length > 0) {
-                console.log(`   - 結果の詳細:`, searchResults.map(r => ({ entityId: r.entityId, similarity: r.similarity.toFixed(4) })));
-              } else {
-                console.log(`   ⚠️ 検索結果が0件です。ChromaDBにデータが保存されていない可能性があります。`);
-              }
+              devLog(`   - 検索結果: ${searchResults.length}件`);
+              // 結果の詳細ログを簡略化（パフォーマンス最適化）
             } catch (error: any) {
-              console.log(`   - 検索エラー: ${error?.message || error}`);
+              devLog(`   - 検索エラー: ${error?.message || error}`);
             }
-            console.log('');
+            devLog('');
           }
         }
         
         // 6. 推奨事項
-        console.log('6️⃣ 推奨事項:');
+        devLog('6️⃣ 推奨事項:');
         if (!useChroma) {
-          console.log('   ⚠️ ChromaDBが無効です。RAG検索を有効にするには:');
-          console.log('      localStorage.setItem("useChromaDB", "true"); location.reload();');
+          devLog('   ⚠️ ChromaDBが無効です。RAG検索を有効にするには:');
+          devLog('      localStorage.setItem("useChromaDB", "true"); location.reload();');
         } else if (allEntities.length === 0) {
-          console.log('   ⚠️ エンティティが存在しません。エンティティを作成してください。');
+          devLog('   ⚠️ エンティティが存在しません。エンティティを作成してください。');
         } else if (stats.entities.withEmbeddings === 0) {
-          console.log('   ⚠️ 埋め込みベクトルが生成されていません。ナレッジグラフページで「埋め込み再生成」を実行してください。');
-          console.log('   💡 ナレッジグラフページのURL: /knowledge-graph');
+          devLog('   ⚠️ 埋め込みベクトルが生成されていません。ナレッジグラフページで「埋め込み再生成」を実行してください。');
+          devLog('   💡 ナレッジグラフページのURL: /knowledge-graph');
         } else {
           const orgIds = [...new Set(allEntities.map(e => e.organizationId).filter(Boolean))];
           if (orgIds.length > 0) {
-            console.log(`   ✅ 設定は正常です。検索時にorganizationIdを指定してください。`);
-            console.log(`   💡 利用可能なorganizationId: ${orgIds.join(', ')}`);
-            console.log(`   💡 RAG検索ページで組織を選択するか、検索フィルターでorganizationIdを指定してください。`);
+            devLog(`   ✅ 設定は正常です。検索時にorganizationIdを指定してください。`);
+            devLog(`   💡 利用可能なorganizationId数: ${orgIds.length}件`);
           } else {
-            console.log('   ⚠️ エンティティにorganizationIdが設定されていません。');
+            devLog('   ⚠️ エンティティにorganizationIdが設定されていません。');
           }
         }
         
         return { useChroma, allEntities, stats };
       };
-      console.log('✅ 埋め込みベクトル確認関数が利用可能になりました:');
-      console.log('  - window.checkEmbeddings(organizationId?) - 統計情報を取得');
-      console.log('  - window.printEmbeddingStats(organizationId?) - 統計情報をコンソールに表示');
-      console.log('  - window.diagnoseRAGSearch() - RAG検索の診断を実行');
+      devLog('✅ 埋め込みベクトル確認関数が利用可能になりました:');
+      devLog('  - window.checkEmbeddings(organizationId?) - 統計情報を取得');
+      devLog('  - window.printEmbeddingStats(organizationId?) - 統計情報をコンソールに表示');
+      devLog('  - window.diagnoseRAGSearch() - RAG検索の診断を実行');
     }
   }, []);
 
@@ -338,7 +347,7 @@ export default function RAGSearchPage() {
       // UIの状態を更新
       setSearchFeedbackRatings(prev => ({ ...prev, [resultId]: relevant }));
       
-      console.log('[RAGSearch] 検索フィードバックを保存:', { resultId, resultType, relevant });
+      devLog('[RAGSearch] 検索フィードバックを保存:', { resultId, resultType, relevant });
     } catch (error) {
       console.error('[RAGSearch] フィードバック保存エラー:', error);
     }
@@ -351,18 +360,18 @@ export default function RAGSearchPage() {
       e.preventDefault();
     }
     if (typeof window === 'undefined') return;
-    console.log('[clearAllHistory] 関数が呼ばれました');
+    devLog('[clearAllHistory] 関数が呼ばれました');
     if (window.confirm('すべての検索履歴を削除しますか？')) {
       try {
-        console.log('[clearAllHistory] 削除を実行します');
+        devLog('[clearAllHistory] 削除を実行します');
         setSearchHistory([]);
         localStorage.setItem('ragSearchHistory', JSON.stringify([]));
-        console.log('[clearAllHistory] 削除完了');
+        devLog('[clearAllHistory] 削除完了');
       } catch (error) {
         console.error('検索履歴の全削除エラー:', error);
       }
     } else {
-      console.log('[clearAllHistory] ユーザーがキャンセルしました');
+      devLog('[clearAllHistory] ユーザーがキャンセルしました');
     }
   };
 
@@ -409,7 +418,7 @@ export default function RAGSearchPage() {
       // organizationIdが空文字列の場合はundefinedとして扱う
       const orgId = filters?.organizationId || (selectedOrganizationId && selectedOrganizationId.trim() !== '' ? selectedOrganizationId : undefined);
       
-      console.log(`[handleSearchWithQuery] 検索実行: query="${query}", orgId=${orgId}, useCache=${useCache}`);
+      devLog(`[handleSearchWithQuery] 検索実行: query="${query}", orgId=${orgId}, useCache=${useCache}`);
       
       const results = await searchKnowledgeGraph(
         query,
@@ -424,7 +433,7 @@ export default function RAGSearchPage() {
         useCache
       );
       
-      console.log(`[handleSearchWithQuery] 検索結果: ${results.length}件`);
+      devLog(`[handleSearchWithQuery] 検索結果: ${results.length}件`);
 
       setSearchResults(results);
       // 検索履歴に保存
@@ -439,7 +448,7 @@ export default function RAGSearchPage() {
           )
         ]);
       } catch (graphError: any) {
-        console.warn('グラフデータの準備エラー（検索は続行）:', graphError);
+        devWarn('グラフデータの準備エラー（検索は続行）:', graphError);
         // グラフデータの準備が失敗しても検索結果は表示する
       }
     } catch (error: any) {
@@ -535,7 +544,7 @@ export default function RAGSearchPage() {
           }
         }
       } catch (error) {
-        console.warn('関連リレーション取得エラー:', error);
+        devWarn('関連リレーション取得エラー:', error);
         // エラーが発生しても処理を続行
       }
 

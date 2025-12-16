@@ -5,14 +5,40 @@ import { useRouter } from 'next/navigation';
 import { hierarchy, pack } from 'd3-hierarchy';
 import type { ThemeHierarchyConfig } from '@/lib/themeHierarchy';
 import type { Theme, FocusInitiative } from '@/lib/orgApi';
+import type { CompanyFocusInitiative } from '@/lib/companiesApi';
 
 interface ThemeHierarchyChartProps {
   config: ThemeHierarchyConfig;
   themes: Theme[];
-  initiatives: FocusInitiative[];
+  initiatives: FocusInitiative[] | CompanyFocusInitiative[];
   width?: number;
   height?: number;
   onThemeClick?: (theme: Theme) => void;
+  viewMode?: 'organization' | 'company';
+}
+
+// 注力施策がテーマに関連しているかチェックするヘルパー関数
+function isInitiativeRelatedToTheme(
+  initiative: FocusInitiative | CompanyFocusInitiative,
+  themeId: string
+): boolean {
+  // 組織の注力施策の場合
+  if ('organizationId' in initiative) {
+    const orgInitiative = initiative as FocusInitiative;
+    return (
+      (orgInitiative.themeIds && orgInitiative.themeIds.includes(themeId)) ||
+      orgInitiative.themeId === themeId
+    );
+  } else {
+    // 事業会社の注力施策の場合
+    const companyInitiative = initiative as CompanyFocusInitiative;
+    const themeIds = Array.isArray(companyInitiative.themeIds)
+      ? companyInitiative.themeIds
+      : typeof companyInitiative.themeIds === 'string'
+      ? JSON.parse(companyInitiative.themeIds)
+      : [];
+    return themeIds.includes(themeId);
+  }
 }
 
 // 階層ごとの色設定
@@ -36,6 +62,7 @@ export default function ThemeHierarchyChart({
   width = 1000,
   height = 1000,
   onThemeClick,
+  viewMode = 'organization',
 }: ThemeHierarchyChartProps) {
   const router = useRouter();
   const svgRef = useRef<SVGSVGElement>(null);
@@ -90,13 +117,13 @@ export default function ThemeHierarchyChart({
 
     const level1Theme = level1Themes[0]; // 階層1は1つのみ
     const level1Initiatives = initiatives.filter(i => 
-      i.themeIds?.includes(level1Theme.id) || i.themeId === level1Theme.id
+      isInitiativeRelatedToTheme(i, level1Theme.id)
     );
 
     // テーマに紐づく注力施策を子ノードとして追加する関数
     const addInitiativesToTheme = (theme: Theme, themeLevel: number): any[] => {
       const themeInitiatives = initiatives.filter(i => 
-        i.themeIds?.includes(theme.id) || i.themeId === theme.id
+        isInitiativeRelatedToTheme(i, theme.id)
       );
 
       return themeInitiatives.map(initiative => ({
@@ -121,7 +148,7 @@ export default function ThemeHierarchyChart({
       const levelThemes = levelMap.get(nextLevel) || [];
       levelThemes.forEach(theme => {
         const themeInitiatives = initiatives.filter(i => 
-          i.themeIds?.includes(theme.id) || i.themeId === theme.id
+          isInitiativeRelatedToTheme(i, theme.id)
         );
 
         const childNode: any = {
@@ -404,7 +431,13 @@ export default function ThemeHierarchyChart({
           // ダブルクリックでページに移動
           circle.addEventListener('dblclick', () => {
             if (childNode.data.initiative) {
-              router.push(`/organization/initiative?organizationId=${childNode.data.initiative.organizationId}&initiativeId=${childNode.data.initiative.id}`);
+              if (viewMode === 'organization') {
+                const orgInitiative = childNode.data.initiative as FocusInitiative;
+                router.push(`/organization/initiative?organizationId=${orgInitiative.organizationId}&initiativeId=${orgInitiative.id}`);
+              } else {
+                const companyInitiative = childNode.data.initiative as CompanyFocusInitiative;
+                router.push(`/companies/initiative?companyId=${companyInitiative.companyId}&initiativeId=${companyInitiative.id}`);
+              }
             }
           });
 
@@ -448,7 +481,7 @@ export default function ThemeHierarchyChart({
     if (!svg.querySelector('g')) {
       svg.appendChild(g);
     }
-  }, [packedData, hoveredThemeId, selectedThemeId, onThemeClick, router]);
+  }, [packedData, hoveredThemeId, selectedThemeId, onThemeClick, router, viewMode]);
 
   return (
     <div

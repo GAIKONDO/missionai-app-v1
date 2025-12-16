@@ -26,6 +26,19 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import '@/components/pages/component-test/test-concept/pageStyles.css';
 
+// 開発環境でのみログを有効化するヘルパー関数（パフォーマンス最適化）
+const isDev = process.env.NODE_ENV === 'development';
+const devLog = (...args: any[]) => {
+  if (isDev) {
+    console.log(...args);
+  }
+};
+const devWarn = (...args: any[]) => {
+  if (isDev) {
+    console.warn(...args);
+  }
+};
+
 // ReactMarkdown用の共通コンポーネント設定（ページセクション用）
 // 事業会社専用ページのフォントスタイルを適用
 const companyPageFontFamily = 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif';
@@ -1108,7 +1121,7 @@ ${shareholdersText}
 
 事業会社名: ${company?.name || '事業会社'}`;
 
-      console.log('🤖 [資本構成図生成] AI API呼び出し開始');
+      devLog('🤖 [資本構成図生成] AI API呼び出し開始');
       const generatedContent = await callLLMAPI(
         [
           { role: 'system', content: systemPrompt },
@@ -1117,7 +1130,7 @@ ${shareholdersText}
         'gpt-4o-mini'
       );
 
-      console.log('🤖 [資本構成図生成] AI生成結果:', generatedContent);
+      devLog('🤖 [資本構成図生成] AI生成結果:', generatedContent?.substring(0, 200) + '...');
 
       // Mermaidコードを抽出
       let mermaidCode = '';
@@ -1138,7 +1151,7 @@ ${shareholdersText}
           mermaidCode = generatedContent.trim();
         }
       } catch (parseError: any) {
-        console.warn('⚠️ [資本構成図生成] Mermaidコード抽出エラー:', parseError);
+        devWarn('⚠️ [資本構成図生成] Mermaidコード抽出エラー:', parseError);
         // 抽出に失敗した場合は全体を使用
         mermaidCode = generatedContent.trim();
       }
@@ -2414,11 +2427,6 @@ ${shareholdersText}
                             </button>
                           </div>
                         </div>
-                        {initiative.description && (
-                          <p style={{ fontSize: '14px', color: '#6B7280', marginTop: '8px', lineHeight: '1.5' }}>
-                            {initiative.description}
-                          </p>
-                        )}
                       </>
                     )}
                   </div>

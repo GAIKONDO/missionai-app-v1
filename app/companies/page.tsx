@@ -12,6 +12,19 @@ import { buildCompanyHierarchy } from '@/lib/buildCompanyHierarchy';
 import type { CompanyNodeData } from '@/components/CompanyChart';
 import { importCompaniesData } from '@/lib/import-companies-data';
 
+// 開発環境でのみログを有効化するヘルパー関数（パフォーマンス最適化）
+const isDev = process.env.NODE_ENV === 'development';
+const devLog = (...args: any[]) => {
+  if (isDev) {
+    console.log(...args);
+  }
+};
+const devWarn = (...args: any[]) => {
+  if (isDev) {
+    console.warn(...args);
+  }
+};
+
 // CompanyChartを動的インポート（SSRを回避）
 const CompanyChart = dynamic(() => import('@/components/CompanyChart'), {
   ssr: false,
@@ -227,7 +240,7 @@ export default function CompaniesPage() {
             setOrgTree(orgData);
           }
         } catch (orgErr: any) {
-          console.warn('組織データの取得に失敗しました（続行します）:', orgErr);
+          devWarn('組織データの取得に失敗しました（続行します）:', orgErr);
         }
         
         // すべての事業会社を取得
@@ -367,7 +380,7 @@ export default function CompaniesPage() {
 
   // ノードクリックハンドラー
   const handleNodeClick = (node: CompanyNodeData) => {
-    console.log('ノードがクリックされました:', node);
+    devLog('ノードがクリックされました:', { id: node.id, name: node.name, companiesCount: node.companies?.length || 0 });
     
     // すべての事業会社を集約したノードを作成
     const allCompanies = collectAllCompanies(node);

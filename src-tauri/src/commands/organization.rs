@@ -10,6 +10,8 @@ use crate::database::{
     OrganizationMaster,
     build_organization_tree_from_master,
     import_members_from_csv,
+    update_theme_positions,
+    get_all_themes,
 };
 use crate::db::{WriteJob, WriteQueueState};
 use serde_json::json;
@@ -401,5 +403,39 @@ pub fn delete_duplicate_orgs() -> Result<Vec<String>, String> {
     match delete_duplicate_organizations() {
         Ok(deleted_ids) => Ok(deleted_ids),
         Err(e) => Err(format!("重複組織の削除に失敗しました: {}", e)),
+    }
+}
+
+/// 複数のテーマのpositionを一括更新
+#[tauri::command]
+pub async fn update_theme_positions_cmd(
+    updates: Vec<(String, i32)>,
+) -> Result<(), String> {
+    update_theme_positions(&updates)
+        .map_err(|e| format!("テーマ順序の更新に失敗しました: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_themes_cmd() -> Result<Vec<serde_json::Value>, String> {
+    match get_all_themes() {
+        Ok(themes) => {
+            let themes_json: Vec<serde_json::Value> = themes
+                .into_iter()
+                .map(|theme| {
+                    serde_json::json!({
+                        "id": theme.id,
+                        "title": theme.title,
+                        "description": theme.description,
+                        "initiativeIds": theme.initiative_ids,
+                        "position": theme.position,
+                        "createdAt": theme.created_at,
+                        "updatedAt": theme.updated_at,
+                    })
+                })
+                .collect();
+            Ok(themes_json)
+        }
+        Err(e) => Err(format!("テーマ取得に失敗しました: {}", e)),
     }
 }

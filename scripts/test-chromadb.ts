@@ -87,7 +87,7 @@ async function testChromaDB() {
     console.log('📖 ステップ6: エンティティ埋め込みの取得');
     try {
       const entityEmbeddingsChromaModule2 = await import('../lib/entityEmbeddingsChroma');
-      const embedding = await entityEmbeddingsChromaModule2.getEntityEmbeddingFromChroma(testEntityId);
+      const embedding = await entityEmbeddingsChromaModule2.getEntityEmbeddingFromChroma(testEntityId, '');
       if (embedding) {
         console.log('✅ エンティティ埋め込みの取得に成功しました');
         console.log('   埋め込み次元:', embedding.combinedEmbedding?.length || 0);

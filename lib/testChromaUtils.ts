@@ -155,7 +155,7 @@ export async function testChromaDBForPage(): Promise<string> {
     logs.push('📖 ステップ6: エンティティ埋め込みの取得');
     try {
       const entityEmbeddingsChromaModule = await import('./entityEmbeddingsChroma');
-      const embedding = await entityEmbeddingsChromaModule.getEntityEmbeddingFromChroma(testEntityId);
+      const embedding = await entityEmbeddingsChromaModule.getEntityEmbeddingFromChroma(testEntityId, '');
       if (embedding) {
         logs.push('✅ エンティティ埋め込みの取得に成功しました');
         logs.push(`   埋め込み次元: ${embedding.combinedEmbedding?.length || 0}`);
@@ -221,7 +221,7 @@ export async function testChromaDBForPage(): Promise<string> {
       );
       logs.push('✅ リレーション埋め込みの保存に成功しました');
       
-      const relationEmbedding = await relationEmbeddingsChromaModule.getRelationEmbeddingFromChroma(testRelationId);
+      const relationEmbedding = await relationEmbeddingsChromaModule.getRelationEmbeddingFromChroma(testRelationId, '');
       if (relationEmbedding) {
         logs.push('✅ リレーション埋め込みの取得に成功しました');
         logs.push(`   埋め込み次元: ${relationEmbedding.combinedEmbedding?.length || 0}`);

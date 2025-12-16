@@ -16,6 +16,19 @@ import { saveIctDivisionMembers } from '@/lib/save-ict-division-members';
 import { reorderFrontierBusiness } from '@/lib/reorder-frontier-business';
 import { checkDepartmentOrder } from '@/lib/check-department-order';
 
+// 開発環境でのみログを有効化するヘルパー関数（パフォーマンス最適化）
+const isDev = process.env.NODE_ENV === 'development';
+const devLog = (...args: any[]) => {
+  if (isDev) {
+    console.log(...args);
+  }
+};
+const devWarn = (...args: any[]) => {
+  if (isDev) {
+    console.warn(...args);
+  }
+};
+
 // OrgChartを動的インポート（SSRを回避）
 const OrgChart = dynamic(() => import('@/components/OrgChart'), {
   ssr: false,
@@ -418,18 +431,18 @@ export default function OrganizationPage() {
           try {
             await removeIctDivisionDuplicates();
           } catch (error: any) {
-            console.warn('情報・通信部門の重複削除でエラーが発生しました:', error.message);
+            devWarn('情報・通信部門の重複削除でエラーが発生しました:', error.message);
           }
         }
         
         // データベースから組織データを取得（メンバー情報も含む）
-        console.log('📖 [組織ページ] 組織データの取得を開始');
+        devLog('📖 [組織ページ] 組織データの取得を開始');
         const data = await getOrgTreeFromDb();
-        console.log('📖 [組織ページ] 組織データの取得完了:', data ? '成功' : 'データなし');
+        devLog('📖 [組織ページ] 組織データの取得完了:', data ? '成功' : 'データなし');
         
         if (data) {
           setOrgData(data);
-          console.log('✅ データベースから組織データを読み込みました');
+          devLog('✅ データベースから組織データを読み込みました');
           
           // ルートノード（情報・通信部門）を初期選択として設定
           if (data.id) {
@@ -453,7 +466,7 @@ export default function OrganizationPage() {
                 }),
               });
             } catch (error: any) {
-              console.warn('ルートノードのメンバー取得に失敗しました:', error);
+              devWarn('ルートノードのメンバー取得に失敗しました:', error);
               setSelectedNode(data);
               setSelectedNodeMembers([]);
             }
@@ -463,7 +476,7 @@ export default function OrganizationPage() {
           }
           
           // デバッグ用：BPOビジネス課のメンバー数を確認（開発時のみ）
-          if (process.env.NODE_ENV === 'development') {
+          if (isDev) {
             function findBpoSection(node: OrgNodeData): OrgNodeData | null {
               if (node.name === 'BPOビジネス課' || node.name === 'ＢＰＯビジネス課') {
                 return node;
@@ -479,15 +492,15 @@ export default function OrganizationPage() {
             
             const bpoSection = findBpoSection(data);
             if (bpoSection) {
-              console.log(`📊 BPOビジネス課のメンバー数: ${bpoSection.members?.length || 0}名`);
+              devLog(`📊 BPOビジネス課のメンバー数: ${bpoSection.members?.length || 0}名`);
               if (bpoSection.id) {
-                console.log(`📊 BPOビジネス課の組織ID: ${bpoSection.id}`);
+                devLog(`📊 BPOビジネス課の組織ID: ${bpoSection.id}`);
               }
             }
           }
         } else {
           // データベースにデータがない場合
-          console.log('データベースに組織データがありません。');
+          devLog('データベースに組織データがありません。');
           setOrgData(null);
           setSelectedNode(null);
           setSelectedNodeMembers([]);
@@ -569,7 +582,7 @@ export default function OrganizationPage() {
           const data = await getOrgTreeFromDb();
           if (data) {
             setOrgData(data);
-            console.log('✅ 組織データを再読み込みしました');
+            devLog('✅ 組織データを再読み込みしました');
           }
         }
       } catch (error: any) {
@@ -586,13 +599,13 @@ export default function OrganizationPage() {
   };
 
   const handleNodeClick = async (node: OrgNodeData, event: MouseEvent) => {
-    console.log('🔗 [組織一覧] ノードがクリックされました:', { id: node.id, name: node.name });
+    devLog('🔗 [組織一覧] ノードがクリックされました:', { id: node.id, name: node.name });
     
     // ノードにIDがある場合、メンバー情報を取得して右側のポップアップに表示
     if (node.id) {
       try {
         const members = await getOrgMembers(node.id);
-        console.log(`${node.name}のメンバーを取得しました:`, members.length, '名');
+        devLog(`${node.name}のメンバーを取得しました:`, members.length, '名');
         
         // メンバー情報をMemberInfo形式に変換（ID付き）
         const memberInfos = mapMembersToMemberInfo(members);
@@ -1370,13 +1383,13 @@ export default function OrganizationPage() {
               onEditClick={() => setShowEditModal(true)}
               onNavigateToDetail={() => {
                 if (selectedNode?.id) {
-                  console.log('🔗 [組織一覧] 組織詳細ページに遷移:', { 
+                  devLog('🔗 [組織一覧] 組織詳細ページに遷移:', { 
                     organizationId: selectedNode.id, 
                     organizationName: selectedNode.name 
                   });
                   router.push(`/organization/detail?id=${selectedNode.id}`);
                 } else {
-                  console.warn('⚠️ [組織一覧] 組織IDが存在しないため、詳細ページに遷移できません');
+                  devWarn('⚠️ [組織一覧] 組織IDが存在しないため、詳細ページに遷移できません');
                 }
               }}
             />
@@ -1393,13 +1406,13 @@ export default function OrganizationPage() {
             onEditClick={() => setShowEditModal(true)}
             onNavigateToDetail={() => {
               if (selectedNode?.id) {
-                console.log('🔗 [組織一覧] 組織詳細ページに遷移:', { 
+                devLog('🔗 [組織一覧] 組織詳細ページに遷移:', { 
                   organizationId: selectedNode.id, 
                   organizationName: selectedNode.name 
                 });
                 router.push(`/organization/detail?id=${selectedNode.id}`);
               } else {
-                console.warn('⚠️ [組織一覧] 組織IDが存在しないため、詳細ページに遷移できません');
+                devWarn('⚠️ [組織一覧] 組織IDが存在しないため、詳細ページに遷移できません');
               }
             }}
           />
@@ -1475,14 +1488,14 @@ export default function OrganizationPage() {
             }
 
             try {
-              console.log('🗑️ [組織削除] 削除開始:', { id: orgToDelete.id, name: orgToDelete.name });
+              devLog('🗑️ [組織削除] 削除開始:', { id: orgToDelete.id, name: orgToDelete.name });
               
               // 削除前に選択状態を保存
               const deletedOrgId = orgToDelete.id;
               const deletedOrgName = orgToDelete.name;
               
               await deleteOrg(deletedOrgId);
-              console.log('✅ [組織削除] 削除成功:', { id: deletedOrgId, name: deletedOrgName });
+              devLog('✅ [組織削除] 削除成功:', { id: deletedOrgId, name: deletedOrgName });
               
               // 組織ツリーを再取得
               const tree = await getOrgTreeFromDb();
@@ -1492,14 +1505,14 @@ export default function OrganizationPage() {
                 
                 // 削除された組織が選択されていた場合、選択をクリア
                 if (selectedNode?.id === deletedOrgId) {
-                  console.log('🗑️ [組織削除] 選択されていた組織が削除されました。選択をクリアします。');
+                  devLog('🗑️ [組織削除] 選択されていた組織が削除されました。選択をクリアします。');
                   setSelectedNode(null);
                   setSelectedNodeMembers([]);
                 } else if (selectedNode?.id) {
                   // 選択されている組織がまだ存在する場合、最新のデータで更新
                   const foundOrg = findOrgInTree(tree, selectedNode.id);
                   if (foundOrg) {
-                    console.log('✅ [組織削除] 選択されている組織を更新します:', foundOrg.name);
+                    devLog('✅ [組織削除] 選択されている組織を更新します:', foundOrg.name);
                     if (foundOrg.id) {
                       try {
                         const members = await getOrgMembers(foundOrg.id);
@@ -1525,15 +1538,15 @@ export default function OrganizationPage() {
                     }
                   } else {
                     // 選択されている組織が見つからない場合、選択をクリア
-                    console.log('⚠️ [組織削除] 選択されている組織が見つかりませんでした。選択をクリアします。');
+                    devLog('⚠️ [組織削除] 選択されている組織が見つかりませんでした。選択をクリアします。');
                     setSelectedNode(null);
                     setSelectedNodeMembers([]);
                   }
                 }
                 
-                console.log('✅ [組織削除] 組織ツリーを更新しました');
+                devLog('✅ [組織削除] 組織ツリーを更新しました');
               } else {
-                console.warn('⚠️ [組織削除] 組織ツリーの再取得に失敗しました');
+                devWarn('⚠️ [組織削除] 組織ツリーの再取得に失敗しました');
                 // ツリーが取得できない場合も選択をクリア
                 setSelectedNode(null);
                 setSelectedNodeMembers([]);

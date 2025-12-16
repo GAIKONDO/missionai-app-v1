@@ -31,6 +31,7 @@ interface RelationshipBubbleChartProps {
 const NODE_COLORS = {
   theme: '#1A1A1A',
   organization: '#10B981',
+  company: '#10B981', // 事業会社は組織と同じ色を使用
   initiative: '#4262FF',
   topic: '#F59E0B',
 };
@@ -87,11 +88,11 @@ export default function RelationshipBubbleChart({
       const children = childrenMap.get(node.id) || [];
       
       // 子ノードをタイプごとに分類
-      const orgChildren = children.filter(n => n.type === 'organization');
+      const orgChildren = children.filter(n => n.type === 'organization' || n.type === 'company');
       const initiativeChildren = children.filter(n => n.type === 'initiative');
       const topicChildren = children.filter(n => n.type === 'topic');
       
-      // 組織ノードの子として注力施策を配置
+      // 組織/事業会社ノードの子として注力施策を配置
       const orgNodesWithInitiatives = orgChildren.map(orgNode => {
         const orgChildren = childrenMap.get(orgNode.id) || [];
         const initiativeChildren = orgChildren.filter(n => n.type === 'initiative');
@@ -179,12 +180,12 @@ export default function RelationshipBubbleChart({
       const nodeType = nodeData.nodeType;
       const depth = nodeData.depth || node.depth;
       
-      if (nodeType === 'organization') {
+      if (nodeType === 'organization' || nodeType === 'company') {
         organizationNodes.push(node);
       } else if (nodeType === 'initiative') {
-        // この注力施策が属する組織を特定（直接の親が組織）
+        // この注力施策が属する組織/事業会社を特定（直接の親が組織/事業会社）
         const parentOrg = node.parent;
-        if (parentOrg && parentOrg.data && parentOrg.data.nodeType === 'organization') {
+        if (parentOrg && parentOrg.data && (parentOrg.data.nodeType === 'organization' || parentOrg.data.nodeType === 'company')) {
           if (!initiativeNodesByOrg.has(parentOrg)) {
             initiativeNodesByOrg.set(parentOrg, []);
           }
@@ -486,7 +487,7 @@ export default function RelationshipBubbleChart({
   const getColorByDepth = (depth: number, nodeType: string): string => {
     if (nodeType === 'theme') {
       return NODE_COLORS.theme;
-    } else if (nodeType === 'organization') {
+    } else if (nodeType === 'organization' || nodeType === 'company') {
       return NODE_COLORS.organization;
     } else if (nodeType === 'initiative') {
       return NODE_COLORS.initiative;
@@ -557,8 +558,8 @@ export default function RelationshipBubbleChart({
         circle.setAttribute('stroke', color);
         circle.setAttribute('stroke-width', isHovered ? '1.5' : '1');
         circle.setAttribute('stroke-dasharray', '8,4');
-      } else if (nodeType === 'organization') {
-        // 組織ノード
+      } else if (nodeType === 'organization' || nodeType === 'company') {
+        // 組織/事業会社ノード
         circle.setAttribute('fill', color);
         circle.setAttribute('fill-opacity', isHovered ? '0.85' : '0.75');
         circle.setAttribute('stroke', '#ffffff');
@@ -596,6 +597,8 @@ export default function RelationshipBubbleChart({
           tooltipContent = `テーマ: ${nodeData.name}`;
         } else if (nodeType === 'organization') {
           tooltipContent = `組織: ${nodeData.name}`;
+        } else if (nodeType === 'company') {
+          tooltipContent = `事業会社: ${nodeData.name}`;
         } else if (nodeType === 'initiative') {
           tooltipContent = `注力施策: ${nodeData.name}`;
           if (nodeInfo?.data?.description) {
@@ -690,7 +693,7 @@ export default function RelationshipBubbleChart({
 
       // ラベルを追加
       const name = nodeData.name || '';
-      const minRadiusForLabel = nodeType === 'theme' ? 50 : nodeType === 'organization' ? 30 : nodeType === 'initiative' ? 20 : 12;
+      const minRadiusForLabel = nodeType === 'theme' ? 50 : (nodeType === 'organization' || nodeType === 'company') ? 30 : nodeType === 'initiative' ? 20 : 12;
       
       if (node.r > minRadiusForLabel && name) {
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -709,11 +712,11 @@ export default function RelationshipBubbleChart({
           fillColor = color;
           // テーマはバブルの上に配置
           text.setAttribute('y', String(node.y + offsetY - node.r - 20));
-        } else if (nodeType === 'organization') {
+        } else if (nodeType === 'organization' || nodeType === 'company') {
           fontSize = 16;
           fontWeight = '600';
           fillColor = color;
-          // 組織はバブルの上に配置（外側）
+          // 組織/事業会社はバブルの上に配置（外側）
           text.setAttribute('y', String(node.y + offsetY - node.r - 15));
         } else if (nodeType === 'initiative') {
           fontSize = 14;

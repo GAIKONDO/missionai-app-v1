@@ -47,6 +47,9 @@ export async function saveEntityEmbedding(
     throw new Error('エンティティ埋め込みの保存はクライアント側でのみ実行可能です');
   }
   
+  // companyIdがある場合はそれを使用、なければorganizationIdを使用
+  const orgOrCompanyId = entity.companyId || organizationId || entity.organizationId || '';
+  
   try {
     const now = new Date().toISOString();
     const embeddingVersion = CURRENT_EMBEDDING_VERSION;
@@ -107,7 +110,7 @@ export async function saveEntityEmbedding(
     const embeddingData: EntityEmbedding = {
       id: entityId,
       entityId,
-      organizationId,
+      organizationId: orgOrCompanyId,
       combinedEmbedding,
       nameEmbedding,
       metadataEmbedding,
@@ -121,7 +124,7 @@ export async function saveEntityEmbedding(
     if (shouldUseChroma()) {
       try {
         const { saveEntityEmbeddingToChroma } = await import('./entityEmbeddingsChroma');
-        await saveEntityEmbeddingToChroma(entityId, organizationId, entity);
+        await saveEntityEmbeddingToChroma(entityId, orgOrCompanyId, entity);
         console.log(`✅ ChromaDBにエンティティ埋め込みを保存しました: ${entityId}`);
         
         // ChromaDB同期状態を更新（entitiesテーブルのchromaSyncedカラムを1に設定）
@@ -232,10 +235,13 @@ export async function saveEntityEmbeddingAsync(
       return false;
     }
     
+    // companyIdがある場合はそれを使用、なければorganizationIdを使用
+    const orgOrCompanyId = entity.companyId || organizationId || entity.organizationId || '';
+    
     console.log(`🔄 [埋め込み生成] 開始: ${entity.name} (${entityId})`);
     
     // 埋め込みを生成
-    await saveEntityEmbedding(entityId, organizationId, entity);
+    await saveEntityEmbedding(entityId, orgOrCompanyId, entity);
     
     console.log(`✅ [埋め込み生成] 完了: ${entity.name} (${entityId})`);
     return true;
@@ -407,8 +413,9 @@ export async function findSimilarEntities(
         } else {
           // organizationIdが未指定の場合、すべての組織のコレクション件数を確認
           try {
-            const { getAllOrganizationsFromTree } = await import('./orgApi');
-            const orgs = await getAllOrganizationsFromTree();
+            const { getAllOrganizationsFromTree, getOrgTreeFromDb } = await import('./orgApi');
+            const orgTree = await getOrgTreeFromDb();
+            const orgs = getAllOrganizationsFromTree(orgTree);
             let totalCount = 0;
             for (const org of orgs) {
               try {
@@ -904,9 +911,13 @@ export async function batchUpdateEntityEmbeddings(
           }
         }
         
+        // エンティティを取得してorganizationIdまたはcompanyIdを取得
+        const entity = await getEntityById(entityId);
+        const orgOrCompanyId = entity?.companyId || entity?.organizationId || organizationId || '';
+        
         // SQLiteで確認できない場合、ChromaDBから確認（フォールバック）
         if (!forceRegenerate) {
-          const existing = await getEntityEmbedding(entityId, organizationId);
+          const existing = await getEntityEmbedding(entityId, orgOrCompanyId);
           if (existing) {
             console.log(`⏭️  エンティティ ${entityId} は既に埋め込みが存在するためスキップ（ChromaDB確認）`);
             const current = ++processedCount;
@@ -916,7 +927,7 @@ export async function batchUpdateEntityEmbeddings(
           }
         }
 
-        const result = await saveEntityEmbeddingAsync(entityId, organizationId);
+        const result = await saveEntityEmbeddingAsync(entityId, orgOrCompanyId);
         const current = ++processedCount;
         
         if (result) {

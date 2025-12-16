@@ -1,5 +1,7 @@
 import { callTauriCommand } from './localFirebase';
 import { apiGet, apiPost, apiPut, apiDelete } from './apiClient';
+import { saveInitiativeToJson, generateUniqueId } from './orgApi';
+import type { FocusInitiative } from './orgApi';
 
 export interface Company {
   id: string;
@@ -255,15 +257,6 @@ export async function exportCompaniesToCSV(filename?: string): Promise<void> {
 }
 
 /**
- * ユニークIDを生成
- */
-function generateUniqueId(): string {
-  const timestamp = Date.now().toString(36);
-  const randomPart = Math.random().toString(36).substring(2, 11);
-  return `init_${timestamp}_${randomPart}`;
-}
-
-/**
  * 議事録のユニークIDを生成
  */
 function generateMeetingNoteId(): string {
@@ -359,7 +352,7 @@ export async function saveCompanyContent(
       if (existingData.createdAt) {
         data.createdAt = typeof existingData.createdAt === 'string' 
           ? existingData.createdAt 
-          : (existingData.createdAt.toMillis ? new Date(existingData.createdAt.toMillis()).toISOString() : now);
+          : ((existingData.createdAt as any)?.toMillis ? new Date((existingData.createdAt as any).toMillis()).toISOString() : now);
       }
     } else {
       // 新規作成
@@ -538,18 +531,94 @@ export async function saveCompanyFocusInitiative(initiative: Partial<CompanyFocu
     
     // Tauri環境ではcallTauriCommandを使用
     if (typeof window !== 'undefined' && '__TAURI__' in window) {
+      console.log('💾 [saveCompanyFocusInitiative] 保存データ確認:', {
+        initiativeId,
+        companyId: data.companyId,
+        organizationId: data.organizationId,
+        title: data.title,
+        dataKeys: Object.keys(data),
+      });
       await callTauriCommand('doc_set', {
         collectionName: 'focusInitiatives',
         docId: initiativeId,
         data: data,
       });
       console.log('✅ [saveCompanyFocusInitiative] 保存成功（Tauri）:', initiativeId);
+      
+      // 保存後に確認のため再取得
+      try {
+        const verifyResult = await callTauriCommand('doc_get', {
+          collectionName: 'focusInitiatives',
+          docId: initiativeId,
+        });
+        console.log('🔍 [saveCompanyFocusInitiative] 保存後の確認:', {
+          exists: verifyResult?.exists,
+          companyId: verifyResult?.data?.companyId,
+          organizationId: verifyResult?.data?.organizationId,
+          verifyDataKeys: verifyResult?.data ? Object.keys(verifyResult.data) : [],
+        });
+      } catch (verifyError) {
+        console.warn('⚠️ [saveCompanyFocusInitiative] 保存後の確認エラー:', verifyError);
+      }
     } else {
       // フォールバック: firestoreを使用
       const { doc, setDoc } = await import('./firestore');
       const docRef = doc(null, 'focusInitiatives', initiativeId);
       await setDoc(docRef, data);
       console.log('✅ [saveCompanyFocusInitiative] 保存成功（Firestore）:', initiativeId);
+    }
+    
+    // JSONファイルにも保存
+    try {
+      // 既存データから追加のフィールドを取得（存在する場合）
+      const parseJsonArray = (value: any): string[] => {
+        if (Array.isArray(value)) return value;
+        if (typeof value === 'string') {
+          try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      };
+      
+      // データベースから取得したデータをFocusInitiative形式に変換
+      const fullInitiative: FocusInitiative = {
+        id: initiativeId,
+        organizationId: data.organizationId || undefined,
+        companyId: data.companyId || undefined,
+        title: data.title,
+        description: data.description,
+        content: data.content,
+        assignee: existingData?.assignee || '',
+        method: existingData?.method ? parseJsonArray(existingData.method) : [],
+        methodOther: existingData?.methodOther || '',
+        methodDetails: existingData?.methodDetails ? (typeof existingData.methodDetails === 'string' ? JSON.parse(existingData.methodDetails) : existingData.methodDetails) : {},
+        means: existingData?.means ? parseJsonArray(existingData.means) : [],
+        meansOther: existingData?.meansOther || '',
+        objective: existingData?.objective || '',
+        considerationPeriod: existingData?.considerationPeriod || '',
+        executionPeriod: existingData?.executionPeriod || '',
+        monetizationPeriod: existingData?.monetizationPeriod || '',
+        relatedOrganizations: existingData?.relatedOrganizations ? parseJsonArray(existingData.relatedOrganizations) : [],
+        relatedGroupCompanies: existingData?.relatedGroupCompanies ? parseJsonArray(existingData.relatedGroupCompanies) : [],
+        monetizationDiagram: existingData?.monetizationDiagram || '',
+        relationDiagram: existingData?.relationDiagram || '',
+        causeEffectDiagramId: existingData?.causeEffectDiagramId,
+        themeId: existingData?.themeId,
+        themeIds: themeIdsArray,
+        topicIds: topicIdsArray,
+        createdAt: data.createdAt,
+        updatedAt: data.updatedAt,
+      };
+      
+      await saveInitiativeToJson(fullInitiative);
+      console.log('✅ [saveCompanyFocusInitiative] JSONファイル保存成功:', initiativeId);
+    } catch (jsonError: any) {
+      // JSONファイルの保存に失敗しても、データベースへの保存は成功しているので警告のみ
+      console.warn('⚠️ [saveCompanyFocusInitiative] JSONファイルの保存に失敗しました（データベースへの保存は成功）:', jsonError);
     }
     
     return initiativeId;
@@ -707,7 +776,7 @@ export async function saveCompanyMeetingNote(note: Partial<CompanyMeetingNote>):
     } else if (existingData?.createdAt) {
       data.createdAt = typeof existingData.createdAt === 'string' 
         ? existingData.createdAt 
-        : (existingData.createdAt.toMillis ? new Date(existingData.createdAt.toMillis()).toISOString() : now);
+        : ((existingData.createdAt as any)?.toMillis ? new Date((existingData.createdAt as any).toMillis()).toISOString() : now);
     } else {
       data.createdAt = now;
     }

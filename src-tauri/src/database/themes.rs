@@ -14,6 +14,8 @@ pub struct Theme {
     #[serde(rename = "initiativeIds")]
     pub initiative_ids: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "createdAt")]
     pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -32,10 +34,12 @@ pub fn get_all_themes() -> SqlResult<Vec<Theme>> {
 
     let conn = db.get_connection()?;
 
+    println!("📖 [get_all_themes] テーマ取得開始");
+
     let mut stmt = conn.prepare(
-        "SELECT id, title, description, initiativeIds, createdAt, updatedAt
+        "SELECT id, title, description, initiativeIds, position, createdAt, updatedAt
          FROM themes
-         ORDER BY createdAt DESC, title ASC"
+         ORDER BY COALESCE(position, 999999) ASC, createdAt DESC, title ASC"
     )?;
 
     let themes = stmt.query_map([], |row| {
@@ -71,14 +75,21 @@ pub fn get_all_themes() -> SqlResult<Vec<Theme>> {
             title: row.get(1)?,
             description: row.get(2)?,
             initiative_ids,
-            created_at: row.get(4)?,
-            updated_at: row.get(5)?,
+            position: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
         })
     })?;
 
     let mut result = Vec::new();
     for theme in themes {
         result.push(theme?);
+    }
+
+    println!("📖 [get_all_themes] {}件のテーマを取得", result.len());
+    println!("📊 [get_all_themes] 取得したテーマのposition一覧:");
+    for theme in &result {
+        println!("  - {} ({}): position={:?}", theme.id, theme.title, theme.position);
     }
 
     Ok(result)
@@ -96,7 +107,7 @@ pub fn get_theme_by_id(id: &str) -> SqlResult<Option<Theme>> {
     let conn = db.get_connection()?;
 
     let result = conn.query_row(
-        "SELECT id, title, description, initiativeIds, createdAt, updatedAt
+        "SELECT id, title, description, initiativeIds, position, createdAt, updatedAt
          FROM themes
          WHERE id = ?1",
         params![id],
@@ -133,8 +144,9 @@ pub fn get_theme_by_id(id: &str) -> SqlResult<Option<Theme>> {
                 title: row.get(1)?,
                 description: row.get(2)?,
                 initiative_ids,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
+                position: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
             })
         },
     );
@@ -181,14 +193,28 @@ pub fn save_theme(theme: &Theme) -> SqlResult<Theme> {
 
     if is_new {
         // 新規作成
+        // positionが指定されていない場合、最大position+1を設定
+        let position = if let Some(pos) = theme.position {
+            Some(pos)
+        } else {
+            // 最大positionを取得して+1
+            let max_position: Option<i32> = conn.query_row(
+                "SELECT MAX(position) FROM themes",
+                [],
+                |row| row.get(0),
+            ).ok().flatten();
+            Some(max_position.unwrap_or(0) + 1)
+        };
+        
         conn.execute(
-            "INSERT INTO themes (id, title, description, initiativeIds, createdAt, updatedAt)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO themes (id, title, description, initiativeIds, position, createdAt, updatedAt)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 theme.id,
                 theme.title,
                 theme.description,
                 initiative_ids_json,
+                position,
                 now,
                 now,
             ],
@@ -196,12 +222,13 @@ pub fn save_theme(theme: &Theme) -> SqlResult<Theme> {
     } else {
         // 更新
         conn.execute(
-            "UPDATE themes SET title = ?1, description = ?2, initiativeIds = ?3, updatedAt = ?4
-             WHERE id = ?5",
+            "UPDATE themes SET title = ?1, description = ?2, initiativeIds = ?3, position = ?4, updatedAt = ?5
+             WHERE id = ?6",
             params![
                 theme.title,
                 theme.description,
                 initiative_ids_json,
+                theme.position,
                 now,
                 theme.id,
             ],
@@ -235,6 +262,7 @@ pub fn create_theme(title: String, description: Option<String>) -> SqlResult<The
         title,
         description,
         initiative_ids: None,
+        position: None, // 新規作成時はpositionを自動設定（save_theme内で処理）
         created_at: None,
         updated_at: None,
     };
@@ -257,6 +285,49 @@ pub fn delete_theme(id: &str) -> SqlResult<()> {
         "DELETE FROM themes WHERE id = ?1",
         params![id],
     )?;
+
+    Ok(())
+}
+
+/// 複数のテーマのpositionを一括更新
+pub fn update_theme_positions(updates: &[(String, i32)]) -> SqlResult<()> {
+    let db = get_db().ok_or_else(|| {
+        rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
+            Some("データベースが初期化されていません".to_string()),
+        )
+    })?;
+
+    let conn = db.get_connection()?;
+    let tx = conn.unchecked_transaction()?;
+    let now = get_timestamp();
+
+    println!("🔄 [update_theme_positions] 更新開始: {}件", updates.len());
+    
+    // 各テーマのpositionを更新
+    // フロントエンドから送られてきた順序をそのまま使用（既に1から始まる連番）
+    for (theme_id, position) in updates {
+        println!("  📝 テーマID: {}, position: {} に更新", theme_id, position);
+        let rows_affected = tx.execute(
+            "UPDATE themes SET position = ?1, updatedAt = ?2 WHERE id = ?3",
+            params![position, now, theme_id],
+        )?;
+        println!("  ✅ {}行が更新されました", rows_affected);
+    }
+
+    tx.commit()?;
+    println!("✅ [update_theme_positions] コミット完了");
+    
+    // 更新後の状態を確認
+    let mut stmt = conn.prepare("SELECT id, position FROM themes ORDER BY COALESCE(position, 999999) ASC")?;
+    let positions: Vec<(String, Option<i32>)> = stmt.query_map([], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    })?.collect::<Result<Vec<_>, _>>()?;
+    
+    println!("📊 [update_theme_positions] 更新後のposition一覧:");
+    for (id, pos) in &positions {
+        println!("  - {}: {:?}", id, pos);
+    }
 
     Ok(())
 }

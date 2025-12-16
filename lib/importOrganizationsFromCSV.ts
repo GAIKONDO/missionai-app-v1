@@ -43,7 +43,7 @@ async function readCSVFile(filePath: string): Promise<string[][]> {
     }
     
     const text = result.data;
-    const lines = text.split('\n').filter(line => line.trim());
+    const lines = text.split('\n').filter((line: string) => line.trim());
     
     // CSVをパース（カンマ区切り、ダブルクォート対応）
     const rows: string[][] = [];

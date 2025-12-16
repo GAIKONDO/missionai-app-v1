@@ -238,7 +238,7 @@ export default function PlantUMLDiagram({
           if (isMountedRef.current) {
             if (shouldUseOffline && isTauri && imageData instanceof Uint8Array) {
               // Tauri環境: バイト配列からBlob URLを作成
-              const blob = new Blob([imageData], { type: 'image/png' });
+              const blob = new Blob([imageData as BlobPart], { type: 'image/png' });
               const blobUrl = URL.createObjectURL(blob);
               setImageUrl(blobUrl);
               setSvgContent('');

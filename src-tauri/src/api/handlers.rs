@@ -953,6 +953,7 @@ pub async fn update_theme(
         title,
         description,
         initiative_ids,
+        position: None, // API経由の更新ではpositionは変更しない
         created_at: None,
         updated_at: None,
     };

@@ -101,18 +101,26 @@ impl WriteWorker {
             .and_then(|v| serde_json::to_string(v).ok())
             .unwrap_or_else(|| "{}".to_string());
         
+        // companyIdを取得（事業会社の議事録の場合）
+        let company_id = payload.get("companyId").and_then(|v| v.as_str());
+        
+        // organizationIdとcompanyIdのどちらか一方が設定されていることを確認
+        let org_id = if company_id.is_some() { None } else { Some(organization_id) };
+        
         // entitiesテーブルに挿入/更新（ChromaDB同期状態を0に設定）
         tx.execute(
-            r#"INSERT INTO entities (id, name, type, aliases, metadata, organizationId, chromaSynced, createdAt, updatedAt)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, datetime('now'), datetime('now'))
+            r#"INSERT INTO entities (id, name, type, aliases, metadata, organizationId, companyId, chromaSynced, createdAt, updatedAt)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, datetime('now'), datetime('now'))
                ON CONFLICT(id) DO UPDATE SET
                    name = excluded.name,
                    type = excluded.type,
                    aliases = excluded.aliases,
                    metadata = excluded.metadata,
+                   organizationId = excluded.organizationId,
+                   companyId = excluded.companyId,
                    chromaSynced = 0,
                    updatedAt = datetime('now')"#,
-            params![entity_id, name, entity_type, aliases_json, metadata_json, organization_id],
+            params![entity_id, name, entity_type, aliases_json, metadata_json, org_id, company_id],
         )?;
 
         tx.commit()?;
@@ -160,10 +168,16 @@ impl WriteWorker {
             .and_then(|v| serde_json::to_string(v).ok())
             .unwrap_or_else(|| "{}".to_string());
         
+        // companyIdを取得（事業会社の議事録の場合）
+        let company_id = payload.get("companyId").and_then(|v| v.as_str());
+        
+        // organizationIdとcompanyIdのどちらか一方が設定されていることを確認
+        let org_id = if company_id.is_some() { None } else { Some(organization_id) };
+        
         // relationsテーブルに挿入/更新（topicRelationsからリネーム済み、ChromaDB同期状態を0に設定）
         tx.execute(
-            r#"INSERT INTO relations (id, topicId, sourceEntityId, targetEntityId, relationType, description, confidence, metadata, organizationId, chromaSynced, createdAt, updatedAt)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, datetime('now'), datetime('now'))
+            r#"INSERT INTO relations (id, topicId, sourceEntityId, targetEntityId, relationType, description, confidence, metadata, organizationId, companyId, chromaSynced, createdAt, updatedAt)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, datetime('now'), datetime('now'))
                ON CONFLICT(id) DO UPDATE SET
                    topicId = excluded.topicId,
                    sourceEntityId = excluded.sourceEntityId,
@@ -172,9 +186,11 @@ impl WriteWorker {
                    description = excluded.description,
                    confidence = excluded.confidence,
                    metadata = excluded.metadata,
+                   organizationId = excluded.organizationId,
+                   companyId = excluded.companyId,
                    chromaSynced = 0,
                    updatedAt = datetime('now')"#,
-            params![relation_id, topic_id, source_entity_id, target_entity_id, relation_type, description, confidence, metadata_json, organization_id],
+            params![relation_id, topic_id, source_entity_id, target_entity_id, relation_type, description, confidence, metadata_json, org_id, company_id],
         )?;
 
         tx.commit()?;
@@ -225,9 +241,15 @@ impl WriteWorker {
             .and_then(|v| serde_json::to_string(v).ok())
             .unwrap_or_else(|| "[]".to_string());
         
+        // companyIdを取得（事業会社の議事録の場合）
+        let company_id = payload.get("companyId").and_then(|v| v.as_str());
+        
+        // organizationIdとcompanyIdのどちらか一方が設定されていることを確認
+        let org_id = if company_id.is_some() { None } else { Some(organization_id) };
+        
         tx.execute(
-            r#"INSERT INTO topics (id, topicId, meetingNoteId, organizationId, title, description, content, semanticCategory, keywords, tags, chromaSynced, createdAt, updatedAt)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, datetime('now'), datetime('now'))
+            r#"INSERT INTO topics (id, topicId, meetingNoteId, organizationId, companyId, title, description, content, semanticCategory, keywords, tags, chromaSynced, createdAt, updatedAt)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, datetime('now'), datetime('now'))
                ON CONFLICT(id) DO UPDATE SET
                    title = excluded.title,
                    description = excluded.description,
@@ -235,9 +257,11 @@ impl WriteWorker {
                    semanticCategory = excluded.semanticCategory,
                    keywords = excluded.keywords,
                    tags = excluded.tags,
+                   organizationId = excluded.organizationId,
+                   companyId = excluded.companyId,
                    chromaSynced = 0,
                    updatedAt = datetime('now')"#,
-            params![topic_id, topic_id, meeting_note_id, organization_id, title, description, content, semantic_category, keywords_json, tags_json],
+            params![topic_id, topic_id, meeting_note_id, org_id, company_id, title, description, content, semantic_category, keywords_json, tags_json],
         )?;
         
         tx.commit()?;

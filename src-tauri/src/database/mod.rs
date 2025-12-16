@@ -93,6 +93,7 @@ pub use design_doc::{
 };
 pub use themes::{
     get_all_themes, get_theme_by_id, save_theme, create_theme, delete_theme,
+    update_theme_positions,
     Theme,
 };
 
@@ -861,11 +862,53 @@ impl Database {
                 title TEXT NOT NULL,
                 description TEXT,
                 initiativeIds TEXT,
+                position INTEGER,
                 createdAt TEXT,
                 updatedAt TEXT
             )",
             [],
         )?;
+        
+        // positionカラムのマイグレーション（既存テーブルにカラムが存在しない場合）
+        let position_exists: bool = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('themes') WHERE name = 'position'",
+            [],
+            |row| Ok(row.get::<_, i32>(0)? > 0),
+        ).unwrap_or(false);
+
+        if !position_exists {
+            init_log!("🔧 themesテーブルにpositionカラムを追加します...");
+            
+            // トランザクション内で実行（安全性のため）
+            let tx = conn.unchecked_transaction()?;
+            
+            // カラム追加
+            tx.execute(
+                "ALTER TABLE themes ADD COLUMN position INTEGER",
+                [],
+            )?;
+            
+            // 既存データにpositionを設定（createdAt順に連番を割り当て）
+            // サブクエリを使用してより安全に実装（ROW_NUMBER()の代わりにCOUNTを使用）
+            tx.execute(
+                "UPDATE themes SET position = (
+                    SELECT COUNT(*) + 1 FROM themes t2 
+                    WHERE (t2.createdAt < themes.createdAt) 
+                    OR (t2.createdAt = themes.createdAt AND t2.title < themes.title)
+                    OR (t2.createdAt = themes.createdAt AND t2.title = themes.title AND t2.id < themes.id)
+                )",
+                [],
+            )?;
+            
+            // positionカラムにインデックスを追加（パフォーマンス向上）
+            tx.execute(
+                "CREATE INDEX IF NOT EXISTS idx_themes_position ON themes(position)",
+                [],
+            )?;
+            
+            tx.commit()?;
+            init_log!("✅ positionカラムの追加と初期値設定が完了しました");
+        }
 
         // テーマ階層設定テーブル（A2C100用）
         conn.execute(
@@ -1117,7 +1160,8 @@ impl Database {
                 id TEXT PRIMARY KEY,
                 topicId TEXT NOT NULL,
                 meetingNoteId TEXT NOT NULL,
-                organizationId TEXT NOT NULL,
+                organizationId TEXT,
+                companyId TEXT,
                 title TEXT NOT NULL,
                 description TEXT,
                 content TEXT,
@@ -1130,10 +1174,102 @@ impl Database {
                 createdAt TEXT NOT NULL,
                 updatedAt TEXT NOT NULL,
                 FOREIGN KEY (meetingNoteId) REFERENCES meetingNotes(id),
-                FOREIGN KEY (organizationId) REFERENCES organizations(id)
+                FOREIGN KEY (organizationId) REFERENCES organizations(id),
+                FOREIGN KEY (companyId) REFERENCES companies(id),
+                CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
+                       (organizationId IS NULL AND companyId IS NOT NULL))
             )",
             [],
         )?;
+        
+        // topicsテーブルのマイグレーション（companyIdカラムとCHECK制約を追加）
+        init_log!("🔍 topicsテーブルのマイグレーションを開始します...");
+        if let Err(e) = (|| -> SqlResult<()> {
+            let topics_table_exists: bool = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='topics'",
+                [],
+                |row| row.get(0),
+            ).unwrap_or(false);
+            
+            init_log!("📊 topicsテーブルの存在確認: {}", topics_table_exists);
+            
+            if topics_table_exists {
+                // companyIdカラムが存在するかどうかを確認
+                let company_id_exists: bool = conn.query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('topics') WHERE name='companyId'",
+                    [],
+                    |row| row.get::<_, i32>(0).map(|n| n > 0),
+                ).unwrap_or(false);
+                
+                init_log!("📊 topicsテーブルのcompanyIdカラムの存在確認: {}", company_id_exists);
+                
+                if !company_id_exists {
+                    init_log_always!("📝 topicsテーブルを再作成します（companyIdカラムとCHECK制約を追加）");
+                    
+                    // 外部キー制約を一時的に無効化
+                    conn.execute("PRAGMA foreign_keys = OFF", [])?;
+                    init_log!("✅ 外部キー制約を無効化しました");
+                    
+                    // 既存データをバックアップテーブルにコピー
+                    conn.execute("CREATE TABLE IF NOT EXISTS topics_backup AS SELECT * FROM topics", [])?;
+                    init_log!("✅ バックアップテーブルを作成しました");
+                    
+                    // 古いテーブルを削除
+                    conn.execute("DROP TABLE topics", [])?;
+                    init_log!("✅ 古いテーブルを削除しました");
+                    
+                    // 新しいテーブルを作成（companyIdカラムとCHECK制約を追加）
+                    conn.execute(
+                        "CREATE TABLE topics (
+                            id TEXT PRIMARY KEY,
+                            topicId TEXT NOT NULL,
+                            meetingNoteId TEXT NOT NULL,
+                            organizationId TEXT,
+                            companyId TEXT,
+                            title TEXT NOT NULL,
+                            description TEXT,
+                            content TEXT,
+                            semanticCategory TEXT,
+                            keywords TEXT,
+                            tags TEXT,
+                            chromaSynced INTEGER DEFAULT 0,
+                            chromaSyncError TEXT,
+                            lastChromaSyncAttempt TEXT,
+                            createdAt TEXT NOT NULL,
+                            updatedAt TEXT NOT NULL,
+                            FOREIGN KEY (meetingNoteId) REFERENCES meetingNotes(id),
+                            FOREIGN KEY (organizationId) REFERENCES organizations(id),
+                            FOREIGN KEY (companyId) REFERENCES companies(id),
+                            CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
+                                   (organizationId IS NULL AND companyId IS NOT NULL))
+                        )",
+                        [],
+                    )?;
+                    init_log!("✅ 新しいテーブルを作成しました");
+                    
+                    // バックアップテーブルからデータをコピー
+                    conn.execute(
+                        "INSERT INTO topics (id, topicId, meetingNoteId, organizationId, companyId, title, description, content, semanticCategory, keywords, tags, chromaSynced, chromaSyncError, lastChromaSyncAttempt, createdAt, updatedAt) 
+                         SELECT id, topicId, meetingNoteId, organizationId, NULL, title, description, content, semanticCategory, keywords, tags, chromaSynced, chromaSyncError, lastChromaSyncAttempt, createdAt, updatedAt FROM topics_backup", 
+                        []
+                    )?;
+                    init_log!("✅ バックアップテーブルからデータをコピーしました");
+                    
+                    // バックアップテーブルを削除
+                    conn.execute("DROP TABLE topics_backup", [])?;
+                    init_log!("✅ バックアップテーブルを削除しました");
+                    
+                    // 外部キー制約を再有効化
+                    conn.execute("PRAGMA foreign_keys = ON", [])?;
+                    init_log!("✅ 外部キー制約を再有効化しました");
+                } else {
+                    init_log!("ℹ️  topicsテーブルにcompanyIdカラムは既に存在します");
+                }
+            }
+            Ok(())
+        })() {
+            init_log_always!("❌ topicsテーブルのマイグレーション中にエラーが発生しました: {}", e);
+        }
 
         // 事業会社テーブル（新規追加）
         conn.execute(
@@ -1203,6 +1339,7 @@ impl Database {
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_org_chroma ON relations(organizationId, chromaSynced)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_meetingNoteId ON topics(meetingNoteId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_organizationId ON topics(organizationId)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_companyId ON topics(companyId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_chromaSynced ON topics(chromaSynced)", [])?;
         // 複合インデックス: organizationId + chromaSynced（RAG検索のパフォーマンス向上）
         conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_org_chroma ON topics(organizationId, chromaSynced)", [])?;

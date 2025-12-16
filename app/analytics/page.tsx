@@ -2,9 +2,27 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import Layout from '@/components/Layout';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import RelationshipDiagram2D, { type RelationshipNode, type RelationshipLink } from '@/components/RelationshipDiagram2D';
-import { getThemes, getFocusInitiatives, deleteTheme, saveTheme, type Theme, type FocusInitiative, getAllTopics, type TopicInfo } from '@/lib/orgApi';
+import { getThemes, getFocusInitiatives, deleteTheme, saveTheme, updateThemePositions, type Theme, type FocusInitiative, getAllTopics, type TopicInfo } from '@/lib/orgApi';
 import { getOrgTreeFromDb, type OrgNodeData } from '@/lib/orgApi';
+import { getAllCompanies, getCompanyFocusInitiatives, type Company, type CompanyFocusInitiative } from '@/lib/companiesApi';
 import dynamic from 'next/dynamic';
 
 // RelationshipDiagram2Dを動的インポート（SSRを回避）
@@ -26,6 +44,19 @@ const DynamicRelationshipBubbleChart = dynamic(() => import('@/components/Relati
     </div>
   ),
 });
+
+// 開発環境でのみログを有効化するヘルパー関数（パフォーマンス最適化）
+const isDev = process.env.NODE_ENV === 'development';
+const devLog = (...args: any[]) => {
+  if (isDev) {
+    console.log(...args);
+  }
+};
+const devWarn = (...args: any[]) => {
+  if (isDev) {
+    console.warn(...args);
+  }
+};
 
 // テーマ選択ボタンコンポーネント
 function ThemeSelector({ 
@@ -139,6 +170,176 @@ function ThemeSelector({
   );
 }
 
+// SortableThemeItemコンポーネント
+function SortableThemeItem({ 
+  theme, 
+  onEdit, 
+  onDelete 
+}: { 
+  theme: Theme; 
+  onEdit: () => void; 
+  onDelete: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: theme.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        ...style,
+        padding: '16px',
+        border: '1px solid #E0E0E0',
+        borderRadius: '8px',
+        marginBottom: '12px',
+        backgroundColor: '#FAFAFA',
+        cursor: isDragging ? 'grabbing' : 'grab',
+      }}
+    >
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        gap: '16px',
+      }}>
+        {/* ドラッグハンドル */}
+        <div
+          {...attributes}
+          {...listeners}
+          style={{
+            cursor: 'grab',
+            padding: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            color: '#6B7280',
+            backgroundColor: '#F3F4F6',
+            borderRadius: '4px',
+            transition: 'background-color 0.2s',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = '#E5E7EB';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = '#F3F4F6';
+          }}
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path
+              d="M7 5h6M7 10h6M7 15h6"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            />
+          </svg>
+        </div>
+        
+        {/* テーマ情報 */}
+        <div style={{ flex: 1 }}>
+          <div style={{
+            fontSize: '16px',
+            fontWeight: '600',
+            color: '#1A1A1A',
+            marginBottom: '8px',
+            fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          }}>
+            {theme.title}
+          </div>
+          {theme.description && (
+            <div style={{
+              fontSize: '14px',
+              color: '#4B5563',
+              marginBottom: '8px',
+              fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            }}>
+              {theme.description}
+            </div>
+          )}
+          {theme.initiativeIds && theme.initiativeIds.length > 0 && (
+            <div style={{
+              fontSize: '12px',
+              color: '#808080',
+              fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            }}>
+              関連注力施策: {theme.initiativeIds.length}件
+            </div>
+          )}
+        </div>
+        
+        {/* 編集・削除ボタン */}
+        <div style={{
+          display: 'flex',
+          gap: '8px',
+        }}>
+          <button
+            type="button"
+            onClick={onEdit}
+            style={{
+              padding: '8px 12px',
+              fontSize: '14px',
+              fontWeight: '500',
+              color: '#4262FF',
+              backgroundColor: '#F0F4FF',
+              border: '1.5px solid #4262FF',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = '#E0E8FF';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = '#F0F4FF';
+            }}
+          >
+            編集
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            style={{
+              padding: '8px 12px',
+              fontSize: '14px',
+              fontWeight: '500',
+              color: '#DC2626',
+              backgroundColor: '#FEF2F2',
+              border: '1.5px solid #DC2626',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = '#FEE2E2';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = '#FEF2F2';
+            }}
+          >
+            削除
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// データ表示モードの型定義
+type DataViewMode = 'organization' | 'company';
+
 export default function AnalyticsPage() {
   const [themes, setThemes] = useState<Theme[]>([]);
   const [selectedThemeId, setSelectedThemeId] = useState<string | null>(null);
@@ -148,6 +349,7 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'diagram' | 'bubble'>('diagram');
+  const [dataViewMode, setDataViewMode] = useState<DataViewMode>('organization');
   const [showThemeModal, setShowThemeModal] = useState(false);
   const [editingTheme, setEditingTheme] = useState<Theme | null>(null);
   const [themeFormTitle, setThemeFormTitle] = useState('');
@@ -155,11 +357,34 @@ export default function AnalyticsPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [themeToDelete, setThemeToDelete] = useState<Theme | null>(null);
   const [showEditThemesModal, setShowEditThemesModal] = useState(false);
+  const [orderedThemes, setOrderedThemes] = useState<Theme[]>([]);
+  
+  // 事業会社関連の状態
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [companyInitiatives, setCompanyInitiatives] = useState<CompanyFocusInitiative[]>([]);
+
+  // テーマリストを再読み込みする関数（先に定義）
+  const refreshThemes = useCallback(async () => {
+    try {
+      const refreshedThemes = await getThemes();
+      setThemes(refreshedThemes);
+      
+      // positionでソートしてorderedThemesを設定
+      const sorted = [...refreshedThemes].sort((a, b) => {
+        const posA = a.position ?? 999999;
+        const posB = b.position ?? 999999;
+        return posA - posB;
+      });
+      setOrderedThemes(sorted);
+    } catch (error: any) {
+      console.error('テーマリストの再読み込みに失敗しました:', error);
+    }
+  }, []);
 
   // トピックリストを再取得する関数
   const refreshTopics = useCallback(async () => {
     if (!orgData) {
-      console.warn('組織データがありません。トピックリストを再取得できません。');
+      devWarn('組織データがありません。トピックリストを再取得できません。');
       return;
     }
     
@@ -180,21 +405,100 @@ export default function AnalyticsPage() {
       
       await collectTopics(orgData);
       setTopics(allTopics);
-      console.log('✅ トピックリストを再取得しました:', allTopics.length, '件');
+          devLog('✅ トピックリストを再取得しました:', allTopics.length, '件');
     } catch (error: any) {
       console.error('トピックリストの再取得に失敗しました:', error);
     }
   }, [orgData]);
 
-  // テーマリストを再読み込みする関数
-  const refreshThemes = useCallback(async () => {
-    try {
-      const refreshedThemes = await getThemes();
-      setThemes(refreshedThemes);
-    } catch (error: any) {
-      console.error('テーマリストの再読み込みに失敗しました:', error);
+  // ドラッグ&ドロップハンドラー（refreshThemesの後に定義）
+  const handleDragEnd = useCallback(async (event: DragEndEvent) => {
+    const { active, over } = event;
+    
+    if (over && active.id !== over.id) {
+      // 現在のテーマリストを取得（最新の状態を確認）
+      const currentThemes = await getThemes();
+      const currentThemeIds = currentThemes.map(t => t.id);
+      const originalThemeIds = orderedThemes.map(t => t.id);
+      
+      // テーマが追加/削除されていないか確認（楽観的ロック）
+      if (currentThemeIds.length !== originalThemeIds.length ||
+          !currentThemeIds.every((id, index) => id === originalThemeIds[index])) {
+        // テーマリストが変更されている場合は警告を表示
+        alert('テーマリストが更新されました。ページをリロードしてください。');
+        // refreshThemesを直接呼び出す代わりに、getThemesを呼び出して状態を更新
+        const refreshedThemes = await getThemes();
+        setThemes(refreshedThemes);
+        const sorted = [...refreshedThemes].sort((a, b) => {
+          const posA = a.position ?? 999999;
+          const posB = b.position ?? 999999;
+          return posA - posB;
+        });
+        setOrderedThemes(sorted);
+        return;
+      }
+      
+      const oldIndex = orderedThemes.findIndex(t => t.id === active.id);
+      const newIndex = orderedThemes.findIndex(t => t.id === over.id);
+      
+      if (oldIndex === -1 || newIndex === -1) {
+        return;
+      }
+      
+      // 一時的にUIを更新（楽観的更新）
+      const newOrderedThemes = arrayMove(orderedThemes, oldIndex, newIndex);
+      setOrderedThemes(newOrderedThemes);
+      
+      // positionを更新（1から始まる連番）
+      const updates = newOrderedThemes.map((theme, index) => ({
+        themeId: theme.id,
+        position: index + 1,
+      }));
+      
+      devLog('🔄 [handleDragEnd] 送信するupdates:', updates.length, '件');
+      
+      try {
+        await updateThemePositions(updates);
+        // テーマリストを再読み込み（サーバー側で正規化されたpositionを取得）
+        const refreshedThemes = await getThemes();
+        devLog('📖 [handleDragEnd] 再取得したテーマ数:', refreshedThemes.length, '件');
+        setThemes(refreshedThemes);
+        const sorted = [...refreshedThemes].sort((a, b) => {
+          const posA = a.position ?? 999999;
+          const posB = b.position ?? 999999;
+          return posA - posB;
+        });
+        devLog('📊 [handleDragEnd] ソート完了');
+        setOrderedThemes(sorted);
+      } catch (error) {
+        console.error('テーマ順序の更新に失敗しました:', error);
+        // エラー時は元に戻す
+        setOrderedThemes(orderedThemes);
+        alert('テーマ順序の更新に失敗しました。ページをリロードしてください。');
+        // テーマリストを再読み込み
+        const refreshedThemes = await getThemes();
+        setThemes(refreshedThemes);
+        const sorted = [...refreshedThemes].sort((a, b) => {
+          const posA = a.position ?? 999999;
+          const posB = b.position ?? 999999;
+          return posA - posB;
+        });
+        setOrderedThemes(sorted);
+      }
     }
-  }, []);
+  }, [orderedThemes]);
+
+  // ドラッグ&ドロップ用のセンサー（handleDragEndの後に定義）
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // 8px移動してからドラッグ開始
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   // テーマと注力施策を読み込み
   useEffect(() => {
@@ -203,9 +507,9 @@ export default function AnalyticsPage() {
         setLoading(true);
         setError(null);
         
-        console.log('📖 テーマを読み込み中...');
+        devLog('📖 テーマを読み込み中...');
         let themesData = await getThemes();
-        console.log('📖 読み込んだテーマ数:', themesData.length);
+        devLog('📖 読み込んだテーマ数:', themesData.length);
         
         // 重複テーマを削除（タイトルで重複チェック）
         const titleMap = new Map<string, Theme[]>();
@@ -220,7 +524,7 @@ export default function AnalyticsPage() {
         const duplicatesToDelete: string[] = [];
         titleMap.forEach((themes, title) => {
           if (themes.length > 1) {
-            console.log(`⚠️ 重複テーマを検出: 「${title}」 (${themes.length}件)`);
+            devWarn(`⚠️ 重複テーマを検出: 「${title}」 (${themes.length}件)`);
             // 最初の1つを残して、残りを削除対象に追加
             for (let i = 1; i < themes.length; i++) {
               duplicatesToDelete.push(themes[i].id);
@@ -230,26 +534,33 @@ export default function AnalyticsPage() {
         
         // 重複テーマを削除
         if (duplicatesToDelete.length > 0) {
-          console.log(`🗑️ ${duplicatesToDelete.length}件の重複テーマを削除中...`);
+          devLog(`🗑️ ${duplicatesToDelete.length}件の重複テーマを削除中...`);
           for (const themeId of duplicatesToDelete) {
             try {
               await deleteTheme(themeId);
-              console.log(`✅ 重複テーマを削除しました: ${themeId}`);
+              devLog(`✅ 重複テーマを削除しました: ${themeId}`);
             } catch (error: any) {
               console.error(`❌ 重複テーマの削除に失敗しました (ID: ${themeId}):`, error);
             }
           }
           // 削除後に再取得
           themesData = await getThemes();
-          console.log(`✅ 重複削除後のテーマ数: ${themesData.length}`);
+          devLog(`✅ 重複削除後のテーマ数: ${themesData.length}`);
         }
         
-        console.log('📖 最終的なテーマ数:', themesData.length);
-        console.log('📖 テーマ一覧:', themesData.map(t => ({ id: t.id, title: t.title })));
+        devLog('📖 最終的なテーマ数:', themesData.length);
         
         const orgTree = await getOrgTreeFromDb();
         
         setThemes(themesData);
+        
+        // positionでソートしてorderedThemesを設定
+        const sorted = [...themesData].sort((a, b) => {
+          const posA = a.position ?? 999999;
+          const posB = b.position ?? 999999;
+          return posA - posB;
+        });
+        setOrderedThemes(sorted);
         setOrgData(orgTree);
         
         // グローバルに公開（デバッグ用）
@@ -257,65 +568,109 @@ export default function AnalyticsPage() {
           (window as any).refreshThemes = refreshThemes;
         }
         
-        // 全注力施策を取得
-        if (orgTree) {
-          const allInitiatives: FocusInitiative[] = [];
-          const collectInitiatives = async (org: OrgNodeData) => {
-            if (org.id) {
-              const orgInitiatives = await getFocusInitiatives(org.id);
-              allInitiatives.push(...orgInitiatives);
-            }
-            
-            if (org.children) {
-              for (const child of org.children) {
-                await collectInitiatives(child);
+        // データ表示モードに応じてデータを取得
+        if (dataViewMode === 'organization') {
+          // 組織モード: 組織の注力施策を取得
+          if (orgTree) {
+            const allInitiatives: FocusInitiative[] = [];
+            const collectInitiatives = async (org: OrgNodeData) => {
+              if (org.id) {
+                const orgInitiatives = await getFocusInitiatives(org.id);
+                allInitiatives.push(...orgInitiatives);
               }
+              
+              if (org.children) {
+                for (const child of org.children) {
+                  await collectInitiatives(child);
+                }
+              }
+            };
+            
+            await collectInitiatives(orgTree);
+            
+            // デバッグ: topicIdsが含まれている注力施策を確認
+            const initiativesWithTopics = allInitiatives.filter(i => i.topicIds && i.topicIds.length > 0);
+            devLog('🔍 [Analytics] トピックが紐づけられた注力施策:', {
+              count: initiativesWithTopics.length,
+            });
+            
+            setInitiatives(allInitiatives);
+            
+            // すべての個別トピックを取得
+            const allTopics: TopicInfo[] = [];
+            const collectTopics = async (org: OrgNodeData) => {
+              if (org.id) {
+                const orgTopics = await getAllTopics(org.id);
+                allTopics.push(...orgTopics);
+              }
+              
+              if (org.children) {
+                for (const child of org.children) {
+                  await collectTopics(child);
+                }
+              }
+            };
+            
+            await collectTopics(orgTree);
+            
+            // デバッグ: 取得したトピックを確認
+            devLog('🔍 [Analytics] 取得したトピック:', {
+              count: allTopics.length,
+            });
+            
+            setTopics(allTopics);
+          }
+        } else {
+          // 事業会社モード: 事業会社の注力施策を取得
+          const allCompanies = await getAllCompanies();
+          setCompanies(allCompanies);
+          
+          // 各事業会社の注力施策を取得
+          const initiativePromises = allCompanies.map(company => 
+            getCompanyFocusInitiatives(company.id)
+          );
+          const initiativeResults = await Promise.allSettled(initiativePromises);
+          
+          const allCompanyInitiatives: CompanyFocusInitiative[] = [];
+          initiativeResults.forEach((result, index) => {
+            if (result.status === 'fulfilled') {
+              allCompanyInitiatives.push(...result.value);
+            } else {
+              devWarn(`⚠️ [Analytics] 事業会社「${allCompanies[index].name}」の施策取得エラー:`, result.reason);
             }
-          };
-          
-          await collectInitiatives(orgTree);
-          
-          // デバッグ: topicIdsが含まれている注力施策を確認
-          const initiativesWithTopics = allInitiatives.filter(i => i.topicIds && i.topicIds.length > 0);
-          console.log('🔍 [Analytics] トピックが紐づけられた注力施策:', {
-            count: initiativesWithTopics.length,
-            initiatives: initiativesWithTopics.map(i => ({
-              id: i.id,
-              title: i.title,
-              topicIds: i.topicIds,
-            })),
           });
           
-          setInitiatives(allInitiatives);
+          setCompanyInitiatives(allCompanyInitiatives);
           
-          // すべての個別トピックを取得
-          const allTopics: TopicInfo[] = [];
-          const collectTopics = async (org: OrgNodeData) => {
-            if (org.id) {
-              const orgTopics = await getAllTopics(org.id);
-              allTopics.push(...orgTopics);
-            }
-            
-            if (org.children) {
-              for (const child of org.children) {
-                await collectTopics(child);
+          // 事業会社モードでもトピックを取得（組織ツリーから）
+          if (orgTree) {
+            const allTopics: TopicInfo[] = [];
+            const collectTopics = async (org: OrgNodeData) => {
+              if (org.id) {
+                const orgTopics = await getAllTopics(org.id);
+                allTopics.push(...orgTopics);
               }
-            }
-          };
+              
+              if (org.children) {
+                for (const child of org.children) {
+                  await collectTopics(child);
+                }
+              }
+            };
+            
+            await collectTopics(orgTree);
+            
+            devLog('🔍 [Analytics] 取得したトピック:', {
+              count: allTopics.length,
+            });
+            
+            setTopics(allTopics);
+          }
           
-          await collectTopics(orgTree);
-          
-          // デバッグ: 取得したトピックを確認
-          console.log('🔍 [Analytics] 取得したトピック:', {
-            count: allTopics.length,
-            topics: allTopics.slice(0, 5).map(t => ({
-              id: t.id,
-              title: t.title,
-              organizationId: t.organizationId,
-            })),
+          devLog('🔍 [Analytics] 事業会社モード データ読み込み完了:', {
+            companies: allCompanies.length,
+            companyInitiatives: allCompanyInitiatives.length,
           });
-          
-          setTopics(allTopics);
         }
       } catch (error: any) {
         console.error('データの読み込みに失敗しました:', error);
@@ -326,31 +681,31 @@ export default function AnalyticsPage() {
     };
     
     loadData();
-  }, []);
+  }, [dataViewMode]);
 
   // 選択されたテーマに基づいて2D関係性図のノードとリンクを生成
   const { nodes, links } = useMemo(() => {
-    console.log('🔍 [2D関係性図] useMemo実行:', {
+    devLog('🔍 [2D関係性図] useMemo実行:', {
       selectedThemeId,
+      dataViewMode,
       hasOrgData: !!orgData,
       themesCount: themes.length,
-      initiativesCount: initiatives.length,
+      initiativesCount: dataViewMode === 'organization' ? initiatives.length : companyInitiatives.length,
       topicsCount: topics.length,
-      topicsSample: topics.slice(0, 3).map(t => ({ id: t.id, title: t.title })),
     });
 
     // テーマが存在する場合は、組織データがなくても、テーマが選択されていなくても（すべて表示）テーマノードを表示
-    if (!orgData && themes.length === 0) {
-      console.log('🔍 [2D関係性図] 組織データなし、かつテーマが存在しない');
+    if (!orgData && themes.length === 0 && dataViewMode === 'organization') {
+      devLog('🔍 [2D関係性図] 組織データなし、かつテーマが存在しない');
       return { nodes: [], links: [] };
     }
 
     const diagramNodes: RelationshipNode[] = [];
     const diagramLinks: RelationshipLink[] = [];
 
-    // 親ノード「情報・通信部門」を追加（組織データがある場合のみ）
+    // 親ノード「情報・通信部門」を追加（組織データがある場合のみ、組織モードのみ）
     const parentNodeId = 'parent-department';
-    if (orgData) {
+    if (orgData && dataViewMode === 'organization') {
     diagramNodes.push({
       id: parentNodeId,
       label: '情報・通信部門',
@@ -364,11 +719,11 @@ export default function AnalyticsPage() {
       ? themes.filter((t) => t.id === selectedThemeId)
       : themes;
 
-    console.log('🔍 [2D関係性図] 表示するテーマ数:', themesToShow.length);
+    devLog('🔍 [2D関係性図] 表示するテーマ数:', themesToShow.length);
     
     // テーマが0件の場合は空を返す
     if (themesToShow.length === 0) {
-      console.log('🔍 [2D関係性図] 表示するテーマがありません');
+      devLog('🔍 [2D関係性図] 表示するテーマがありません');
       return { nodes: [], links: [] };
     }
 
@@ -382,8 +737,8 @@ export default function AnalyticsPage() {
         data: theme,
       });
 
-      // 親ノードからテーマへのリンク（親ノードが存在する場合のみ）
-      if (orgData) {
+      // 親ノードからテーマへのリンク（親ノードが存在する場合のみ、組織モードのみ）
+      if (orgData && dataViewMode === 'organization') {
       diagramLinks.push({
         source: parentNodeId,
         target: theme.id,
@@ -391,14 +746,22 @@ export default function AnalyticsPage() {
       });
       }
 
-      // テーマに関連する注力施策を取得
-      const relatedInitiatives = initiatives.filter((init) => 
-        theme.initiativeIds?.includes(init.id) || 
-        init.themeId === theme.id || 
-        (Array.isArray(init.themeIds) && init.themeIds.includes(theme.id))
-      );
+      // テーマに関連する注力施策を取得（データ表示モードに応じて）
+      let relatedInitiatives: Array<FocusInitiative | CompanyFocusInitiative> = [];
+      if (dataViewMode === 'organization') {
+        relatedInitiatives = initiatives.filter((init) => 
+          theme.initiativeIds?.includes(init.id) || 
+          init.themeId === theme.id || 
+          (Array.isArray(init.themeIds) && init.themeIds.includes(theme.id))
+        );
+      } else {
+        // 事業会社モード: 事業会社の注力施策をフィルター
+        relatedInitiatives = companyInitiatives.filter((init) => 
+          Array.isArray(init.themeIds) && init.themeIds.includes(theme.id)
+        );
+      }
 
-      console.log(`🔍 [2D関係性図] テーマ「${theme.title}」の関連する注力施策:`, relatedInitiatives.length, '件');
+      // ループ内のログを削除（パフォーマンス最適化）
 
       // 組織ツリーから組織名を取得するヘルパー関数
       const getOrgName = (orgId: string, orgTree: OrgNodeData | null): string => {
@@ -424,45 +787,82 @@ export default function AnalyticsPage() {
       // テーマが選択されている場合、組織や注力施策、トピックが0件でもテーマノードは表示する
       // （既にテーマノードは追加済み）
 
-      // このテーマに関連する組織を収集（注力施策から組織IDを取得）
-      const organizationIds = new Set<string>();
-      relatedInitiatives.forEach((init) => {
-        // メインの組織ID
-        if (init.organizationId) {
-          organizationIds.add(init.organizationId);
-        }
-        // 関連組織も追加
-        if (Array.isArray(init.relatedOrganizations)) {
-          init.relatedOrganizations.forEach((orgId) => {
-            if (orgId) {
-              organizationIds.add(orgId);
-            }
+      if (dataViewMode === 'organization') {
+        // 組織モード: このテーマに関連する組織を収集（注力施策から組織IDを取得）
+        const organizationIds = new Set<string>();
+        relatedInitiatives.forEach((init) => {
+          const orgInit = init as FocusInitiative;
+          // メインの組織ID
+          if (orgInit.organizationId) {
+            organizationIds.add(orgInit.organizationId);
+          }
+          // 関連組織も追加
+          if (Array.isArray(orgInit.relatedOrganizations)) {
+            orgInit.relatedOrganizations.forEach((orgId) => {
+              if (orgId) {
+                organizationIds.add(orgId);
+              }
+            });
+          }
+        });
+
+        // 各組織のノードとリンクを追加（各テーマごとに独立したノードを作成）
+        organizationIds.forEach((orgId) => {
+          // テーマごとに独立したノードIDを作成（テーマID_組織ID）
+          const orgNodeId = `${theme.id}_${orgId}`;
+          
+          const orgName = getOrgName(orgId, orgData);
+          
+          // このテーマ用の組織ノードを追加（各テーマごとに独立）
+          diagramNodes.push({
+            id: orgNodeId,
+            label: orgName,
+            type: 'organization',
+            data: { id: orgId, name: orgName, originalId: orgId, themeId: theme.id },
           });
-        }
-      });
 
-      // 各組織のノードとリンクを追加（各テーマごとに独立したノードを作成）
-      organizationIds.forEach((orgId) => {
-        // テーマごとに独立したノードIDを作成（テーマID_組織ID）
-        const orgNodeId = `${theme.id}_${orgId}`;
-        
-        const orgName = getOrgName(orgId, orgData);
-        
-        // このテーマ用の組織ノードを追加（各テーマごとに独立）
-        diagramNodes.push({
-          id: orgNodeId,
-          label: orgName,
-          type: 'organization',
-          data: { id: orgId, name: orgName, originalId: orgId, themeId: theme.id },
+          // テーマから組織へのリンク
+          diagramLinks.push({
+            source: theme.id,
+            target: orgNodeId,
+            type: 'main',
+          });
+        });
+      } else {
+        // 事業会社モード: このテーマに関連する事業会社を収集（注力施策から事業会社IDを取得）
+        const companyIds = new Set<string>();
+        relatedInitiatives.forEach((init) => {
+          const companyInit = init as CompanyFocusInitiative;
+          if (companyInit.companyId) {
+            companyIds.add(companyInit.companyId);
+          }
         });
 
-        // テーマから組織へのリンク
-        diagramLinks.push({
-          source: theme.id,
-          target: orgNodeId,
-          type: 'main',
+        // 各事業会社のノードとリンクを追加（各テーマごとに独立したノードを作成）
+        companyIds.forEach((companyId) => {
+          // テーマごとに独立したノードIDを作成（テーマID_事業会社ID）
+          const companyNodeId = `${theme.id}_${companyId}`;
+          
+          // 事業会社名を取得
+          const company = companies.find(c => c.id === companyId);
+          const companyName = company ? (company.name || companyId) : companyId;
+          
+          // このテーマ用の事業会社ノードを追加（各テーマごとに独立）
+          diagramNodes.push({
+            id: companyNodeId,
+            label: companyName,
+            type: 'company',
+            data: { id: companyId, name: companyName, originalId: companyId, themeId: theme.id },
+          });
+
+          // テーマから事業会社へのリンク
+          diagramLinks.push({
+            source: theme.id,
+            target: companyNodeId,
+            type: 'main',
+          });
         });
-      });
+      }
 
       // 各注力施策のノードとリンクを追加（各テーマごとに独立したノードを作成）
       relatedInitiatives.forEach((initiative) => {
@@ -477,19 +877,38 @@ export default function AnalyticsPage() {
           data: { ...initiative, originalId: initiative.id, themeId: theme.id },
         });
 
-        // 組織から注力施策へのリンク（組織が存在する場合のみ）
-        if (initiative.organizationId) {
-          // このテーマ用の組織ノードIDを作成
-          const orgNodeId = `${theme.id}_${initiative.organizationId}`;
-          
-          // 組織ノードが存在することを確認
-          const orgNodeExists = diagramNodes.find(n => n.id === orgNodeId);
-          if (orgNodeExists) {
-            diagramLinks.push({
-              source: orgNodeId,
-              target: initiativeNodeId,
-              type: 'branch',
-            });
+        // 組織/事業会社から注力施策へのリンク（組織/事業会社が存在する場合のみ）
+        if (dataViewMode === 'organization') {
+          const orgInit = initiative as FocusInitiative;
+          if (orgInit.organizationId) {
+            // このテーマ用の組織ノードIDを作成
+            const orgNodeId = `${theme.id}_${orgInit.organizationId}`;
+            
+            // 組織ノードが存在することを確認
+            const orgNodeExists = diagramNodes.find(n => n.id === orgNodeId);
+            if (orgNodeExists) {
+              diagramLinks.push({
+                source: orgNodeId,
+                target: initiativeNodeId,
+                type: 'branch',
+              });
+            }
+          }
+        } else {
+          const companyInit = initiative as CompanyFocusInitiative;
+          if (companyInit.companyId) {
+            // このテーマ用の事業会社ノードIDを作成
+            const companyNodeId = `${theme.id}_${companyInit.companyId}`;
+            
+            // 事業会社ノードが存在することを確認
+            const companyNodeExists = diagramNodes.find(n => n.id === companyNodeId);
+            if (companyNodeExists) {
+              diagramLinks.push({
+                source: companyNodeId,
+                target: initiativeNodeId,
+                type: 'branch',
+              });
+            }
           }
         }
         
@@ -504,37 +923,34 @@ export default function AnalyticsPage() {
               const parsed = JSON.parse(initiative.topicIds);
               parsedTopicIds = Array.isArray(parsed) ? parsed : [];
             } catch (e) {
-              console.warn('⚠️ [2D関係性図] topicIdsのパースエラー:', e, 'value:', initiative.topicIds);
+              devWarn('⚠️ [2D関係性図] topicIdsのパースエラー:', e, 'value:', initiative.topicIds);
               parsedTopicIds = [];
             }
           }
         }
         
         if (parsedTopicIds.length > 0) {
-          console.log('🔍 [2D関係性図] 注力施策に紐づけられたトピック:', {
+          // 大きなデータ構造のログを簡略化（パフォーマンス最適化）
+          devLog('🔍 [2D関係性図] 注力施策に紐づけられたトピック:', {
             initiativeId: initiative.id,
             initiativeTitle: initiative.title,
-            topicIds: parsedTopicIds,
-            topicIdsType: typeof initiative.topicIds,
-            topicIdsRaw: initiative.topicIds,
-            availableTopicIds: topics.map(t => t.id),
+            topicIdsCount: parsedTopicIds.length,
             availableTopicsCount: topics.length,
-            availableTopicsSample: topics.slice(0, 5).map(t => ({ id: t.id, title: t.title, organizationId: t.organizationId })),
           });
           
           // 見つからなかったトピックIDを記録（重複を避けるため）
           const missingTopicIds = new Set<string>();
           
           parsedTopicIds.forEach((topicId) => {
-            // デバッグ: トピックIDの比較を詳細にログ出力
+            // トピックIDの比較（ループ内のログを削除してパフォーマンス最適化）
             const matchingTopics = topics.filter(t => {
               const matches = t.id === topicId;
-              if (!matches && t.id && topicId) {
-                // 部分一致や類似性を確認
+              if (!matches && t.id && topicId && isDev) {
+                // 部分一致や類似性を確認（開発環境のみ）
                 const idStr = String(t.id);
                 const searchStr = String(topicId);
                 if (idStr.includes(searchStr) || searchStr.includes(idStr)) {
-                  console.warn('⚠️ [2D関係性図] トピックIDの部分一致を検出:', {
+                  devWarn('⚠️ [2D関係性図] トピックIDの部分一致を検出:', {
                     topicId: topicId,
                     foundId: t.id,
                     topicTitle: t.title,
@@ -547,13 +963,7 @@ export default function AnalyticsPage() {
             const topic = matchingTopics.length > 0 ? matchingTopics[0] : null;
             
             if (topic) {
-              console.log('✅ [2D関係性図] トピックが見つかりました:', {
-                topicId,
-                topicTitle: topic.title,
-                topicNodeId: `${theme.id}_${initiative.id}_${topic.id}`,
-                topicOrganizationId: topic.organizationId,
-                initiativeOrganizationId: initiative.organizationId,
-              });
+              // ループ内のログを削除（パフォーマンス最適化）
               
               // テーマごとに独立したノードIDを作成（テーマID_注力施策ID_トピックID）
               const topicNodeId = `${theme.id}_${initiative.id}_${topic.id}`;
@@ -575,26 +985,21 @@ export default function AnalyticsPage() {
             } else {
               // 見つからなかったトピックIDを記録（重複を避ける）
               missingTopicIds.add(topicId);
-              console.warn('⚠️ [2D関係性図] トピックが見つかりませんでした:', {
+              // ループ内のログを簡略化（パフォーマンス最適化）
+              devWarn('⚠️ [2D関係性図] トピックが見つかりませんでした:', {
                 topicId,
                 initiativeId: initiative.id,
                 initiativeTitle: initiative.title,
-                initiativeOrganizationId: initiative.organizationId,
-                availableTopicIds: topics.map(t => t.id),
-                availableTopicsByOrg: topics.filter(t => t.organizationId === initiative.organizationId).map(t => ({ id: t.id, title: t.title })),
               });
             }
           });
           
           // 見つからなかったトピックIDがある場合のみ、1回だけ警告を出力（開発環境でのみ）
-          if (missingTopicIds.size > 0 && process.env.NODE_ENV === 'development') {
-            console.warn('⚠️ [2D関係性図] 一部のトピックが見つかりませんでした（データの不整合の可能性）:', {
-              missingTopicIds: Array.from(missingTopicIds),
+          if (missingTopicIds.size > 0) {
+            devWarn('⚠️ [2D関係性図] 一部のトピックが見つかりませんでした（データの不整合の可能性）:', {
+              missingTopicIdsCount: missingTopicIds.size,
               initiativeId: initiative.id,
               initiativeTitle: initiative.title,
-              initiativeOrganizationId: initiative.organizationId,
-              availableTopicIds: topics.map(t => t.id),
-              availableTopicsByOrg: topics.filter(t => t.organizationId === initiative.organizationId).map(t => ({ id: t.id, title: t.title })),
             });
           }
         }
@@ -621,22 +1026,19 @@ export default function AnalyticsPage() {
     });
     
     if (invalidLinks.length > 0) {
+      // エラーログは残すが、大きなデータ構造は簡略化
       console.error('❌ [2D関係性図] 無効なリンクが検出されました:', {
         invalidLinksCount: invalidLinks.length,
-        invalidLinks: invalidLinks,
-        allNodeIds: Array.from(nodeIds),
-        missingSourceNodes: invalidLinks.filter(l => !nodeIds.has(l.source)).map(l => l.source),
-        missingTargetNodes: invalidLinks.filter(l => !nodeIds.has(l.target)).map(l => l.target),
+        missingSourceNodesCount: invalidLinks.filter(l => !nodeIds.has(l.source)).length,
+        missingTargetNodesCount: invalidLinks.filter(l => !nodeIds.has(l.target)).length,
       });
     }
     
-    console.log('🔍 [2D関係性図] 最終結果:', {
+    devLog('🔍 [2D関係性図] 最終結果:', {
       totalNodes: diagramNodes.length,
       totalLinks: diagramLinks.length,
       topicNodesCount: topicNodes.length,
       topicLinksCount: topicLinks.length,
-      topicNodes: topicNodes.map(n => ({ id: n.id, label: n.label, type: n.type })),
-      topicLinks: topicLinks.map(l => ({ source: typeof l.source === 'string' ? l.source : l.source.id, target: typeof l.target === 'string' ? l.target : l.target.id })),
       invalidLinksCount: invalidLinks.length,
     });
 
@@ -648,7 +1050,7 @@ export default function AnalyticsPage() {
     });
 
     return { nodes: diagramNodes, links: validLinks };
-  }, [selectedThemeId, themes, initiatives, orgData, topics]);
+  }, [selectedThemeId, themes, initiatives, orgData, topics, dataViewMode, companyInitiatives, companies]);
 
   const handleNodeClick = (node: RelationshipNode) => {
     // ノードクリック時の処理（必要に応じて実装）
@@ -659,7 +1061,7 @@ export default function AnalyticsPage() {
     if (typeof window !== 'undefined') {
       (window as any).checkArielTopics = async () => {
         try {
-          console.log('=== BPOビジネス課のAriel社協業のトピック数を確認 ===\n');
+          devLog('=== BPOビジネス課のAriel社協業のトピック数を確認 ===\n');
           
           // 組織ツリーを取得
           const orgTree = await getOrgTreeFromDb();
@@ -679,15 +1081,15 @@ export default function AnalyticsPage() {
           
           if (!bpoOrg) {
             console.error('❌ BPOビジネス課が見つかりませんでした');
-            console.log('利用可能な組織:', allOrgs.map(o => ({ id: o.id, name: o.name, title: o.title })));
+            devLog('利用可能な組織数:', allOrgs.length);
             return;
           }
           
-          console.log(`✅ BPOビジネス課の組織ID: ${bpoOrg.id}\n`);
+          devLog(`✅ BPOビジネス課の組織ID: ${bpoOrg.id}\n`);
           
           // BPOビジネス課の注力施策を取得
           const bpoInitiatives = await getFocusInitiatives(bpoOrg.id);
-          console.log(`📊 BPOビジネス課の注力施策数: ${bpoInitiatives.length}件\n`);
+          devLog(`📊 BPOビジネス課の注力施策数: ${bpoInitiatives.length}件\n`);
           
           // Ariel社協業を検索
           const arielInitiative = bpoInitiatives.find(init => 
@@ -698,26 +1100,22 @@ export default function AnalyticsPage() {
           
           if (!arielInitiative) {
             console.error('❌ Ariel社協業の注力施策が見つかりませんでした');
-            console.log('利用可能な注力施策:', bpoInitiatives.map(i => ({ id: i.id, title: i.title })));
+            devLog('利用可能な注力施策数:', bpoInitiatives.length);
             return;
           }
           
-          console.log(`✅ 注力施策が見つかりました:`);
-          console.log(`   ID: ${arielInitiative.id}`);
-          console.log(`   タイトル: ${arielInitiative.title}`);
-          console.log(`   topicIds: ${JSON.stringify(arielInitiative.topicIds || [])}`);
-          console.log(`   トピック数: ${arielInitiative.topicIds ? arielInitiative.topicIds.length : 0}件\n`);
+          devLog(`✅ 注力施策が見つかりました:`);
+          devLog(`   ID: ${arielInitiative.id}`);
+          devLog(`   タイトル: ${arielInitiative.title}`);
+          devLog(`   トピック数: ${arielInitiative.topicIds ? arielInitiative.topicIds.length : 0}件\n`);
           
           if (arielInitiative.topicIds && arielInitiative.topicIds.length > 0) {
-            console.log('📋 紐づけられているトピックID:');
-            arielInitiative.topicIds.forEach((topicId, index) => {
-              console.log(`   ${index + 1}. ${topicId}`);
-            });
+            devLog('📋 紐づけられているトピックID数:', arielInitiative.topicIds.length);
           } else {
-            console.log('⚠️ トピックが紐づけられていません');
+            devLog('⚠️ トピックが紐づけられていません');
           }
           
-          console.log('\n=== 確認完了 ===');
+          devLog('\n=== 確認完了 ===');
           return {
             initiativeId: arielInitiative.id,
             title: arielInitiative.title,
@@ -733,7 +1131,7 @@ export default function AnalyticsPage() {
       // 既に読み込まれているデータから確認する関数も追加
       (window as any).checkArielTopicsFromLoadedData = () => {
         try {
-          console.log('=== 読み込まれているデータから確認 ===\n');
+          devLog('=== 読み込まれているデータから確認 ===\n');
           
           // BPOビジネス課の組織IDを検索
           if (!orgData) {
@@ -754,11 +1152,11 @@ export default function AnalyticsPage() {
             return;
           }
           
-          console.log(`✅ BPOビジネス課の組織ID: ${bpoOrg.id}\n`);
+          devLog(`✅ BPOビジネス課の組織ID: ${bpoOrg.id}\n`);
           
           // 読み込まれている注力施策から検索
           const bpoInitiatives = initiatives.filter(init => init.organizationId === bpoOrg.id);
-          console.log(`📊 BPOビジネス課の注力施策数: ${bpoInitiatives.length}件\n`);
+          devLog(`📊 BPOビジネス課の注力施策数: ${bpoInitiatives.length}件\n`);
           
           // Ariel社協業を検索
           const arielInitiative = bpoInitiatives.find(init => 
@@ -769,27 +1167,22 @@ export default function AnalyticsPage() {
           
           if (!arielInitiative) {
             console.error('❌ Ariel社協業の注力施策が見つかりませんでした');
-            console.log('利用可能な注力施策:', bpoInitiatives.map(i => ({ id: i.id, title: i.title })));
+            devLog('利用可能な注力施策数:', bpoInitiatives.length);
             return;
           }
           
-          console.log(`✅ 注力施策が見つかりました:`);
-          console.log(`   ID: ${arielInitiative.id}`);
-          console.log(`   タイトル: ${arielInitiative.title}`);
-          console.log(`   topicIds: ${JSON.stringify(arielInitiative.topicIds || [])}`);
-          console.log(`   トピック数: ${arielInitiative.topicIds ? arielInitiative.topicIds.length : 0}件\n`);
+          devLog(`✅ 注力施策が見つかりました:`);
+          devLog(`   ID: ${arielInitiative.id}`);
+          devLog(`   タイトル: ${arielInitiative.title}`);
+          devLog(`   トピック数: ${arielInitiative.topicIds ? arielInitiative.topicIds.length : 0}件\n`);
           
           if (arielInitiative.topicIds && arielInitiative.topicIds.length > 0) {
-            console.log('📋 紐づけられているトピックID:');
-            arielInitiative.topicIds.forEach((topicId, index) => {
-              const topic = topics.find(t => t.id === topicId);
-              console.log(`   ${index + 1}. ${topicId}${topic ? ` (${topic.title})` : ' (見つかりません)'}`);
-            });
+            devLog('📋 紐づけられているトピックID数:', arielInitiative.topicIds.length);
           } else {
-            console.log('⚠️ トピックが紐づけられていません');
+            devLog('⚠️ トピックが紐づけられていません');
           }
           
-          console.log('\n=== 確認完了 ===');
+          devLog('\n=== 確認完了 ===');
           return {
             initiativeId: arielInitiative.id,
             title: arielInitiative.title,
@@ -803,8 +1196,8 @@ export default function AnalyticsPage() {
         }
       };
       
-      console.log('✅ checkArielTopics() 関数が利用可能になりました。ブラウザのコンソールで実行してください。');
-      console.log('✅ checkArielTopicsFromLoadedData() 関数も利用可能です（読み込まれているデータから確認）。');
+      devLog('✅ checkArielTopics() 関数が利用可能になりました。ブラウザのコンソールで実行してください。');
+      devLog('✅ checkArielTopicsFromLoadedData() 関数も利用可能です（読み込まれているデータから確認）。');
     }
   }, [orgData, initiatives, topics]);
 
@@ -840,11 +1233,81 @@ export default function AnalyticsPage() {
               color: '#808080',
               fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
             }}>
-              テーマを中心に、各組織と注力施策の関係を2Dで表示します
+              テーマを中心に、各{dataViewMode === 'organization' ? '組織' : '事業会社'}と注力施策の関係を2Dで表示します
             </p>
         </div>
 
-        {/* 表示モード切り替え */}
+        {/* データ表示モード切り替え（組織/事業会社） */}
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{
+            display: 'flex',
+            gap: '8px',
+            alignItems: 'center',
+          }}>
+            <button
+              type="button"
+              onClick={() => setDataViewMode('organization')}
+              style={{
+                padding: '10px 20px',
+                fontSize: '14px',
+                fontWeight: dataViewMode === 'organization' ? '600' : '400',
+                color: dataViewMode === 'organization' ? '#4262FF' : '#1A1A1A',
+                backgroundColor: dataViewMode === 'organization' ? '#F0F4FF' : '#FFFFFF',
+                border: dataViewMode === 'organization' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                transition: 'all 150ms',
+                fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+              }}
+              onMouseEnter={(e) => {
+                if (dataViewMode !== 'organization') {
+                  e.currentTarget.style.borderColor = '#C4C4C4';
+                  e.currentTarget.style.backgroundColor = '#FAFAFA';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (dataViewMode !== 'organization') {
+                  e.currentTarget.style.borderColor = '#E0E0E0';
+                  e.currentTarget.style.backgroundColor = '#FFFFFF';
+                }
+              }}
+            >
+              組織
+            </button>
+            <button
+              type="button"
+              onClick={() => setDataViewMode('company')}
+              style={{
+                padding: '10px 20px',
+                fontSize: '14px',
+                fontWeight: dataViewMode === 'company' ? '600' : '400',
+                color: dataViewMode === 'company' ? '#4262FF' : '#1A1A1A',
+                backgroundColor: dataViewMode === 'company' ? '#F0F4FF' : '#FFFFFF',
+                border: dataViewMode === 'company' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                transition: 'all 150ms',
+                fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+              }}
+              onMouseEnter={(e) => {
+                if (dataViewMode !== 'company') {
+                  e.currentTarget.style.borderColor = '#C4C4C4';
+                  e.currentTarget.style.backgroundColor = '#FAFAFA';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (dataViewMode !== 'company') {
+                  e.currentTarget.style.borderColor = '#E0E0E0';
+                  e.currentTarget.style.backgroundColor = '#FFFFFF';
+                }
+              }}
+            >
+              事業会社
+            </button>
+          </div>
+        </div>
+
+        {/* 表示モード切り替え（2D関係性図/バブルチャート） */}
         <div style={{ marginBottom: '24px', display: 'flex', gap: '8px' }}>
           <button
             type="button"
@@ -1052,7 +1515,7 @@ export default function AnalyticsPage() {
               themes={themes}
               selectedThemeId={selectedThemeId}
               onSelect={(themeId) => {
-                console.log('テーマを選択:', themeId);
+                devLog('テーマを選択:', themeId);
                 setSelectedThemeId(themeId);
               }}
             />
@@ -1438,7 +1901,7 @@ export default function AnalyticsPage() {
                 テーマを編集
               </h3>
               
-              {themes.length === 0 ? (
+              {orderedThemes.length === 0 ? (
                 <p style={{
                   padding: '20px',
                   textAlign: 'center',
@@ -1449,119 +1912,36 @@ export default function AnalyticsPage() {
                   テーマがありません
                 </p>
               ) : (
-                <div style={{ marginBottom: '24px' }}>
-                  {themes.map((theme, index) => (
-                    <div
-                      key={theme.id}
-                      style={{
-                        padding: '16px',
-                        border: '1px solid #E0E0E0',
-                        borderRadius: '8px',
-                        marginBottom: index < themes.length - 1 ? '12px' : '0',
-                        backgroundColor: '#FAFAFA',
-                      }}
-                    >
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-start',
-                        gap: '16px',
-                      }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{
-                            fontSize: '16px',
-                            fontWeight: '600',
-                            color: '#1A1A1A',
-                            marginBottom: '8px',
-                            fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                          }}>
-                            {theme.title}
-                          </div>
-                          {theme.description && (
-                            <div style={{
-                              fontSize: '14px',
-                              color: '#4B5563',
-                              marginBottom: '8px',
-                              fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                            }}>
-                              {theme.description}
-                            </div>
-                          )}
-                          {theme.initiativeIds && theme.initiativeIds.length > 0 && (
-                            <div style={{
-                              fontSize: '12px',
-                              color: '#808080',
-                              fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                            }}>
-                              関連注力施策: {theme.initiativeIds.length}件
-                            </div>
-                          )}
-                        </div>
-                        <div style={{
-                          display: 'flex',
-                          gap: '8px',
-                        }}>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingTheme(theme);
-                              setThemeFormTitle(theme.title);
-                              setThemeFormDescription(theme.description || '');
-                              setShowEditThemesModal(false);
-                              setShowThemeModal(true);
-                            }}
-                            style={{
-                              padding: '8px 12px',
-                              fontSize: '14px',
-                              fontWeight: '500',
-                              color: '#4262FF',
-                              backgroundColor: '#F0F4FF',
-                              border: '1.5px solid #4262FF',
-                              borderRadius: '6px',
-                              cursor: 'pointer',
-                              fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.backgroundColor = '#E0E8FF';
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.backgroundColor = '#F0F4FF';
-                            }}
-                          >
-                            編集
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setThemeToDelete(theme);
-                              setShowDeleteModal(true);
-                            }}
-                            style={{
-                              padding: '8px 12px',
-                              fontSize: '14px',
-                              fontWeight: '500',
-                              color: '#DC2626',
-                              backgroundColor: '#FEF2F2',
-                              border: '1.5px solid #DC2626',
-                              borderRadius: '6px',
-                              cursor: 'pointer',
-                              fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.backgroundColor = '#FEE2E2';
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.backgroundColor = '#FEF2F2';
-                            }}
-                          >
-                            削除
-                          </button>
-                        </div>
-                      </div>
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleDragEnd}
+                >
+                  <SortableContext
+                    items={orderedThemes.map(t => t.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <div style={{ marginBottom: '24px' }}>
+                      {orderedThemes.map((theme) => (
+                        <SortableThemeItem
+                          key={theme.id}
+                          theme={theme}
+                          onEdit={() => {
+                            setEditingTheme(theme);
+                            setThemeFormTitle(theme.title);
+                            setThemeFormDescription(theme.description || '');
+                            setShowEditThemesModal(false);
+                            setShowThemeModal(true);
+                          }}
+                          onDelete={() => {
+                            setThemeToDelete(theme);
+                            setShowDeleteModal(true);
+                          }}
+                        />
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </SortableContext>
+                </DndContext>
               )}
               
               <div style={{

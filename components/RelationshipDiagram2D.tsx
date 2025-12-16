@@ -14,7 +14,7 @@ import { generateTopicMetadata, extractEntities, extractRelations } from '@/lib/
 import { getMeetingNoteById, saveMeetingNote, getAllTopics } from '@/lib/orgApi';
 import { getAvailableOllamaModels } from '@/lib/pageGeneration';
 import { getRelationsByTopicId, createRelation } from '@/lib/relationApi';
-import { getEntityById, createEntity, getEntitiesByOrganizationId } from '@/lib/entityApi';
+import { getEntityById, createEntity, getEntitiesByOrganizationId, getEntitiesByCompanyId } from '@/lib/entityApi';
 import { callTauriCommand } from '@/lib/localFirebase';
 import { saveTopicEmbeddingAsync } from '@/lib/topicEmbeddings';
 import type { Entity, EntityType } from '@/types/entity';
@@ -28,7 +28,7 @@ import { useMemo } from 'react';
 export interface RelationshipNode {
   id: string;
   label: string;
-  type: 'theme' | 'organization' | 'initiative' | 'topic';
+  type: 'theme' | 'organization' | 'initiative' | 'topic' | 'company';
   data?: any;
   x?: number;
   y?: number;
@@ -133,7 +133,7 @@ const DESIGN = {
 };
 
 // テキストを折り返す関数
-const wrapText = (text: string, maxWidth: number, fontSize: number, nodeType?: 'theme' | 'organization' | 'initiative' | 'topic'): string[] => {
+const wrapText = (text: string, maxWidth: number, fontSize: number, nodeType?: 'theme' | 'organization' | 'initiative' | 'topic' | 'company'): string[] => {
   // ノードタイプごとの最大文字数設定
   const maxCharsByType: Record<string, number> = {
     'theme': 10,        // テーマノード: 10文字
@@ -507,9 +507,13 @@ export default function RelationshipDiagram2D({
         // これにより、トピックに属するエンティティのみが表示される
         console.log('📊 エンティティ取得開始（トピックIDでフィルタリング）:', {
           organizationId: selectedTopic.organizationId,
+          companyId: selectedTopic.companyId,
           topicId: selectedTopic.id,
         });
-        const allEntities = await getEntitiesByOrganizationId(selectedTopic.organizationId);
+        // 事業会社の議事録の場合はcompanyIdで取得、組織の議事録の場合はorganizationIdで取得
+        const allEntities = selectedTopic.companyId
+          ? await getEntitiesByCompanyId(selectedTopic.companyId)
+          : await getEntitiesByOrganizationId(selectedTopic.organizationId);
         const topicEntities = allEntities.filter(e => {
           if (!e.metadata || typeof e.metadata !== 'object') return false;
           return 'topicId' in e.metadata && e.metadata.topicId === selectedTopic.id;
@@ -1575,22 +1579,51 @@ export default function RelationshipDiagram2D({
         finalMetadata = generatedMetadata;
       }
 
+      // organizationIdを確実に設定
+      const organizationId = selectedTopic.organizationId;
+      const companyId = selectedTopic.companyId || undefined;
+      
+      if (!organizationId) {
+        console.error('❌ [handleAIGenerateMetadata] organizationIdが設定されていません:', selectedTopic);
+        alert('エラー: 組織IDが設定されていません。ページをリロードしてください。');
+        return;
+      }
+
       // エンティティにorganizationIdとtopicIdを設定
       const entitiesWithOrgId = extractedEntities.map(entity => ({
         ...entity,
-        organizationId: selectedTopic.organizationId,
+        organizationId: organizationId, // 確実に設定
+        companyId: companyId, // 事業会社IDも設定
         metadata: {
           ...entity.metadata,
           topicId: selectedTopic.id, // トピックIDをmetadataに追加
         },
       }));
 
-      // リレーションにtopicIdとorganizationIdを設定
+      console.log('📝 [handleAIGenerateMetadata] エンティティにorganizationIdを設定:', {
+        organizationId: organizationId,
+        companyId: companyId,
+        entitiesCount: entitiesWithOrgId.length,
+        sampleEntity: entitiesWithOrgId[0] ? {
+          name: entitiesWithOrgId[0].name,
+          organizationId: entitiesWithOrgId[0].organizationId,
+          companyId: entitiesWithOrgId[0].companyId,
+        } : null,
+      });
+
+      // リレーションにtopicIdとorganizationId、companyIdを設定
       const relationsWithIds = extractedRelations.map(relation => ({
         ...relation,
         topicId: selectedTopic.id,
-        organizationId: selectedTopic.organizationId,
+        organizationId: organizationId, // 確実に設定
+        companyId: companyId, // 事業会社IDも設定
       }));
+      
+      console.log('📝 [handleAIGenerateMetadata] リレーションにorganizationIdを設定:', {
+        organizationId: organizationId,
+        companyId: companyId,
+        relationsCount: relationsWithIds.length,
+      });
 
       // 一時状態に保存
       setPendingMetadata(finalMetadata);
@@ -1639,11 +1672,62 @@ export default function RelationshipDiagram2D({
 
   // 生成されたメタデータを保存する関数
   const handleSaveMetadata = async () => {
-    if (!selectedTopic || !pendingMetadata) return;
+    console.log('🔍 [handleSaveMetadata] 関数が呼び出されました:', {
+      selectedTopic: selectedTopic ? { id: selectedTopic.id, title: selectedTopic.title } : null,
+      pendingMetadata: pendingMetadata ? 'あり' : 'なし',
+      pendingEntities: pendingEntities ? pendingEntities.length : 0,
+      pendingRelations: pendingRelations ? pendingRelations.length : 0,
+    });
+    
+    if (!selectedTopic) {
+      console.error('❌ [handleSaveMetadata] selectedTopicが設定されていません');
+      alert('エラー: トピックが選択されていません');
+      return;
+    }
+    
+    // pendingMetadata、pendingEntities、pendingRelations、または既存のtopicEntities/topicRelationsがあれば保存可能
+    const hasPendingData = pendingMetadata || (pendingEntities && pendingEntities.length > 0) || (pendingRelations && pendingRelations.length > 0);
+    const hasExistingData = topicEntities.length > 0 || topicRelations.length > 0;
+    
+    if (!hasPendingData && !hasExistingData) {
+      console.error('❌ [handleSaveMetadata] 保存するデータがありません:', {
+        pendingMetadata: pendingMetadata ? 'あり' : 'なし',
+        pendingEntities: pendingEntities ? pendingEntities.length : 0,
+        pendingRelations: pendingRelations ? pendingRelations.length : 0,
+        topicEntities: topicEntities.length,
+        topicRelations: topicRelations.length,
+      });
+      alert('エラー: 保存するデータがありません');
+      return;
+    }
+    
+    console.log('✅ [handleSaveMetadata] 保存可能なデータがあります:', {
+      hasPendingData,
+      hasExistingData,
+      pendingEntitiesCount: pendingEntities?.length || 0,
+      pendingRelationsCount: pendingRelations?.length || 0,
+      topicEntitiesCount: topicEntities.length,
+      topicRelationsCount: topicRelations.length,
+    });
+    
+    // pendingMetadataがない場合は、空のメタデータを作成
+    const metadataToSave = pendingMetadata || {
+      semanticCategory: selectedTopic.semanticCategory,
+      importance: selectedTopic.importance,
+      keywords: selectedTopic.keywords,
+      summary: selectedTopic.summary,
+    };
 
     try {
       setIsSavingMetadata(true);
-      console.log('💾 メタデータ保存を開始:', selectedTopic.id);
+      console.log('💾 [handleSaveMetadata] メタデータ保存を開始:', {
+        topicId: selectedTopic.id,
+        topicTitle: selectedTopic.title,
+        organizationId: selectedTopic.organizationId,
+        companyId: selectedTopic.companyId,
+        pendingEntitiesCount: pendingEntities?.length || 0,
+        pendingRelationsCount: pendingRelations?.length || 0,
+      });
 
       // 議事録を取得
       const meetingNote = await getMeetingNoteById(selectedTopic.meetingNoteId);
@@ -1686,10 +1770,10 @@ export default function RelationshipDiagram2D({
             const existingTopic = item.topics[topicIndex];
             item.topics[topicIndex] = {
               ...existingTopic,
-              semanticCategory: pendingMetadata.semanticCategory,
-              importance: pendingMetadata.importance,
-              keywords: pendingMetadata.keywords,
-              summary: pendingMetadata.summary,
+              semanticCategory: metadataToSave.semanticCategory,
+              importance: metadataToSave.importance,
+              keywords: metadataToSave.keywords,
+              summary: metadataToSave.summary,
             };
             topicFound = true;
             break;
@@ -1799,17 +1883,22 @@ export default function RelationshipDiagram2D({
       // エンティティとリレーションを保存
       let savedEntityCount = 0;
       let savedRelationCount = 0;
+      let entitiesToCreateCount = 0; // スコープ外でも使用できるように変数を定義
       
       // pendingEntitiesのIDから実際に作成されたIDへのマッピング
       const pendingIdToCreatedIdMap = new Map<string, string>();
       
-      // エンティティを保存
-      if (pendingEntities && pendingEntities.length > 0) {
-          console.log('💾 エンティティ保存を開始:', pendingEntities.length, '件');
+      // エンティティを保存（pendingEntitiesがあれば、または既存のtopicEntitiesがあれば）
+      const entitiesToSave = pendingEntities && pendingEntities.length > 0 ? pendingEntities : topicEntities;
+      if (entitiesToSave && entitiesToSave.length > 0) {
+          console.log('💾 エンティティ保存を開始:', entitiesToSave.length, '件');
           
           // 既存のエンティティを取得（重複チェック用）
           // トピックごとに独立したエンティティを管理するため、同じトピック内での重複のみをチェック
-          const existingEntities = await getEntitiesByOrganizationId(selectedTopic.organizationId);
+          // 事業会社のトピックの場合はcompanyIdで取得、組織のトピックの場合はorganizationIdで取得
+          const existingEntities = selectedTopic.companyId
+            ? await getEntitiesByCompanyId(selectedTopic.companyId)
+            : await getEntitiesByOrganizationId(selectedTopic.organizationId);
           
           // 同じトピック内で既に存在するエンティティをフィルタリング
           const existingEntitiesInTopic = existingEntities.filter(e => {
@@ -1823,12 +1912,16 @@ export default function RelationshipDiagram2D({
           );
           
           // 重複しないエンティティのみを作成（同じトピック内で重複しないもの）
-          const entitiesToCreate = pendingEntities.filter(entity => {
+          // pendingEntitiesがない場合は、topicEntitiesから重複していないものを取得
+          const entitiesToCreate = entitiesToSave.filter(entity => {
             const key = `${entity.name.toLowerCase()}_${selectedTopic.id}`;
+            // 既にデータベースに保存されている場合はスキップ
             return !existingEntityKeys.has(key);
           });
           
-          console.log(`📊 エンティティ作成対象: ${entitiesToCreate.length}件（重複除外: ${pendingEntities.length - entitiesToCreate.length}件、トピック: ${selectedTopic.id}）`);
+          entitiesToCreateCount = entitiesToCreate.length; // スコープ外でも使用できるように変数に保存
+          
+          console.log(`📊 エンティティ保存対象: ${entitiesToCreate.length}件（重複除外: ${entitiesToSave.length - entitiesToCreate.length}件、トピック: ${selectedTopic.id}）`);
           
           for (const entity of entitiesToCreate) {
             try {
@@ -1840,32 +1933,75 @@ export default function RelationshipDiagram2D({
                 topicId: selectedTopic.id, // トピックIDをmetadataに追加
               };
               
+              // organizationIdとcompanyIdを確実に設定
+              // 事業会社のトピックの場合はcompanyIdを優先、組織のトピックの場合はorganizationIdを優先
+              const companyId = entity.companyId || selectedTopic.companyId || undefined;
+              const organizationId = companyId 
+                ? (entity.organizationId || selectedTopic.organizationId || undefined)
+                : (entity.organizationId || selectedTopic.organizationId);
+              
+              // organizationIdとcompanyIdのどちらか一方が設定されている必要がある
+              if (!organizationId && !companyId) {
+                console.error('❌ エンティティ作成エラー: organizationIdもcompanyIdも設定されていません', {
+                  entityName: entity.name,
+                  entityOrganizationId: entity.organizationId,
+                  entityCompanyId: entity.companyId,
+                  topicOrganizationId: selectedTopic.organizationId,
+                  topicCompanyId: selectedTopic.companyId,
+                });
+                throw new Error('organizationIdまたはcompanyIdが設定されていません');
+              }
+              
+              console.log('📝 エンティティ作成開始:', {
+                name: entity.name,
+                organizationId: organizationId,
+                companyId: companyId,
+                topicId: selectedTopic.id,
+              });
+              
               const createdEntity = await createEntity({
                 name: entity.name,
                 type: entity.type,
                 aliases: entity.aliases || [],
                 metadata: entityMetadata,
-                organizationId: entity.organizationId,
+                organizationId: organizationId,
+                companyId: companyId,
               });
-              console.log('✅ エンティティ作成:', entity.name, 'pendingID:', pendingId, 'createdID:', createdEntity.id, 'topicId:', selectedTopic.id);
+              
+              console.log('✅ エンティティ作成成功:', {
+                name: entity.name,
+                pendingID: pendingId,
+                createdID: createdEntity.id,
+                topicId: selectedTopic.id,
+                organizationId: createdEntity.organizationId,
+                companyId: createdEntity.companyId,
+              });
+              
               // IDマッピングを作成
               pendingIdToCreatedIdMap.set(pendingId, createdEntity.id);
               savedEntityCount++;
             } catch (error: any) {
-              console.error('❌ エンティティ作成エラー:', entity.name, error);
-              // エラーが発生しても処理を続行
+              console.error('❌ エンティティ作成エラー:', {
+                entityName: entity.name,
+                error: error?.message || error,
+                stack: error?.stack,
+                entityOrganizationId: entity.organizationId,
+                topicOrganizationId: selectedTopic.organizationId,
+              });
+              // エラーが発生した場合は処理を中断
+              throw new Error(`エンティティ「${entity.name}」の作成に失敗しました: ${error?.message || error}`);
             }
           }
           
           // 既存のエンティティもマッピングに追加（同じトピック内のもののみ）
           existingEntitiesInTopic.forEach(entity => {
-            const pendingEntity = pendingEntities.find(e => 
+            const entityToMatch = entitiesToSave.find(e => 
               e.name.toLowerCase() === entity.name.toLowerCase() &&
               e.metadata && typeof e.metadata === 'object' &&
               'topicId' in e.metadata && e.metadata.topicId === selectedTopic.id
             );
-            if (pendingEntity) {
-              pendingIdToCreatedIdMap.set(pendingEntity.id, entity.id);
+            if (entityToMatch) {
+              pendingIdToCreatedIdMap.set(entityToMatch.id, entity.id);
             }
           });
           
@@ -1889,40 +2025,30 @@ export default function RelationshipDiagram2D({
           console.log('📊 IDマッピング:', Array.from(pendingIdToCreatedIdMap.entries()).map(([pending, created]) => `${pending} -> ${created}`));
         }
       
-      // リレーションを保存（エンティティが0件でも実行可能）
-      if (pendingRelations && pendingRelations.length > 0) {
-        console.log('💾 リレーション保存を開始:', pendingRelations.length, '件');
+      // リレーションを保存（pendingRelationsがあれば、または既存のtopicRelationsがあれば、エンティティが0件でも実行可能）
+      const relationsToSave = pendingRelations && pendingRelations.length > 0 ? pendingRelations : topicRelations;
+      if (relationsToSave && relationsToSave.length > 0) {
+        console.log('💾 リレーション保存を開始:', relationsToSave.length, '件');
         
         // エンティティ名からIDのマッピングを取得（同じトピック内のエンティティのみ）
         let entityNameToIdMap = new Map<string, string>();
-        if (pendingEntities && pendingEntities.length > 0) {
-          // エンティティが保存済みの場合、更新後のエンティティを取得
-          const updatedEntities = await getEntitiesByOrganizationId(selectedTopic.organizationId);
-          // 同じトピック内のエンティティのみをフィルタリング
-          const updatedEntitiesInTopic = updatedEntities.filter(e => {
-            if (!e.metadata || typeof e.metadata !== 'object') return false;
-            return 'topicId' in e.metadata && e.metadata.topicId === selectedTopic.id;
-          });
-          updatedEntitiesInTopic.forEach(entity => {
-            entityNameToIdMap.set(entity.name.toLowerCase(), entity.id);
-          });
-        } else {
-          // エンティティが0件の場合、既存のエンティティを取得
-          const existingEntities = await getEntitiesByOrganizationId(selectedTopic.organizationId);
-          // 同じトピック内のエンティティのみをフィルタリング
-          const existingEntitiesInTopic = existingEntities.filter(e => {
-            if (!e.metadata || typeof e.metadata !== 'object') return false;
-            return 'topicId' in e.metadata && e.metadata.topicId === selectedTopic.id;
-          });
-          existingEntitiesInTopic.forEach(entity => {
-            entityNameToIdMap.set(entity.name.toLowerCase(), entity.id);
-          });
-        }
+        // エンティティを取得（保存済みまたは既存）
+        // 事業会社のトピックの場合はcompanyIdで取得、組織のトピックの場合はorganizationIdで取得
+        const allEntities = selectedTopic.companyId
+          ? await getEntitiesByCompanyId(selectedTopic.companyId)
+          : await getEntitiesByOrganizationId(selectedTopic.organizationId);
+        // 同じトピック内のエンティティのみをフィルタリング
+        const entitiesInTopic = allEntities.filter(e => {
+          if (!e.metadata || typeof e.metadata !== 'object') return false;
+          return 'topicId' in e.metadata && e.metadata.topicId === selectedTopic.id;
+        });
+        entitiesInTopic.forEach(entity => {
+          entityNameToIdMap.set(entity.name.toLowerCase(), entity.id);
+        });
         
-        if (pendingEntities && pendingEntities.length > 0) {
-          console.log('💾 リレーション保存を開始:', pendingRelations.length, '件');
-          
-          for (const relation of pendingRelations) {
+        console.log('💾 リレーション保存を開始:', relationsToSave.length, '件');
+        
+        for (const relation of relationsToSave) {
             try {
               // リレーションのエンティティIDを取得
               // extractRelationsが返すリレーションには、pendingEntitiesのエンティティIDが含まれている
@@ -1933,17 +2059,21 @@ export default function RelationshipDiagram2D({
                 console.warn('リレーションにsourceEntityIdまたはtargetEntityIdがありません:', relation);
                 continue;
               }
-              const sourceId = pendingIdToCreatedIdMap.get(relation.sourceEntityId);
-              const targetId = pendingIdToCreatedIdMap.get(relation.targetEntityId);
+              const sourceId = pendingIdToCreatedIdMap.get(relation.sourceEntityId) || relation.sourceEntityId;
+              const targetId = pendingIdToCreatedIdMap.get(relation.targetEntityId) || relation.targetEntityId;
               
-              if (!sourceId || !targetId) {
+              // sourceIdとtargetIdが既にデータベースに存在するか確認
+              const sourceEntityExists = entitiesInTopic.some(e => e.id === sourceId);
+              const targetEntityExists = entitiesInTopic.some(e => e.id === targetId);
+              
+              if (!sourceEntityExists || !targetEntityExists) {
                 // フォールバック: エンティティ名からIDを取得
-                const sourcePendingEntity = pendingEntities.find(e => e.id === relation.sourceEntityId);
-                const targetPendingEntity = pendingEntities.find(e => e.id === relation.targetEntityId);
+                const sourceEntity = entitiesToSave.find(e => e.id === relation.sourceEntityId);
+                const targetEntity = entitiesToSave.find(e => e.id === relation.targetEntityId);
                 
-                if (sourcePendingEntity && targetPendingEntity) {
-                  const fallbackSourceId = entityNameToIdMap.get(sourcePendingEntity.name.toLowerCase());
-                  const fallbackTargetId = entityNameToIdMap.get(targetPendingEntity.name.toLowerCase());
+                if (sourceEntity && targetEntity) {
+                  const fallbackSourceId = entityNameToIdMap.get(sourceEntity.name.toLowerCase());
+                  const fallbackTargetId = entityNameToIdMap.get(targetEntity.name.toLowerCase());
                   
                   if (fallbackSourceId && fallbackTargetId) {
                     console.log('⚠️ IDマッピングが見つかりませんが、エンティティ名からIDを取得しました（トピック内）:', {
@@ -1954,13 +2084,32 @@ export default function RelationshipDiagram2D({
                       topicId: selectedTopic.id,
                     });
                     // フォールバックIDを使用
+                    // 事業会社のトピックの場合はcompanyIdを優先、組織のトピックの場合はorganizationIdを優先
+                    const companyId = relation.companyId || selectedTopic.companyId || undefined;
+                    const organizationId = companyId 
+                      ? (relation.organizationId || selectedTopic.organizationId || undefined)
+                      : (relation.organizationId || selectedTopic.organizationId);
+                    
+                    // organizationIdとcompanyIdのどちらか一方が設定されている必要がある
+                    if (!organizationId && !companyId) {
+                      console.error('❌ リレーション作成エラー（フォールバック）: organizationIdもcompanyIdも設定されていません', {
+                        relationType: relation.relationType,
+                        relationOrganizationId: relation.organizationId,
+                        relationCompanyId: relation.companyId,
+                        topicOrganizationId: selectedTopic.organizationId,
+                        topicCompanyId: selectedTopic.companyId,
+                      });
+                      throw new Error('organizationIdまたはcompanyIdが設定されていません');
+                    }
+                    
                     const createdRelation = await createRelation({
                       sourceEntityId: fallbackSourceId,
                       targetEntityId: fallbackTargetId,
                       relationType: relation.relationType,
                       description: relation.description,
                       topicId: topicEmbeddingRecordId,
-                      organizationId: selectedTopic.organizationId,
+                      organizationId: organizationId,
+                      companyId: companyId,
                     });
                     console.log('✅ リレーション作成:', createdRelation.id);
                     savedRelationCount++;
@@ -1996,6 +2145,34 @@ export default function RelationshipDiagram2D({
                 targetId,
                 relationType: relation.relationType,
               });
+              // organizationIdとcompanyIdを確実に設定
+              // 事業会社のトピックの場合はcompanyIdを優先、組織のトピックの場合はorganizationIdを優先
+              const companyId = relation.companyId || selectedTopic.companyId || undefined;
+              const organizationId = companyId 
+                ? (relation.organizationId || selectedTopic.organizationId || undefined)
+                : (relation.organizationId || selectedTopic.organizationId);
+              
+              // organizationIdとcompanyIdのどちらか一方が設定されている必要がある
+              if (!organizationId && !companyId) {
+                console.error('❌ リレーション作成エラー: organizationIdもcompanyIdも設定されていません', {
+                  relationType: relation.relationType,
+                  relationOrganizationId: relation.organizationId,
+                  relationCompanyId: relation.companyId,
+                  topicOrganizationId: selectedTopic.organizationId,
+                  topicCompanyId: selectedTopic.companyId,
+                });
+                throw new Error('organizationIdまたはcompanyIdが設定されていません');
+              }
+              
+              console.log('📝 リレーション作成開始:', {
+                relationType: relation.relationType,
+                sourceId: sourceId,
+                targetId: targetId,
+                organizationId: organizationId,
+                companyId: companyId,
+                topicId: selectedTopic.id,
+              });
+              
               const createdRelation = await createRelation({
                 topicId: topicEmbeddingRecordId, // topicsのidを使用
                 sourceEntityId: sourceId,
@@ -2004,7 +2181,15 @@ export default function RelationshipDiagram2D({
                 description: relation.description,
                 confidence: relation.confidence,
                 metadata: relation.metadata,
-                organizationId: selectedTopic.organizationId,
+                organizationId: organizationId,
+                companyId: companyId,
+              });
+              
+              console.log('✅ リレーション作成成功:', {
+                id: createdRelation.id,
+                relationType: relation.relationType,
+                organizationId: createdRelation.organizationId,
+                companyId: createdRelation.companyId,
               });
               console.log('✅ リレーション作成完了（トピック内）:', {
                 relationId: createdRelation.id,
@@ -2013,29 +2198,76 @@ export default function RelationshipDiagram2D({
                 match: createdRelation.topicId === topicEmbeddingRecordId,
               });
               // エンティティ名を取得（ログ用）
-              const sourcePendingEntity = pendingEntities.find(e => e.id === relation.sourceEntityId);
-              const targetPendingEntity = pendingEntities.find(e => e.id === relation.targetEntityId);
-              const sourceName = sourcePendingEntity?.name || relation.sourceEntityId;
-              const targetName = targetPendingEntity?.name || relation.targetEntityId;
+              const sourceEntity = entitiesToSave.find(e => e.id === relation.sourceEntityId);
+              const targetEntity = entitiesToSave.find(e => e.id === relation.targetEntityId);
+              const sourceName = sourceEntity?.name || relation.sourceEntityId;
+              const targetName = targetEntity?.name || relation.targetEntityId;
               console.log('✅ リレーション作成（トピック内）:', relation.relationType, `${sourceName} -> ${targetName}`, 'ID:', createdRelation.id, 'topicId:', selectedTopic.id);
               savedRelationCount++;
             } catch (error: any) {
-              console.error('❌ リレーション作成エラー:', relation.relationType, error);
-              // エラーが発生しても処理を続行
+              console.error('❌ リレーション作成エラー:', {
+                relationType: relation.relationType,
+                error: error?.message || error,
+                stack: error?.stack,
+                sourceEntityId: relation.sourceEntityId,
+                targetEntityId: relation.targetEntityId,
+              });
+              // エラーが発生した場合は処理を中断
+              throw new Error(`リレーション「${relation.relationType}」の作成に失敗しました: ${error?.message || error}`);
             }
           }
         }
         
-        console.log(`✅ 保存完了: エンティティ ${savedEntityCount}件、リレーション ${savedRelationCount}件`);
+      console.log(`✅ 保存完了: エンティティ ${savedEntityCount}件、リレーション ${savedRelationCount}件`);
+      
+      // 保存が成功したか確認するため、データベースから取得して検証
+      try {
+        const { getEntitiesByOrganizationId } = await import('@/lib/entityApi');
+        const { getRelationsByTopicId } = await import('@/lib/relationApi');
+        
+        // エンティティを再取得して確認
+        const savedEntities = await getEntitiesByOrganizationId(selectedTopic.organizationId);
+        const savedEntitiesInTopic = savedEntities.filter(e => {
+          if (!e.metadata || typeof e.metadata !== 'object') return false;
+          return 'topicId' in e.metadata && e.metadata.topicId === selectedTopic.id;
+        });
+        
+        // リレーションを再取得して確認
+        const topicEmbeddingId = `${selectedTopic.meetingNoteId}-topic-${selectedTopic.id}`;
+        const savedRelations = await getRelationsByTopicId(topicEmbeddingId);
+        
+        console.log('✅ 保存確認:', {
+          savedEntitiesCount: savedEntitiesInTopic.length,
+          savedRelationsCount: savedRelations.length,
+          expectedEntitiesCount: savedEntityCount + (entitiesToSave ? entitiesToSave.length - entitiesToCreateCount : 0),
+          expectedRelationsCount: savedRelationCount,
+        });
+        
+        // 保存されたデータが期待値と一致するか確認
+        if (savedEntitiesInTopic.length < savedEntityCount) {
+          console.warn('⚠️ 保存されたエンティティ数が期待値より少ないです:', {
+            saved: savedEntitiesInTopic.length,
+            expected: savedEntityCount,
+          });
+        }
+        
+        if (savedRelations.length < savedRelationCount) {
+          console.warn('⚠️ 保存されたリレーション数が期待値より少ないです:', {
+            saved: savedRelations.length,
+            expected: savedRelationCount,
+          });
+        }
+      } catch (verifyError) {
+        console.warn('⚠️ 保存確認中にエラーが発生しました（保存は成功している可能性があります）:', verifyError);
       }
 
       // selectedTopicの状態を更新して、保存されたメタデータを反映
       setSelectedTopic({
         ...selectedTopic,
-        semanticCategory: pendingMetadata.semanticCategory,
-        importance: pendingMetadata.importance,
-        keywords: pendingMetadata.keywords,
-        summary: pendingMetadata.summary,
+        semanticCategory: metadataToSave.semanticCategory,
+        importance: metadataToSave.importance,
+        keywords: metadataToSave.keywords,
+        summary: metadataToSave.summary,
       });
 
       // エンティティとリレーションを再取得
@@ -2072,13 +2304,18 @@ export default function RelationshipDiagram2D({
       if (onTopicMetadataSaved) {
         onTopicMetadataSaved();
       }
-
-      alert('メタデータ、エンティティ、リレーションを保存しました');
     } catch (error: any) {
       console.error('❌ メタデータ保存エラー:', error);
+      console.error('エラー詳細:', {
+        message: error?.message,
+        stack: error?.stack,
+        error: error,
+      });
       // エラー時は一時状態を保持して、ユーザーが再試行できるようにする
-      alert(`メタデータの保存に失敗しました: ${error.message}\n\nエラー詳細はコンソールを確認してください。`);
+      const errorMessage = error?.message || String(error);
+      alert(`❌ メタデータの保存に失敗しました\n\n${errorMessage}\n\nエラー詳細はコンソールを確認してください。`);
       // 一時状態はクリアしない
+      throw error; // エラーを再スローして、呼び出し元でも処理できるようにする
     } finally {
       setIsSavingMetadata(false);
     }
@@ -3364,9 +3601,17 @@ export default function RelationshipDiagram2D({
                         </>
                       )}
                     </button>
-                    {pendingMetadata && (
+                    {(pendingMetadata || pendingEntities || pendingRelations) && (
                       <button
-                        onClick={handleSaveMetadata}
+                        onClick={() => {
+                          console.log('🔍 [保存ボタン] クリックされました:', {
+                            selectedTopic: selectedTopic ? { id: selectedTopic.id, title: selectedTopic.title } : null,
+                            pendingMetadata: pendingMetadata ? 'あり' : 'なし',
+                            pendingEntities: pendingEntities ? pendingEntities.length : 0,
+                            pendingRelations: pendingRelations ? pendingRelations.length : 0,
+                          });
+                          handleSaveMetadata();
+                        }}
                         disabled={isSavingMetadata}
                         style={{
                           padding: '6px 12px',
@@ -4852,12 +5097,24 @@ export default function RelationshipDiagram2D({
                 const created = await createEntity({
                   ...entityData,
                   organizationId: selectedTopic.organizationId,
+                  companyId: selectedTopic.companyId || undefined,
+                  metadata: {
+                    ...entityData.metadata,
+                    topicId: selectedTopic.id,
+                  },
                 });
+                // pendingEntitiesがnullの場合は初期化してから追加
                 if (pendingEntities) {
                   setPendingEntities([...pendingEntities, created]);
                 } else {
-                  setTopicEntities([...topicEntities, created]);
+                  // pendingEntitiesを初期化して、既存のtopicEntitiesと新しいエンティティを含める
+                  setPendingEntities([...topicEntities, created]);
                 }
+                console.log('✅ [手動追加] エンティティを追加しました:', {
+                  entityId: created.id,
+                  entityName: created.name,
+                  pendingEntitiesCount: pendingEntities ? pendingEntities.length + 1 : topicEntities.length + 1,
+                });
                 alert('エンティティを追加しました');
               }
               
@@ -4905,12 +5162,20 @@ export default function RelationshipDiagram2D({
                   ...relationData,
                   topicId: `${selectedTopic.meetingNoteId}-topic-${selectedTopic.id}`,
                   organizationId: selectedTopic.organizationId,
+                  companyId: selectedTopic.companyId || undefined, // 事業会社IDも設定
                 });
+                // pendingRelationsがnullの場合は初期化してから追加
                 if (pendingRelations) {
                   setPendingRelations([...pendingRelations, created]);
                 } else {
-                  setTopicRelations([...topicRelations, created]);
+                  // pendingRelationsを初期化して、既存のtopicRelationsと新しいリレーションを含める
+                  setPendingRelations([...topicRelations, created]);
                 }
+                console.log('✅ [手動追加] リレーションを追加しました:', {
+                  relationId: created.id,
+                  relationType: created.relationType,
+                  pendingRelationsCount: pendingRelations ? pendingRelations.length + 1 : topicRelations.length + 1,
+                });
                 alert('リレーションを追加しました');
               }
               
@@ -5248,7 +5513,7 @@ function EntityModal({
         setIsCheckingSimilar(true);
         try {
           const { findSimilarEntities } = await import('@/lib/entityApi');
-          const similar = await findSimilarEntities(name.trim(), organizationId, 0.7);
+          const similar = await findSimilarEntities(name.trim(), organizationId || undefined, undefined, 0.7);
           // 既存のエンティティリストから除外
           const filtered = similar.filter(s => 
             !existingEntities.some(e => e.id === s.entity.id)

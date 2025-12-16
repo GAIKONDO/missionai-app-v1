@@ -12,6 +12,19 @@ import type { Company } from '@/lib/companiesApi';
 import { getCompaniesByOrganizationDisplay } from '@/lib/organizationCompanyDisplayApi';
 import type { OrganizationCompanyDisplay } from '@/lib/organizationCompanyDisplayApi';
 
+// 開発環境でのみログを有効化するヘルパー関数（パフォーマンス最適化）
+const isDev = process.env.NODE_ENV === 'development';
+const devLog = (...args: any[]) => {
+  if (isDev) {
+    console.log(...args);
+  }
+};
+const devWarn = (...args: any[]) => {
+  if (isDev) {
+    console.warn(...args);
+  }
+};
+
 type TabType = 'introduction' | 'focusAreas' | 'focusInitiatives' | 'meetingNotes';
 
 function OrganizationDetailPageContent() {
@@ -100,7 +113,7 @@ function OrganizationDetailPageContent() {
           const childInitiativesData = await getFocusInitiatives(childOrgId);
           childInitiatives.push(...childInitiativesData);
         } catch (error) {
-          console.warn(`⚠️ [reloadInitiatives] 子組織 ${childOrgId} の注力施策取得に失敗:`, error);
+          devWarn(`⚠️ [reloadInitiatives] 子組織 ${childOrgId} の注力施策取得に失敗:`, error);
         }
       }
       
@@ -161,10 +174,10 @@ function OrganizationDetailPageContent() {
       
       setInitiativesByOrg(initiativesByOrgMap);
       
-      console.log('📋 [reloadInitiatives] 注力施策を再取得しました:', {
+      devLog('📋 [reloadInitiatives] 注力施策を再取得しました:', {
         currentOrg: orgId,
         currentCount: currentInitiatives.length,
-        childOrgs: childOrgIds,
+        childOrgsCount: childOrgIds.length,
         childCount: childInitiatives.length,
         totalCount: allInitiatives.length,
       });
@@ -174,16 +187,16 @@ function OrganizationDetailPageContent() {
   };
 
   useEffect(() => {
-    console.log('🚀 [useEffect] loadOrganizationData開始:', { organizationId });
+    devLog('🚀 [useEffect] loadOrganizationData開始:', { organizationId });
     const loadOrganizationData = async () => {
       if (!organizationId) {
-        console.warn('⚠️ [loadOrganizationData] 組織IDが指定されていません');
+        devWarn('⚠️ [loadOrganizationData] 組織IDが指定されていません');
         setError('組織IDが指定されていません');
         setLoading(false);
         return;
       }
 
-      console.log('📋 [loadOrganizationData] 関数実行開始:', { organizationId });
+      devLog('📋 [loadOrganizationData] 関数実行開始:', { organizationId });
       try {
         setLoading(true);
         setError(null);
@@ -197,24 +210,22 @@ function OrganizationDetailPageContent() {
         }
         
         // デバッグ: 組織ツリーのルートノードのIDを確認
-        console.log('🔍 [loadOrganizationData] デバッグ情報:', {
+        devLog('🔍 [loadOrganizationData] デバッグ情報:', {
           organizationIdFromURL: organizationId,
           rootOrgId: orgTree.id,
           rootOrgName: orgTree.name,
-          rootOrgKeys: Object.keys(orgTree),
         });
         
         const foundOrg = findOrganizationById(orgTree, organizationId);
         
         // デバッグ: 見つかった組織の情報を確認
         if (foundOrg) {
-          console.log('✅ [loadOrganizationData] 組織が見つかりました:', {
+          devLog('✅ [loadOrganizationData] 組織が見つかりました:', {
             foundOrgId: foundOrg.id,
             foundOrgName: foundOrg.name,
-            foundOrgKeys: Object.keys(foundOrg),
           });
         } else {
-          console.warn('⚠️ [loadOrganizationData] 組織が見つかりませんでした:', {
+          devWarn('⚠️ [loadOrganizationData] 組織が見つかりませんでした:', {
             searchId: organizationId,
             rootOrgId: orgTree.id,
           });
@@ -244,20 +255,11 @@ function OrganizationDetailPageContent() {
             return orgData?.name === '情報・通信部門' || orgData?.name === foundOrg.name;
           });
           
-          console.log('🔍 [loadOrganizationData] organizationsテーブルの全ID:', {
+          // 大きなデータ構造のログを簡略化（パフォーマンス最適化）
+          devLog('🔍 [loadOrganizationData] organizationsテーブル:', {
             count: allOrgsResult?.length || 0,
-            ids: allOrgsResult?.slice(0, 10).map((org: any) => ({
-              id: org.id || org.data?.id,
-              name: org.data?.name || org.name,
-            })) || [],
             searchId: validOrganizationId,
             foundOrgName: foundOrg.name,
-            ictDivisionInDb: ictDivision ? {
-              id: ictDivision.id || ictDivision.data?.id,
-              name: ictDivision.data?.name || ictDivision.name,
-            } : null,
-            csvExpectedId: 'f41b8b41-b52b-4204-aae6-345a83e565e7', // CSVファイルのID
-            logShownId: 'd398783c-92a5-4da5-822f-5014ef677b28', // ログで見たID
           });
           
           // 特定のIDで検索
@@ -268,43 +270,36 @@ function OrganizationDetailPageContent() {
             });
             
             if (!orgCheckResult || !orgCheckResult.exists) {
-              console.warn('⚠️ [loadOrganizationData] foundOrg.idがorganizationsテーブルに存在しません:', {
+              devWarn('⚠️ [loadOrganizationData] foundOrg.idがorganizationsテーブルに存在しません:', {
                 foundOrgId: validOrganizationId,
                 foundOrgName: foundOrg.name,
-                orgCheckResult,
               });
               
               // 名前で組織を検索
               const { searchOrgsByName } = await import('@/lib/orgApi');
               const searchResults = await searchOrgsByName(foundOrg.name || '');
-              console.log('🔍 [loadOrganizationData] 名前で検索した結果:', {
-                searchName: foundOrg.name,
-                results: searchResults?.map((org: any) => ({
-                  id: org.id,
-                  name: org.name,
-                })) || [],
-              });
+              devLog('🔍 [loadOrganizationData] 名前で検索した結果数:', searchResults?.length || 0);
               
               if (searchResults && searchResults.length > 0) {
                 // 完全一致する組織を探す
                 const exactMatch = searchResults.find((org: any) => org.name === foundOrg.name);
                 if (exactMatch && exactMatch.id) {
                   validOrganizationId = exactMatch.id;
-                  console.log('✅ [loadOrganizationData] 名前で検索して正しいIDを取得:', validOrganizationId);
+                  devLog('✅ [loadOrganizationData] 名前で検索して正しいIDを取得:', validOrganizationId);
                 } else if (searchResults[0] && searchResults[0].id) {
                   // 完全一致がない場合は最初の結果を使用
                   validOrganizationId = searchResults[0].id;
-                  console.log('⚠️ [loadOrganizationData] 完全一致が見つかりませんでした。最初の結果を使用:', validOrganizationId);
+                  devWarn('⚠️ [loadOrganizationData] 完全一致が見つかりませんでした。最初の結果を使用:', validOrganizationId);
                 }
               }
             } else {
-              console.log('✅ [loadOrganizationData] foundOrg.idがorganizationsテーブルに存在します:', validOrganizationId);
+              devLog('✅ [loadOrganizationData] foundOrg.idがorganizationsテーブルに存在します:', validOrganizationId);
             }
           } catch (docGetError: any) {
             // doc_getがエラーを返す場合（「Query returned no rows」）は、組織が存在しないことを意味する
             if (docGetError?.message?.includes('Query returned no rows') || 
                 docGetError?.message?.includes('ドキュメント取得エラー')) {
-              console.warn('⚠️ [loadOrganizationData] foundOrg.idがorganizationsテーブルに存在しません（doc_getが行を返さない）:', {
+              devWarn('⚠️ [loadOrganizationData] foundOrg.idがorganizationsテーブルに存在しません（doc_getが行を返さない）:', {
                 foundOrgId: validOrganizationId,
                 foundOrgName: foundOrg.name,
               });
@@ -313,36 +308,30 @@ function OrganizationDetailPageContent() {
               try {
                 const { searchOrgsByName } = await import('@/lib/orgApi');
                 const searchResults = await searchOrgsByName(foundOrg.name || '');
-                console.log('🔍 [loadOrganizationData] 名前で検索した結果:', {
-                  searchName: foundOrg.name,
-                  results: searchResults?.map((org: any) => ({
-                    id: org.id,
-                    name: org.name,
-                  })) || [],
-                });
+                devLog('🔍 [loadOrganizationData] 名前で検索した結果数:', searchResults?.length || 0);
                 
                 if (searchResults && searchResults.length > 0) {
                   // 完全一致する組織を探す
                   const exactMatch = searchResults.find((org: any) => org.name === foundOrg.name);
                   if (exactMatch && exactMatch.id) {
                     validOrganizationId = exactMatch.id;
-                    console.log('✅ [loadOrganizationData] 名前で検索して正しいIDを取得:', validOrganizationId);
+                    devLog('✅ [loadOrganizationData] 名前で検索して正しいIDを取得:', validOrganizationId);
                   } else if (searchResults[0] && searchResults[0].id) {
                     // 完全一致がない場合は最初の結果を使用
                     validOrganizationId = searchResults[0].id;
-                    console.log('⚠️ [loadOrganizationData] 完全一致が見つかりませんでした。最初の結果を使用:', validOrganizationId);
+                    devWarn('⚠️ [loadOrganizationData] 完全一致が見つかりませんでした。最初の結果を使用:', validOrganizationId);
                   }
                 }
               } catch (searchError: any) {
-                console.warn('⚠️ [loadOrganizationData] 名前での検索に失敗しました:', searchError);
+                devWarn('⚠️ [loadOrganizationData] 名前での検索に失敗しました:', searchError);
               }
             } else {
               // その他のエラーの場合は警告のみ
-              console.warn('⚠️ [loadOrganizationData] 組織IDの確認でエラーが発生しました（続行します）:', docGetError);
+              devWarn('⚠️ [loadOrganizationData] 組織IDの確認でエラーが発生しました（続行します）:', docGetError);
             }
           }
         } catch (orgCheckError: any) {
-          console.warn('⚠️ [loadOrganizationData] 組織IDの確認でエラーが発生しました（続行します）:', orgCheckError);
+          devWarn('⚠️ [loadOrganizationData] 組織IDの確認でエラーが発生しました（続行します）:', orgCheckError);
           // エラーが発生しても続行（foundOrg.idを使用）
         }
         
@@ -350,14 +339,10 @@ function OrganizationDetailPageContent() {
         if (validOrganizationId) {
           try {
             const members = await getOrgMembers(validOrganizationId);
-            console.log('✅ [loadOrganizationData] メンバーを取得:', {
+            devLog('✅ [loadOrganizationData] メンバーを取得:', {
               count: members?.length || 0,
-              members: members?.slice(0, 3).map(m => ({ name: m.name, title: m.title })) || [],
             });
             const sortedMembers = sortMembersByPosition(members, foundOrg.name);
-            console.log('✅ [loadOrganizationData] メンバーをソート:', {
-              count: sortedMembers?.length || 0,
-            });
             // 正しいIDを確実に設定
             // foundOrgからmembersを削除してから新しいmembersを設定
             const { members: _, ...foundOrgWithoutMembers } = foundOrg;
@@ -367,11 +352,10 @@ function OrganizationDetailPageContent() {
               members: sortedMembers, // 新しく取得したメンバーを設定
             };
             setOrganization(updatedOrg);
-            console.log('✅ [loadOrganizationData] organizationオブジェクトを設定:', {
+            devLog('✅ [loadOrganizationData] organizationオブジェクトを設定:', {
               id: updatedOrg.id,
               name: updatedOrg.name,
               membersCount: updatedOrg.members?.length || 0,
-              hasMembers: !!updatedOrg.members,
             });
             
             // 組織コンテンツ、注力施策、議事録を取得
@@ -379,7 +363,7 @@ function OrganizationDetailPageContent() {
               const content = await getOrganizationContent(validOrganizationId);
               setOrganizationContent(content);
             } catch (contentError: any) {
-              console.warn('組織コンテンツの取得に失敗しました:', contentError);
+              devWarn('組織コンテンツの取得に失敗しました:', contentError);
             }
             
             try {
@@ -403,7 +387,7 @@ function OrganizationDetailPageContent() {
                 collectChildOrgIds(updatedOrg);
               }
               
-              console.log('📋 [loadOrganizationData] 子組織ID:', childOrgIds);
+              devLog('📋 [loadOrganizationData] 子組織ID数:', childOrgIds.length);
               
               // 子組織の注力施策を取得
               const childInitiatives: FocusInitiative[] = [];
@@ -412,7 +396,7 @@ function OrganizationDetailPageContent() {
                   const childInitiativesData = await getFocusInitiatives(childOrgId);
                   childInitiatives.push(...childInitiativesData);
                 } catch (error) {
-                  console.warn(`⚠️ [loadOrganizationData] 子組織 ${childOrgId} の注力施策取得に失敗:`, error);
+                  devWarn(`⚠️ [loadOrganizationData] 子組織 ${childOrgId} の注力施策取得に失敗:`, error);
                 }
               }
               
@@ -459,41 +443,31 @@ function OrganizationDetailPageContent() {
               
               setInitiativesByOrg(initiativesByOrgMap);
               
-              console.log('📋 [loadOrganizationData] 組織ごとの注力施策:', {
+              devLog('📋 [loadOrganizationData] 組織ごとの注力施策:', {
                 currentOrg: validOrganizationId,
                 currentCount: currentInitiatives.length,
-                childOrgs: childOrgIds,
+                childOrgsCount: childOrgIds.length,
                 childCount: childInitiatives.length,
                 totalCount: allInitiatives.length,
-                byOrg: Array.from(initiativesByOrgMap.entries()).map(([orgId, data]) => ({
-                  orgId,
-                  orgName: data.orgName,
-                  count: data.initiatives.length,
-                })),
+                byOrgCount: initiativesByOrgMap.size,
               });
             } catch (initError: any) {
-              console.warn('注力施策の取得に失敗しました:', initError);
+              devWarn('注力施策の取得に失敗しました:', initError);
             }
             
             try {
               const notes = await getMeetingNotes(validOrganizationId);
               setMeetingNotes(notes);
             } catch (noteError: any) {
-              console.warn('議事録の取得に失敗しました:', noteError);
+              devWarn('議事録の取得に失敗しました:', noteError);
             }
             
             try {
               // 新しいテーブル（organizationCompanyDisplay）から表示関係を取得
               const displays = await getCompaniesByOrganizationDisplay(validOrganizationId);
-              console.log('🔍 [loadOrganizationData] 表示関係を取得:', {
+              devLog('🔍 [loadOrganizationData] 表示関係を取得:', {
                 organizationId: validOrganizationId,
                 displaysCount: displays?.length || 0,
-                displays: displays?.slice(0, 3).map(d => ({
-                  id: d.id,
-                  organizationId: d.organizationId,
-                  companyId: d.companyId,
-                  displayOrder: d.displayOrder,
-                })) || [],
               });
               
               if (displays && displays.length > 0) {
@@ -504,11 +478,11 @@ function OrganizationDetailPageContent() {
                 const companiesPromises = sortedDisplays.map(display => {
                   const companyId = display.companyId;
                   if (!companyId) {
-                    console.warn('⚠️ [loadOrganizationData] companyIdが取得できません:', display);
+                    devWarn('⚠️ [loadOrganizationData] companyIdが取得できません:', display);
                     return Promise.resolve(null);
                   }
                   return getCompanyById(companyId).catch(err => {
-                    console.warn(`事業会社の取得に失敗しました (ID: ${companyId}):`, err);
+                    devWarn(`事業会社の取得に失敗しました (ID: ${companyId}):`, err);
                     return null;
                   });
                 });
@@ -516,29 +490,28 @@ function OrganizationDetailPageContent() {
                 const companiesData = await Promise.all(companiesPromises);
                 // nullを除外してCompany[]に変換
                 const validCompanies = companiesData.filter((c): c is Company => c !== null);
-                console.log('✅ [loadOrganizationData] 事業会社を取得:', {
+                devLog('✅ [loadOrganizationData] 事業会社を取得:', {
                   count: validCompanies.length,
-                  companies: validCompanies.slice(0, 3).map(c => ({ id: c.id, name: c.name })),
                 });
                 setCompanies(validCompanies);
               } else {
                 // 表示関係がない場合は空配列を設定
-                console.log('⚠️ [loadOrganizationData] 表示関係がありません');
+                devLog('⚠️ [loadOrganizationData] 表示関係がありません');
                 setCompanies([]);
               }
             } catch (companyError: any) {
-              console.warn('事業会社の取得に失敗しました:', companyError);
+              devWarn('事業会社の取得に失敗しました:', companyError);
               setCompanies([]);
             }
           } catch (memberError: any) {
-            console.warn('メンバー情報の取得に失敗しました:', memberError);
+            devWarn('メンバー情報の取得に失敗しました:', memberError);
             // 正しいIDを確実に設定
             const updatedOrg: OrgNodeData = {
               ...foundOrg,
               id: validOrganizationId || foundOrg.id, // 正しいIDを設定
             };
             setOrganization(updatedOrg);
-            console.log('✅ [loadOrganizationData] organizationオブジェクトを設定（メンバー取得失敗時）:', {
+            devLog('✅ [loadOrganizationData] organizationオブジェクトを設定（メンバー取得失敗時）:', {
               id: updatedOrg.id,
               name: updatedOrg.name,
             });
@@ -550,7 +523,7 @@ function OrganizationDetailPageContent() {
             id: validOrganizationId || foundOrg.id, // 可能な限り正しいIDを設定
           };
           setOrganization(updatedOrg);
-          console.log('⚠️ [loadOrganizationData] validOrganizationIdが取得できませんでした。foundOrgを設定:', {
+          devLog('⚠️ [loadOrganizationData] validOrganizationIdが取得できませんでした。foundOrgを設定:', {
             id: updatedOrg.id,
             name: updatedOrg.name,
           });
@@ -642,7 +615,7 @@ function OrganizationDetailPageContent() {
           docId: validOrgId,
         });
         if (!orgCheckResult || !orgCheckResult.exists) {
-          console.warn('⚠️ [handleAddInitiative] organizationIdがorganizationsテーブルに存在しません。名前で検索します:', {
+          devWarn('⚠️ [handleAddInitiative] organizationIdがorganizationsテーブルに存在しません。名前で検索します:', {
             organizationId: validOrgId,
             organizationName: organization?.name,
           });
@@ -654,18 +627,18 @@ function OrganizationDetailPageContent() {
               const exactMatch = searchResults.find((org: any) => org.name === organization.name);
               if (exactMatch && exactMatch.id) {
                 validOrgId = exactMatch.id;
-                console.log('✅ [handleAddInitiative] 名前で検索して正しいIDを取得:', validOrgId);
+                devLog('✅ [handleAddInitiative] 名前で検索して正しいIDを取得:', validOrgId);
               } else if (searchResults[0] && searchResults[0].id) {
                 validOrgId = searchResults[0].id;
-                console.log('⚠️ [handleAddInitiative] 完全一致が見つかりませんでした。最初の結果を使用:', validOrgId);
+                devWarn('⚠️ [handleAddInitiative] 完全一致が見つかりませんでした。最初の結果を使用:', validOrgId);
               }
             }
           }
         } else {
-          console.log('✅ [handleAddInitiative] organizationIdがorganizationsテーブルに存在します:', validOrgId);
+          devLog('✅ [handleAddInitiative] organizationIdがorganizationsテーブルに存在します:', validOrgId);
         }
       } catch (orgCheckError: any) {
-        console.warn('⚠️ [handleAddInitiative] 組織IDの確認でエラー（続行します）:', orgCheckError);
+        devWarn('⚠️ [handleAddInitiative] 組織IDの確認でエラー（続行します）:', orgCheckError);
       }
     }
     
@@ -676,11 +649,10 @@ function OrganizationDetailPageContent() {
 
     try {
       setSavingInitiative(true);
-      console.log('📝 注力施策を追加します:', { 
+      devLog('📝 注力施策を追加します:', { 
         id: newInitiativeId,
         organizationId, 
         title: newInitiativeTitle.trim(),
-        description: newInitiativeDescription.trim() || undefined,
       });
       
       const initiativeId = await saveFocusInitiative({
@@ -690,7 +662,7 @@ function OrganizationDetailPageContent() {
         description: newInitiativeDescription.trim() || undefined,
       });
       
-      console.log('✅ 注力施策を追加しました。ID:', initiativeId);
+      devLog('✅ 注力施策を追加しました。ID:', initiativeId);
       
       // 組織ツリーを取得してから再取得
       const orgTree = await getOrgTreeFromDb();
@@ -828,7 +800,7 @@ function OrganizationDetailPageContent() {
           docId: validOrgId,
         });
         if (!orgCheckResult || !orgCheckResult.exists) {
-          console.warn('⚠️ [handleAddMeetingNote] organizationIdがorganizationsテーブルに存在しません。名前で検索します:', {
+          devWarn('⚠️ [handleAddMeetingNote] organizationIdがorganizationsテーブルに存在しません。名前で検索します:', {
             organizationId: validOrgId,
             organizationName: organization?.name,
           });
@@ -840,18 +812,18 @@ function OrganizationDetailPageContent() {
               const exactMatch = searchResults.find((org: any) => org.name === organization.name);
               if (exactMatch && exactMatch.id) {
                 validOrgId = exactMatch.id;
-                console.log('✅ [handleAddMeetingNote] 名前で検索して正しいIDを取得:', validOrgId);
+                devLog('✅ [handleAddMeetingNote] 名前で検索して正しいIDを取得:', validOrgId);
               } else if (searchResults[0] && searchResults[0].id) {
                 validOrgId = searchResults[0].id;
-                console.log('⚠️ [handleAddMeetingNote] 完全一致が見つかりませんでした。最初の結果を使用:', validOrgId);
+                devWarn('⚠️ [handleAddMeetingNote] 完全一致が見つかりませんでした。最初の結果を使用:', validOrgId);
               }
             }
           }
         } else {
-          console.log('✅ [handleAddMeetingNote] organizationIdがorganizationsテーブルに存在します:', validOrgId);
+          devLog('✅ [handleAddMeetingNote] organizationIdがorganizationsテーブルに存在します:', validOrgId);
         }
       } catch (orgCheckError: any) {
-        console.warn('⚠️ [handleAddMeetingNote] 組織IDの確認でエラー（続行します）:', orgCheckError);
+        devWarn('⚠️ [handleAddMeetingNote] 組織IDの確認でエラー（続行します）:', orgCheckError);
       }
     }
     
@@ -862,11 +834,10 @@ function OrganizationDetailPageContent() {
 
     try {
       setSavingMeetingNote(true);
-      console.log('📝 議事録を追加します:', { 
+      devLog('📝 議事録を追加します:', { 
         id: newMeetingNoteId,
         organizationId: validOrgId, 
         title: newMeetingNoteTitle.trim(),
-        description: newMeetingNoteDescription.trim() || undefined,
       });
       
       const noteId = await saveMeetingNote({
@@ -876,11 +847,11 @@ function OrganizationDetailPageContent() {
         description: newMeetingNoteDescription.trim() || undefined,
       });
       
-      console.log('✅ 議事録を追加しました。ID:', noteId);
+      devLog('✅ 議事録を追加しました。ID:', noteId);
       
       // リストを再取得
       const notes = await getMeetingNotes(validOrgId);
-      console.log('📋 再取得した議事録リスト:', notes);
+      devLog('📋 再取得した議事録リスト数:', notes.length);
       setMeetingNotes(notes);
       
       // モーダルを閉じてフォームをリセット
@@ -1092,10 +1063,9 @@ function OrganizationDetailPageContent() {
             )}
 
             {(() => {
-              console.log('🔍 [メンバー表示] organization.membersの状態:', {
+              devLog('🔍 [メンバー表示] organization.membersの状態:', {
                 hasMembers: !!organization.members,
                 membersLength: organization.members?.length || 0,
-                members: organization.members?.slice(0, 3).map(m => ({ name: m.name, title: m.title })) || [],
                 organizationId: organization.id,
                 organizationName: organization.name,
               });

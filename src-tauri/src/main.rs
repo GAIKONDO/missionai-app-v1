@@ -183,6 +183,8 @@ fn main() {
             commands::organization::import_members_csv,
             commands::organization::check_duplicate_orgs,
             commands::organization::delete_duplicate_orgs,
+            commands::organization::update_theme_positions_cmd,
+            commands::organization::get_themes_cmd,
             // 事業会社管理コマンド
             commands::companies::create_company_cmd,
             commands::companies::update_company_cmd,

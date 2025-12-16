@@ -8,6 +8,7 @@ import KnowledgeGraph3D from '@/components/KnowledgeGraph3D';
 import { getAllEntities, getEntityById, deleteEntity } from '@/lib/entityApi';
 import { getAllRelations, getRelationById, getRelationsByEntityId, deleteRelation } from '@/lib/relationApi';
 import { getAllTopicsBatch, getAllMembersBatch, getOrgTreeFromDb, getAllOrganizationsFromTree } from '@/lib/orgApi';
+import { getAllCompanies, type Company } from '@/lib/companiesApi';
 import { batchUpdateEntityEmbeddings, findOutdatedEntityEmbeddings, CURRENT_EMBEDDING_VERSION as ENTITY_EMBEDDING_VERSION, CURRENT_EMBEDDING_MODEL as ENTITY_EMBEDDING_MODEL } from '@/lib/entityEmbeddings';
 import { batchUpdateRelationEmbeddings, findOutdatedRelationEmbeddings, CURRENT_EMBEDDING_VERSION as RELATION_EMBEDDING_VERSION, CURRENT_EMBEDDING_MODEL as RELATION_EMBEDDING_MODEL } from '@/lib/relationEmbeddings';
 import { batchUpdateTopicEmbeddings } from '@/lib/topicEmbeddings';
@@ -16,12 +17,31 @@ import type { Entity } from '@/types/entity';
 import type { Relation } from '@/types/relation';
 import type { TopicInfo } from '@/lib/orgApi';
 
+// 開発環境でのみログを有効化するヘルパー関数（パフォーマンス最適化）
+const isDev = process.env.NODE_ENV === 'development';
+const devLog = (...args: any[]) => {
+  if (isDev) {
+    console.log(...args);
+  }
+};
+const devWarn = (...args: any[]) => {
+  if (isDev) {
+    console.warn(...args);
+  }
+};
+const devDebug = (...args: any[]) => {
+  if (isDev) {
+    console.debug(...args);
+  }
+};
+
 function KnowledgeGraphPageContent() {
   const searchParams = useSearchParams();
   const [entities, setEntities] = useState<Entity[]>([]);
   const [relations, setRelations] = useState<Relation[]>([]);
   const [topics, setTopics] = useState<TopicInfo[]>([]);
   const [organizations, setOrganizations] = useState<Array<{ id: string; name: string; title?: string }>>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [members, setMembers] = useState<Array<{ id: string; name: string; position?: string; organizationId: string }>>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'list' | 'graph2d' | 'graph3d'>('graph3d');
@@ -95,7 +115,8 @@ function KnowledgeGraphPageContent() {
     }
   }, [isRegeneratingEmbeddings, regenerationProgress, updateProgress, completeRegeneration, cancelRegeneration]);
   const [showRegenerationModal, setShowRegenerationModal] = useState(false);
-  const [regenerationMode, setRegenerationMode] = useState<'missing' | 'all'>('missing'); // 再生成モード
+  const [regenerationMode, setRegenerationMode] = useState<'organization' | 'company'>('organization'); // 再生成対象（組織 or 事業会社）
+  const [regenerationType, setRegenerationType] = useState<'missing' | 'all'>('missing'); // 再生成モード
   const [missingCounts, setMissingCounts] = useState<{ entities: number; relations: number; topics: number; total: number }>({ entities: 0, relations: 0, topics: 0, total: 0 });
   const [isCountingMissing, setIsCountingMissing] = useState(false);
   // 停止フラグ（useRefで管理して、非同期処理中でも最新の値を参照できるようにする）
@@ -119,20 +140,22 @@ function KnowledgeGraphPageContent() {
     const loadData = async () => {
       setIsLoading(true);
       try {
-        console.log('📖 [ナレッジグラフ] データ読み込み開始');
+        devLog('📖 [ナレッジグラフ] データ読み込み開始');
         
         // Promise.allSettledを使用して、一部が失敗しても続行
         const results = await Promise.allSettled([
           getAllEntities(),
           getAllRelations(),
           getAllTopicsBatch(),
+          getAllCompanies(),
         ]);
         
         const allEntities = results[0].status === 'fulfilled' ? results[0].value : [];
         const allRelations = results[1].status === 'fulfilled' ? results[1].value : [];
         const allTopics = results[2].status === 'fulfilled' ? results[2].value : [];
+        const allCompanies = results[3].status === 'fulfilled' ? results[3].value : [];
         
-        // エラーがあった場合はログに出力
+        // エラーがあった場合はログに出力（エラーログは残す）
         if (results[0].status === 'rejected') {
           console.error('❌ [ナレッジグラフ] エンティティの読み込みエラー:', results[0].reason);
         }
@@ -142,15 +165,76 @@ function KnowledgeGraphPageContent() {
         if (results[2].status === 'rejected') {
           console.error('❌ [ナレッジグラフ] トピックの読み込みエラー:', results[2].reason);
         }
+        if (results[3].status === 'rejected') {
+          console.error('❌ [ナレッジグラフ] 事業会社の読み込みエラー:', results[3].reason);
+        }
         
         setEntities(allEntities);
         setRelations(allRelations);
         setTopics(allTopics);
-        console.log('✅ ナレッジグラフデータ読み込み完了:', {
+        setCompanies(allCompanies);
+        
+        // デバッグ: データベースから直接companyIdを持つエンティティを確認
+        try {
+          const { getEntitiesByCompanyId } = await import('@/lib/entityApi');
+          // 最初の事業会社IDで試す
+          if (allCompanies.length > 0) {
+            const testCompanyId = allCompanies[0].id;
+            const entitiesByCompanyId = await getEntitiesByCompanyId(testCompanyId);
+            devLog(`🔍 [デバッグ] データベースから直接取得: companyId=${testCompanyId}のエンティティ数:`, entitiesByCompanyId.length);
+            if (entitiesByCompanyId.length > 0) {
+              devLog('🔍 [デバッグ] データベースから直接取得したエンティティのサンプル:', entitiesByCompanyId.slice(0, 3).map(e => ({
+                id: e.id,
+                name: e.name,
+                companyId: e.companyId,
+                organizationId: e.organizationId,
+              })));
+            }
+          }
+        } catch (error) {
+          devWarn('⚠️ [デバッグ] データベースから直接取得中にエラー:', error);
+        }
+        
+        // デバッグ: companyIdを持つエンティティとリレーションの数を確認
+        const entitiesWithCompanyId = allEntities.filter(e => e.companyId);
+        const relationsWithCompanyId = allRelations.filter(r => {
+          const companyId = r.companyId || allEntities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.companyId;
+          return companyId;
+        });
+        
+        // デバッグ: サンプルエンティティのcompanyIdフィールドを確認
+        if (allEntities.length > 0) {
+          const sampleEntity = allEntities[0];
+          devLog('🔍 [デバッグ] サンプルエンティティ:', {
+            id: sampleEntity.id,
+            name: sampleEntity.name,
+            companyId: sampleEntity.companyId,
+            companyIdType: typeof sampleEntity.companyId,
+            companyIdIsNull: sampleEntity.companyId === null,
+            companyIdIsUndefined: sampleEntity.companyId === undefined,
+            organizationId: sampleEntity.organizationId,
+          });
+        }
+        
+        devLog('✅ ナレッジグラフデータ読み込み完了:', {
           entities: allEntities.length,
           relations: allRelations.length,
           topics: allTopics.length,
+          companies: allCompanies.length,
+          entitiesWithCompanyId: entitiesWithCompanyId.length,
+          relationsWithCompanyId: relationsWithCompanyId.length,
         });
+        if (entitiesWithCompanyId.length > 0) {
+          devLog('🔍 [デバッグ] companyIdを持つエンティティのサンプル:', entitiesWithCompanyId.slice(0, 3).map(e => ({
+            id: e.id,
+            name: e.name,
+            companyId: e.companyId,
+            organizationId: e.organizationId,
+          })));
+        } else {
+          // companyIdを持つエンティティがない場合、データベースを確認
+          devWarn('⚠️ [デバッグ] companyIdを持つエンティティが見つかりませんでした。データベースを確認してください。');
+        }
 
         // URLパラメータからエンティティIDまたはリレーションIDを取得
         const entityId = searchParams?.get('entityId');
@@ -182,7 +266,7 @@ function KnowledgeGraphPageContent() {
               setViewMode('graph3d'); // グラフ表示に切り替え
             }
           } catch (error) {
-            console.warn('⚠️ [ナレッジグラフ] エンティティIDの取得エラー:', error);
+            devWarn('⚠️ [ナレッジグラフ] エンティティIDの取得エラー:', error);
           }
         }
 
@@ -195,7 +279,7 @@ function KnowledgeGraphPageContent() {
               setViewMode('graph3d'); // グラフ表示に切り替え
             }
           } catch (error) {
-            console.warn('⚠️ [ナレッジグラフ] リレーションIDの取得エラー:', error);
+            devWarn('⚠️ [ナレッジグラフ] リレーションIDの取得エラー:', error);
           }
         }
       } catch (error: any) {
@@ -208,27 +292,29 @@ function KnowledgeGraphPageContent() {
     loadData();
   }, [searchParams]);
 
-  // 未生成件数を計算する関数
-  const updateMissingCounts = useCallback(async (selectedOrgId: string, selectedType: string) => {
-    if (regenerationMode !== 'missing') {
+  // 未生成件数を計算する関数（組織用）
+  const updateMissingCountsOrganization = useCallback(async (selectedOrgId: string, selectedType: string) => {
+    if (regenerationType !== 'missing') {
       return; // すべて再生成モードの場合は計算不要
     }
     
     setIsCountingMissing(true);
     
     try {
-      // 対象を決定
+      // 対象を決定（organizationIdのみ、companyIdは除外）
       const targetEntities = selectedOrgId === 'all'
-        ? entities.filter(e => e.organizationId)
-        : entities.filter(e => e.organizationId === selectedOrgId);
+        ? entities.filter(e => e.organizationId && !e.companyId)
+        : entities.filter(e => e.organizationId === selectedOrgId && !e.companyId);
       const targetRelations = selectedOrgId === 'all'
         ? relations.filter(r => {
             const orgId = r.organizationId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.organizationId;
-            return orgId && r.topicId;
+            const companyId = r.companyId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.companyId;
+            return orgId && !companyId && r.topicId;
           })
         : relations.filter(r => {
             const orgId = r.organizationId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.organizationId;
-            return orgId === selectedOrgId && r.topicId;
+            const companyId = r.companyId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.companyId;
+            return orgId === selectedOrgId && !companyId && r.topicId;
           });
       const targetTopics = selectedOrgId === 'all'
         ? topics.filter(t => t.organizationId)
@@ -242,20 +328,19 @@ function KnowledgeGraphPageContent() {
       if (selectedType === 'all' || selectedType === 'entities') {
         try {
           const { callTauriCommand } = await import('@/lib/localFirebase');
-          // chromaSynced = 0 のエンティティを一括取得
+          // chromaSynced = 0 のエンティティを一括取得（companyIdを持つものも含めるため、条件を指定せずに取得）
           const missingEntityDocs = await callTauriCommand('query_get', {
             collectionName: 'entities',
             conditions: {
               chromaSynced: 0,
-              ...(selectedOrgId !== 'all' ? { organizationId: selectedOrgId } : {}),
             },
           }) as Array<{ id: string; data: any }>;
           
-          // 取得したIDがtargetEntitiesに含まれているか確認
-          const missingEntityIds = new Set(missingEntityDocs.map(doc => doc.id));
+          // 取得したIDがtargetEntitiesに含まれているか確認（targetEntitiesは既にcompanyIdを持つものを含む）
+          const missingEntityIds = new Set(missingEntityDocs.map(doc => doc.id || doc.data?.id));
           entityCount = targetEntities.filter(entity => missingEntityIds.has(entity.id)).length;
         } catch (error) {
-          console.warn(`⚠️ [未生成件数計算] エンティティの一括取得エラー:`, error);
+          devWarn(`⚠️ [未生成件数計算] エンティティの一括取得エラー:`, error);
           // エラーが発生した場合は0として扱う（計算をスキップ）
           entityCount = 0;
         }
@@ -265,20 +350,19 @@ function KnowledgeGraphPageContent() {
       if (selectedType === 'all' || selectedType === 'relations') {
         try {
           const { callTauriCommand } = await import('@/lib/localFirebase');
-          // chromaSynced = 0 のリレーションを一括取得
+          // chromaSynced = 0 のリレーションを一括取得（companyIdを持つものも含めるため、条件を指定せずに取得）
           const missingRelationDocs = await callTauriCommand('query_get', {
             collectionName: 'relations',
             conditions: {
               chromaSynced: 0,
-              ...(selectedOrgId !== 'all' ? { organizationId: selectedOrgId } : {}),
             },
           }) as Array<{ id: string; data: any }>;
           
-          // 取得したIDがtargetRelationsに含まれているか確認
-          const missingRelationIds = new Set(missingRelationDocs.map(doc => doc.id));
+          // 取得したIDがtargetRelationsに含まれているか確認（targetRelationsは既にcompanyIdを持つものを含む）
+          const missingRelationIds = new Set(missingRelationDocs.map(doc => doc.id || doc.data?.id));
           relationCount = targetRelations.filter(relation => missingRelationIds.has(relation.id)).length;
         } catch (error) {
-          console.warn(`⚠️ [未生成件数計算] リレーションの一括取得エラー:`, error);
+          devWarn(`⚠️ [未生成件数計算] リレーションの一括取得エラー:`, error);
           // エラーが発生した場合は0として扱う（計算をスキップ）
           relationCount = 0;
         }
@@ -301,7 +385,7 @@ function KnowledgeGraphPageContent() {
           const missingTopicIds = new Set(missingTopicDocs.map(doc => doc.id));
           topicCount = targetTopics.filter(topic => missingTopicIds.has(topic.id)).length;
         } catch (error) {
-          console.warn(`⚠️ [未生成件数計算] トピックの一括取得エラー:`, error);
+          devWarn(`⚠️ [未生成件数計算] トピックの一括取得エラー:`, error);
           // エラーが発生した場合は0として扱う（計算をスキップ）
           topicCount = 0;
         }
@@ -319,23 +403,166 @@ function KnowledgeGraphPageContent() {
     } finally {
       setIsCountingMissing(false);
     }
-  }, [regenerationMode, entities, relations, topics]);
+  }, [regenerationType, entities, relations, topics]);
+
+  // 未生成件数を計算する関数（事業会社用）
+  const updateMissingCountsCompany = useCallback(async (selectedCompanyId: string, selectedType: string) => {
+    if (regenerationType !== 'missing') {
+      return; // すべて再生成モードの場合は計算不要
+    }
+    
+    setIsCountingMissing(true);
+    
+    try {
+      // データベースから直接companyIdを持つエンティティを取得
+      const { callTauriCommand } = await import('@/lib/localFirebase');
+      
+      // デバッグ: entitiesの状態を確認
+      const entitiesWithCompanyId = entities.filter(e => e.companyId);
+      devLog(`📊 [事業会社未生成件数計算] entities総数=${entities.length}, companyIdあり=${entitiesWithCompanyId.length}`);
+      
+      // データベースから直接companyIdを持つエンティティをクエリ
+      // 効率化のため、chromaSynced=0のエンティティのみを取得してからcompanyIdでフィルタリング
+      let targetEntitiesFromDb: Array<{ id: string; data: any }> = [];
+      try {
+        // まず、chromaSynced=0のエンティティを取得（これが未生成のエンティティ）
+        const missingEntityDocs = await callTauriCommand('query_get', {
+          collectionName: 'entities',
+          conditions: {
+            chromaSynced: 0,
+          },
+        }) as Array<{ id: string; data: any }>;
+        
+        devLog(`📊 [事業会社未生成件数計算] chromaSynced=0のエンティティ: ${missingEntityDocs.length}件`);
+        
+        // companyIdでフィルタリング
+        if (selectedCompanyId === 'all') {
+          // companyIdが存在する（nullでない）エンティティを取得
+          targetEntitiesFromDb = missingEntityDocs.filter(doc => {
+            const data = doc.data || {};
+            const companyId = data.companyId;
+            const hasCompanyId = companyId !== null && companyId !== undefined && companyId !== '' && companyId !== 'null';
+            if (hasCompanyId && targetEntitiesFromDb.length < 3) {
+              devLog(`🔍 [事業会社未生成件数計算] companyIdを持つエンティティのサンプル:`, {
+                id: doc.id || data.id,
+                name: data.name,
+                companyId: companyId,
+              });
+            }
+            return hasCompanyId;
+          });
+        } else {
+          // 特定のcompanyIdでフィルタリング
+          targetEntitiesFromDb = missingEntityDocs.filter(doc => {
+            const data = doc.data || {};
+            return data.companyId === selectedCompanyId;
+          });
+        }
+        devLog(`📊 [事業会社未生成件数計算] データベースから取得: companyIdを持つエンティティ=${targetEntitiesFromDb.length}件`);
+      } catch (error) {
+        devWarn(`⚠️ [事業会社未生成件数計算] データベースからの取得エラー:`, error);
+        console.error('詳細エラー:', error);
+      }
+      
+      // データベースから直接companyIdを持つリレーションを取得
+      // 効率化のため、chromaSynced=0のリレーションのみを取得してからcompanyIdでフィルタリング
+      let targetRelationsFromDb: Array<{ id: string; data: any }> = [];
+      try {
+        // まず、chromaSynced=0のリレーションを取得（これが未生成のリレーション）
+        const missingRelationDocs = await callTauriCommand('query_get', {
+          collectionName: 'relations',
+          conditions: {
+            chromaSynced: 0,
+          },
+        }) as Array<{ id: string; data: any }>;
+        
+        devLog(`📊 [事業会社未生成件数計算] chromaSynced=0のリレーション: ${missingRelationDocs.length}件`);
+        
+        // companyIdでフィルタリング
+        if (selectedCompanyId === 'all') {
+          // companyIdが存在するリレーションを取得
+          targetRelationsFromDb = missingRelationDocs.filter(doc => {
+            const data = doc.data || {};
+            return data.companyId !== null && data.companyId !== undefined && data.companyId !== '' && data.companyId !== 'null' && data.topicId;
+          });
+        } else {
+          // 特定のcompanyIdでフィルタリング
+          targetRelationsFromDb = missingRelationDocs.filter(doc => {
+            const data = doc.data || {};
+            return data.companyId === selectedCompanyId && data.topicId;
+          });
+        }
+        devLog(`📊 [事業会社未生成件数計算] データベースから取得: companyIdを持つリレーション=${targetRelationsFromDb.length}件`);
+      } catch (error) {
+        devWarn(`⚠️ [事業会社未生成件数計算] リレーションのデータベースからの取得エラー:`, error);
+        console.error('詳細エラー:', error);
+      }
+      
+      // トピックは組織のみなので、事業会社用では0
+      const targetTopics: TopicInfo[] = [];
+
+      devLog(`📊 [事業会社未生成件数計算] selectedCompanyId=${selectedCompanyId}, targetEntitiesFromDb=${targetEntitiesFromDb.length}, targetRelationsFromDb=${targetRelationsFromDb.length}`);
+
+      let entityCount = 0;
+      let relationCount = 0;
+      let topicCount = 0;
+
+      // エンティティの未生成件数をカウント（targetEntitiesFromDbは既にchromaSynced=0のもののみ）
+      if (selectedType === 'all' || selectedType === 'entities') {
+        // targetEntitiesFromDbは既にchromaSynced=0かつcompanyIdを持つエンティティのみなので、そのままカウント
+        entityCount = targetEntitiesFromDb.length;
+        devLog(`📊 [事業会社未生成件数計算] エンティティ: targetEntitiesFromDb=${targetEntitiesFromDb.length}, entityCount=${entityCount}`);
+      }
+
+      // リレーションの未生成件数をカウント（targetRelationsFromDbは既にchromaSynced=0のもののみ）
+      if (selectedType === 'all' || selectedType === 'relations') {
+        // targetRelationsFromDbは既にchromaSynced=0かつcompanyIdを持つリレーションのみなので、そのままカウント
+        relationCount = targetRelationsFromDb.length;
+        devLog(`📊 [事業会社未生成件数計算] リレーション: targetRelationsFromDb=${targetRelationsFromDb.length}, relationCount=${relationCount}`);
+      }
+
+      setMissingCounts({
+        entities: entityCount,
+        relations: relationCount,
+        topics: topicCount,
+        total: entityCount + relationCount + topicCount,
+      });
+    } catch (error) {
+      console.error('未生成件数の計算エラー:', error);
+      setMissingCounts({ entities: 0, relations: 0, topics: 0, total: 0 });
+    } finally {
+      setIsCountingMissing(false);
+    }
+  }, [regenerationType, entities, relations]);
 
   // モーダルが開かれたときに未生成件数を計算
   useEffect(() => {
-    if (showRegenerationModal && regenerationMode === 'missing') {
-      const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
-      const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement;
-      if (orgSelect && typeSelect) {
-        updateMissingCounts(orgSelect.value || 'all', typeSelect.value || 'all');
-      }
+    if (showRegenerationModal && regenerationType === 'missing') {
+      // DOM要素がレンダリングされるまで少し待つ
+      setTimeout(() => {
+        if (regenerationMode === 'organization') {
+          const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
+          const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement;
+          if (orgSelect && typeSelect) {
+            updateMissingCountsOrganization(orgSelect.value || 'all', typeSelect.value || 'all');
+          }
+        } else if (regenerationMode === 'company') {
+          // entitiesが読み込まれていることを確認
+          devLog(`📊 [モーダル] 事業会社モード: entities.length=${entities.length}, relations.length=${relations.length}`);
+          const companySelect = document.getElementById('regeneration-company-select') as HTMLSelectElement;
+          const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement;
+          if (companySelect && typeSelect) {
+            updateMissingCountsCompany(companySelect.value || 'all', typeSelect.value || 'all');
+          }
+        }
+      }, 100);
     }
-  }, [showRegenerationModal, regenerationMode, updateMissingCounts]);
+  }, [showRegenerationModal, regenerationMode, regenerationType, entities, relations, updateMissingCountsOrganization, updateMissingCountsCompany]);
 
   // エンティティ削除処理
   const handleDeleteEntity = async () => {
     if (!deleteTargetEntityId) {
-      console.warn('⚠️ [handleDeleteEntity] 削除対象が設定されていません');
+      devWarn('⚠️ [handleDeleteEntity] 削除対象が設定されていません');
       return;
     }
     
@@ -343,7 +570,7 @@ function KnowledgeGraphPageContent() {
     const entity = entities.find(e => e.id === entityId);
     
     if (!entity) {
-      console.warn('⚠️ [handleDeleteEntity] エンティティが見つかりません:', entityId);
+      devWarn('⚠️ [handleDeleteEntity] エンティティが見つかりません:', entityId);
       setShowDeleteEntityModal(false);
       setDeleteTargetEntityId(null);
       return;
@@ -355,9 +582,9 @@ function KnowledgeGraphPageContent() {
       const { callTauriCommand } = await import('@/lib/localFirebase');
       
       // 1. このエンティティに関連するリレーションを取得
-      console.log('📊 [handleDeleteEntity] リレーション取得開始:', entityId);
+      devLog('📊 [handleDeleteEntity] リレーション取得開始:', entityId);
       const relatedRelations = await getRelationsByEntityId(entityId);
-      console.log(`📊 [handleDeleteEntity] 削除対象リレーション: ${relatedRelations.length}件`);
+      devLog(`📊 [handleDeleteEntity] 削除対象リレーション: ${relatedRelations.length}件`);
       
       // 2. 関連するリレーションを削除
       for (const relation of relatedRelations) {
@@ -365,9 +592,9 @@ function KnowledgeGraphPageContent() {
           // リレーションを削除（SQLite）
           // 注意: relationEmbeddingsテーブルは廃止済み（ChromaDBに統一）
           await deleteRelation(relation.id);
-          console.log(`✅ [handleDeleteEntity] リレーション削除: ${relation.id}`);
+          // ループ内のログを削除（パフォーマンス最適化）
         } catch (error: any) {
-          console.warn(`⚠️ [handleDeleteEntity] リレーション削除エラー（続行します）:`, error);
+          devWarn(`⚠️ [handleDeleteEntity] リレーション削除エラー（続行します）:`, error);
         }
       }
       
@@ -381,16 +608,16 @@ function KnowledgeGraphPageContent() {
               entityId: entity.id,
               organizationId: entity.organizationId,
             });
-            console.log(`✅ [handleDeleteEntity] ChromaDBエンティティ埋め込み削除: ${entity.id}`);
+            // 非同期処理のログを削除（パフォーマンス最適化）
           } catch (error: any) {
-            console.warn(`⚠️ [handleDeleteEntity] ChromaDBエンティティ埋め込み削除エラー（続行します）:`, error);
+            devWarn(`⚠️ [handleDeleteEntity] ChromaDBエンティティ埋め込み削除エラー（続行します）:`, error);
           }
         })();
       }
       
       // 5. エンティティを削除（SQLite）
       await deleteEntity(entity.id);
-      console.log(`✅ [handleDeleteEntity] エンティティ削除: ${entity.id} (${entity.name})`);
+      devLog(`✅ [handleDeleteEntity] エンティティ削除: ${entity.id} (${entity.name})`);
       
       // 6. データを再読み込み
       const [allEntities, allRelations] = await Promise.all([
@@ -417,7 +644,7 @@ function KnowledgeGraphPageContent() {
   // 一括削除処理
   const handleBulkDeleteEntities = async () => {
     if (selectedEntityIds.size === 0) {
-      console.warn('⚠️ [handleBulkDeleteEntities] 削除対象が選択されていません');
+      devWarn('⚠️ [handleBulkDeleteEntities] 削除対象が選択されていません');
       return;
     }
     
@@ -430,7 +657,7 @@ function KnowledgeGraphPageContent() {
       let errorCount = 0;
       const errors: Array<{ entityId: string; error: string }> = [];
       
-      console.log(`📊 [handleBulkDeleteEntities] 一括削除開始: ${entityIdsArray.length}件`);
+      devLog(`📊 [handleBulkDeleteEntities] 一括削除開始: ${entityIdsArray.length}件`);
       
       // 各エンティティを順次削除
       for (let i = 0; i < entityIdsArray.length; i++) {
@@ -438,7 +665,7 @@ function KnowledgeGraphPageContent() {
         const entity = entities.find(e => e.id === entityId);
         
         if (!entity) {
-          console.warn(`⚠️ [handleBulkDeleteEntities] エンティティが見つかりません: ${entityId}`);
+          devWarn(`⚠️ [handleBulkDeleteEntities] エンティティが見つかりません: ${entityId}`);
           errorCount++;
           errors.push({ entityId, error: 'エンティティが見つかりません' });
           continue;
@@ -455,7 +682,7 @@ function KnowledgeGraphPageContent() {
               // 注意: relationEmbeddingsテーブルは廃止済み（ChromaDBに統一）
               await deleteRelation(relation.id);
             } catch (error: any) {
-              console.warn(`⚠️ [handleBulkDeleteEntities] リレーション削除エラー（続行します）:`, error);
+              devWarn(`⚠️ [handleBulkDeleteEntities] リレーション削除エラー（続行します）:`, error);
             }
           }
           
@@ -478,7 +705,7 @@ function KnowledgeGraphPageContent() {
           // 5. エンティティを削除（SQLite）
           await deleteEntity(entity.id);
           successCount++;
-          console.log(`✅ [handleBulkDeleteEntities] エンティティ削除成功 (${i + 1}/${entityIdsArray.length}): ${entity.id} (${entity.name})`);
+          // ループ内のログを削除（パフォーマンス最適化）
         } catch (error: any) {
           errorCount++;
           const errorMessage = error?.message || String(error);
@@ -605,7 +832,7 @@ function KnowledgeGraphPageContent() {
       }
       return true;
     } catch (error) {
-      console.warn('日付のパースエラー:', dateStr, error);
+      devWarn('日付のパースエラー:', dateStr, error);
       return true;
     }
   }, []);
@@ -1548,7 +1775,11 @@ function KnowledgeGraphPageContent() {
               {isCheckingVersion ? 'チェック中...' : '🔍 バージョンチェック'}
             </button>
             <button
-              onClick={() => setShowRegenerationModal(true)}
+              onClick={() => {
+                setRegenerationMode('organization');
+                setRegenerationType('missing');
+                setShowRegenerationModal(true);
+              }}
               disabled={isRegeneratingEmbeddings}
               style={{
                 padding: '8px 16px',
@@ -1572,7 +1803,39 @@ function KnowledgeGraphPageContent() {
                   </span>
                 </>
               ) : (
-                '🔧 埋め込み再生成'
+                '🔧 組織の埋め込み再生成'
+              )}
+            </button>
+            <button
+              onClick={() => {
+                setRegenerationMode('company');
+                setRegenerationType('missing');
+                setShowRegenerationModal(true);
+              }}
+              disabled={isRegeneratingEmbeddings}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: isRegeneratingEmbeddings ? '#D1D5DB' : '#3B82F6',
+                color: '#FFFFFF',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '14px',
+                cursor: isRegeneratingEmbeddings ? 'not-allowed' : 'pointer',
+                fontWeight: 500,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
+              {isRegeneratingEmbeddings ? (
+                <>
+                  <span>再生成中...</span>
+                  <span style={{ fontSize: '12px' }}>
+                    ({regenerationProgress.current}/{regenerationProgress.total})
+                  </span>
+                </>
+              ) : (
+                '🔧 事業会社の埋め込み再生成'
               )}
             </button>
           </div>
@@ -2069,7 +2332,7 @@ function KnowledgeGraphPageContent() {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h2 style={{ fontSize: '20px', fontWeight: 600, margin: 0 }}>
-                埋め込み再生成
+                {regenerationMode === 'organization' ? '組織の埋め込み再生成' : '事業会社の埋め込み再生成'}
               </h2>
               <button
                 onClick={(e) => {
@@ -2106,7 +2369,9 @@ function KnowledgeGraphPageContent() {
             {regenerationProgress.status === 'idle' && (
               <div>
                 <p style={{ marginBottom: '16px', color: '#6B7280' }}>
-                  エンティティ、リレーション、トピックの埋め込みを再生成します。
+                  {regenerationMode === 'organization' 
+                    ? '組織のエンティティ、リレーション、トピックの埋め込みを再生成します。'
+                    : '事業会社のエンティティ、リレーションの埋め込みを再生成します。'}
                 </p>
                 
                 {/* 現在の設定表示 */}
@@ -2135,17 +2400,25 @@ function KnowledgeGraphPageContent() {
                       再生成モード
                     </label>
                     <select
-                      id="regeneration-mode-select"
-                      value={regenerationMode}
+                      id="regeneration-type-select-mode"
+                      value={regenerationType}
                       onChange={async (e) => {
-                        const newMode = e.target.value as 'missing' | 'all';
-                        setRegenerationMode(newMode);
+                        const newType = e.target.value as 'missing' | 'all';
+                        setRegenerationType(newType);
                         // モードが変更されたときに未生成件数を再計算
-                        if (newMode === 'missing') {
-                          const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
-                          const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement;
-                          if (orgSelect && typeSelect) {
-                            await updateMissingCounts(orgSelect.value || 'all', typeSelect.value || 'all');
+                        if (newType === 'missing') {
+                          if (regenerationMode === 'organization') {
+                            const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
+                            const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement;
+                            if (orgSelect && typeSelect) {
+                              await updateMissingCountsOrganization(orgSelect.value || 'all', typeSelect.value || 'all');
+                            }
+                          } else {
+                            const companySelect = document.getElementById('regeneration-company-select') as HTMLSelectElement;
+                            const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement;
+                            if (companySelect && typeSelect) {
+                              await updateMissingCountsCompany(companySelect.value || 'all', typeSelect.value || 'all');
+                            }
                           }
                         } else {
                           // すべて再生成モードの場合は件数をリセット
@@ -2163,40 +2436,71 @@ function KnowledgeGraphPageContent() {
                       <option value="missing">未生成のみ再生成（埋め込みが生成されていない対象のみ）</option>
                       <option value="all">すべて再生成（既存の埋め込みも強制的に再生成）</option>
                     </select>
-                    <p style={{ fontSize: '12px', color: regenerationMode === 'missing' ? '#10B981' : '#EF4444', marginTop: '4px', marginBottom: 0 }}>
-                      {regenerationMode === 'missing' 
-                        ? '💡 埋め込みが生成されていないエンティティ・リレーション・トピックのみを再生成します。' 
+                    <p style={{ fontSize: '12px', color: regenerationType === 'missing' ? '#10B981' : '#EF4444', marginTop: '4px', marginBottom: 0 }}>
+                      {regenerationType === 'missing' 
+                        ? '💡 埋め込みが生成されていないエンティティ・リレーションのみを再生成します。' 
                         : '⚠️ 既存の埋め込みも強制的に再生成します。APIコストがかかる場合があります。'}
                     </p>
                   </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '4px' }}>
-                      対象組織
-                    </label>
-                    <select
-                      id="regeneration-org-select"
-                      onChange={async () => {
-                        // 組織が変更されたときに未生成件数を再計算
-                        const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
-                        const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement;
-                        if (orgSelect && typeSelect) {
-                          await updateMissingCounts(orgSelect.value, typeSelect.value);
-                        }
-                      }}
-                      style={{
-                        width: '100%',
-                        padding: '8px 12px',
-                        border: '1px solid #D1D5DB',
-                        borderRadius: '6px',
-                        fontSize: '14px',
-                      }}
-                    >
-                      <option value="all">すべての組織</option>
-                      {organizations.map(org => (
-                        <option key={org.id} value={org.id}>{org.name}</option>
-                      ))}
-                    </select>
-                  </div>
+                  {regenerationMode === 'organization' ? (
+                    <div>
+                      <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '4px' }}>
+                        対象組織
+                      </label>
+                      <select
+                        id="regeneration-org-select"
+                        onChange={async () => {
+                          // 組織が変更されたときに未生成件数を再計算
+                          const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
+                          const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement;
+                          if (orgSelect && typeSelect) {
+                            await updateMissingCountsOrganization(orgSelect.value, typeSelect.value);
+                          }
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '8px 12px',
+                          border: '1px solid #D1D5DB',
+                          borderRadius: '6px',
+                          fontSize: '14px',
+                        }}
+                      >
+                        <option value="all">すべての組織</option>
+                        {organizations.map(org => (
+                          <option key={org.id} value={org.id}>{org.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div>
+                      <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '4px' }}>
+                        対象事業会社
+                      </label>
+                      <select
+                        id="regeneration-company-select"
+                        onChange={async () => {
+                          // 事業会社が変更されたときに未生成件数を再計算
+                          const companySelect = document.getElementById('regeneration-company-select') as HTMLSelectElement;
+                          const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement;
+                          if (companySelect && typeSelect) {
+                            await updateMissingCountsCompany(companySelect.value, typeSelect.value);
+                          }
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '8px 12px',
+                          border: '1px solid #D1D5DB',
+                          borderRadius: '6px',
+                          fontSize: '14px',
+                        }}
+                      >
+                        <option value="all">すべての事業会社</option>
+                        {companies.map(company => (
+                          <option key={company.id} value={company.id}>{company.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div>
                     <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '4px' }}>
                       対象タイプ
@@ -2205,10 +2509,18 @@ function KnowledgeGraphPageContent() {
                       id="regeneration-type-select"
                       onChange={async () => {
                         // タイプが変更されたときに未生成件数を再計算
-                        const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
-                        const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement;
-                        if (orgSelect && typeSelect) {
-                          await updateMissingCounts(orgSelect.value, typeSelect.value);
+                        if (regenerationMode === 'organization') {
+                          const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
+                          const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement;
+                          if (orgSelect && typeSelect) {
+                            await updateMissingCountsOrganization(orgSelect.value, typeSelect.value);
+                          }
+                        } else {
+                          const companySelect = document.getElementById('regeneration-company-select') as HTMLSelectElement;
+                          const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement;
+                          if (companySelect && typeSelect) {
+                            await updateMissingCountsCompany(companySelect.value, typeSelect.value);
+                          }
                         }
                       }}
                       style={{
@@ -2219,15 +2531,25 @@ function KnowledgeGraphPageContent() {
                         fontSize: '14px',
                       }}
                     >
-                      <option value="all">すべて（エンティティ + リレーション + トピック）</option>
-                      <option value="entities">エンティティのみ</option>
-                      <option value="relations">リレーションのみ</option>
-                      <option value="topics">トピックのみ</option>
+                      {regenerationMode === 'organization' ? (
+                        <>
+                          <option value="all">すべて（エンティティ + リレーション + トピック）</option>
+                          <option value="entities">エンティティのみ</option>
+                          <option value="relations">リレーションのみ</option>
+                          <option value="topics">トピックのみ</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="all">すべて（エンティティ + リレーション）</option>
+                          <option value="entities">エンティティのみ</option>
+                          <option value="relations">リレーションのみ</option>
+                        </>
+                      )}
                     </select>
                   </div>
                   
                   {/* 未生成件数の表示 */}
-                  {regenerationMode === 'missing' && (
+                  {regenerationType === 'missing' && (
                     <div style={{
                       padding: '12px',
                       backgroundColor: '#EFF6FF',
@@ -2243,7 +2565,6 @@ function KnowledgeGraphPageContent() {
                           <div style={{ fontWeight: 500, marginBottom: '4px' }}>📊 未生成の埋め込み件数:</div>
                           <div style={{ marginLeft: '8px' }}>
                             {(() => {
-                              const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
                               const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement;
                               const selectedType = typeSelect?.value || 'all';
                               
@@ -2254,7 +2575,7 @@ function KnowledgeGraphPageContent() {
                               if (selectedType === 'all' || selectedType === 'relations') {
                                 counts.push(`リレーション: ${missingCounts.relations}件`);
                               }
-                              if (selectedType === 'all' || selectedType === 'topics') {
+                              if (regenerationMode === 'organization' && (selectedType === 'all' || selectedType === 'topics')) {
                                 counts.push(`トピック: ${missingCounts.topics}件`);
                               }
                               
@@ -2294,14 +2615,21 @@ function KnowledgeGraphPageContent() {
                   </button>
                   <button
                     onClick={async () => {
-                      const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
                       const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement;
-                      const selectedOrgId = orgSelect?.value || 'all';
                       const selectedType = typeSelect?.value || 'all';
-                      const forceRegenerate = regenerationMode === 'all'; // 'all'の場合は強制再生成
+                      const forceRegenerate = regenerationType === 'all'; // 'all'の場合は強制再生成
                       
-                      console.log(`🚀 [埋め込み再生成] 開始: regenerationMode=${regenerationMode}, forceRegenerate=${forceRegenerate}, selectedOrgId=${selectedOrgId}, selectedType=${selectedType}`);
-                      console.log(`📊 [埋め込み再生成] 現在のentities.length=${entities.length}, relations.length=${relations.length}, topics.length=${topics.length}`);
+                      let selectedId: string;
+                      if (regenerationMode === 'organization') {
+                        const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
+                        selectedId = orgSelect?.value || 'all';
+                      } else {
+                        const companySelect = document.getElementById('regeneration-company-select') as HTMLSelectElement;
+                        selectedId = companySelect?.value || 'all';
+                      }
+                      
+                      devLog(`🚀 [埋め込み再生成] 開始: regenerationMode=${regenerationMode}, regenerationType=${regenerationType}, forceRegenerate=${forceRegenerate}, selectedId=${selectedId}, selectedType=${selectedType}`);
+                      devLog(`📊 [埋め込み再生成] 現在のentities.length=${entities.length}, relations.length=${relations.length}, topics.length=${topics.length}`);
 
                       // 停止フラグをリセット
                       isCancelledRef.current = false;
@@ -2324,55 +2652,77 @@ function KnowledgeGraphPageContent() {
                         let totalRelations = 0;
                         let totalTopics = 0;
 
-                        // 対象を決定
-                        let targetEntities = selectedOrgId === 'all'
-                          ? entities.filter(e => e.organizationId) // organizationIdがないものは除外
-                          : entities.filter(e => e.organizationId === selectedOrgId);
-                        let targetRelations = selectedOrgId === 'all'
-                          ? relations.filter(r => {
-                            // リレーション自体のorganizationIdを優先、なければ関連エンティティから取得
-                            const orgId = r.organizationId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.organizationId;
-                            return orgId && r.topicId; // organizationIdとtopicIdがあるもののみ
-                          })
-                          : relations.filter(r => {
-                            // リレーション自体のorganizationIdを優先、なければ関連エンティティから取得
-                            const orgId = r.organizationId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.organizationId;
-                            return orgId === selectedOrgId && r.topicId; // 選択された組織IDと一致し、topicIdがあるもののみ
-                          });
-                        let targetTopics = selectedOrgId === 'all'
-                          ? topics.filter(t => t.organizationId) // organizationIdがないものは除外
-                          : topics.filter(t => t.organizationId === selectedOrgId);
+                        // 対象を決定（組織用または事業会社用）
+                        let targetEntities: Entity[];
+                        let targetRelations: Relation[];
+                        let targetTopics: TopicInfo[];
+                        
+                        if (regenerationMode === 'organization') {
+                          // 組織用: organizationIdのみ、companyIdは除外
+                          targetEntities = selectedId === 'all'
+                            ? entities.filter(e => e.organizationId && !e.companyId)
+                            : entities.filter(e => e.organizationId === selectedId && !e.companyId);
+                          targetRelations = selectedId === 'all'
+                            ? relations.filter(r => {
+                                const orgId = r.organizationId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.organizationId;
+                                const companyId = r.companyId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.companyId;
+                                return orgId && !companyId && r.topicId;
+                              })
+                            : relations.filter(r => {
+                                const orgId = r.organizationId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.organizationId;
+                                const companyId = r.companyId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.companyId;
+                                return orgId === selectedId && !companyId && r.topicId;
+                              });
+                          targetTopics = selectedId === 'all'
+                            ? topics.filter(t => t.organizationId)
+                            : topics.filter(t => t.organizationId === selectedId);
+                        } else {
+                          // 事業会社用: companyIdを持つもの（organizationIdの有無は問わない）
+                          targetEntities = selectedId === 'all'
+                            ? entities.filter(e => e.companyId)
+                            : entities.filter(e => e.companyId === selectedId);
+                          targetRelations = selectedId === 'all'
+                            ? relations.filter(r => {
+                                const orgId = r.organizationId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.organizationId;
+                                const companyId = r.companyId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.companyId;
+                                return companyId && r.topicId; // companyIdがあれば事業会社用として扱う
+                              })
+                            : relations.filter(r => {
+                                const orgId = r.organizationId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.organizationId;
+                                const companyId = r.companyId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.companyId;
+                                return companyId === selectedId && r.topicId;
+                              });
+                          // トピックは組織のみなので、事業会社用では空
+                          targetTopics = [];
+                        }
 
                         // 未生成のみの場合は、SQLiteのchromaSyncedフラグでフィルタリング
-                        if (!forceRegenerate && regenerationMode === 'missing') {
-                          console.log(`🔍 [埋め込み再生成] 未生成のみモード: フィルタリング開始`);
-                          console.log(`📊 [埋め込み再生成] フィルタリング前: エンティティ=${targetEntities.length}, リレーション=${targetRelations.length}, トピック=${targetTopics.length}`);
+                        if (!forceRegenerate && regenerationType === 'missing') {
+                          devLog(`🔍 [埋め込み再生成] 未生成のみモード: フィルタリング開始`);
+                          devLog(`📊 [埋め込み再生成] フィルタリング前: エンティティ=${targetEntities.length}, リレーション=${targetRelations.length}, トピック=${targetTopics.length}`);
                           const { callTauriCommand } = await import('@/lib/localFirebase');
                           
                           // エンティティのフィルタリング（query_getで一括取得）
                           if (selectedType === 'all' || selectedType === 'entities') {
                             try {
-                              // chromaSynced = 0 のエンティティを一括取得
+                              // chromaSynced = 0 のエンティティを一括取得（companyIdを持つものも含めるため、条件を指定せずに取得）
                               const missingEntityDocs = await callTauriCommand('query_get', {
                                 collectionName: 'entities',
                                 conditions: {
                                   chromaSynced: 0,
-                                  ...(selectedOrgId !== 'all' ? { organizationId: selectedOrgId } : {}),
                                 },
                               }) as Array<{ id: string; data: any }>;
                               
-                              console.log(`🔍 [埋め込み再生成] query_get結果: ${missingEntityDocs.length}件`, missingEntityDocs.slice(0, 3));
-                              
                               // query_getの結果は[{id: string, data: any}]の形式
                               const missingEntityIds = new Set(missingEntityDocs.map(doc => doc.id || doc.data?.id));
+                              // targetEntitiesは既にcompanyIdを持つものを含むため、そのままフィルタリング
                               const missingEntities = targetEntities.filter(entity => missingEntityIds.has(entity.id));
                               
-                              console.log(`🔍 [埋め込み再生成] フィルタリング: targetEntities=${targetEntities.length}, missingEntityIds=${missingEntityIds.size}, missingEntities=${missingEntities.length}`);
-                              
-                              console.log(`📊 [埋め込み再生成] エンティティフィルタリング後: ${missingEntities.length}件（一括取得: ${missingEntityDocs.length}件）`);
+                              // ループ内のログを簡略化（パフォーマンス最適化）
+                              devLog(`📊 [埋め込み再生成] エンティティフィルタリング後: ${missingEntities.length}件`);
                               targetEntities = missingEntities;
                             } catch (error) {
-                              console.warn(`⚠️ [埋め込み再生成] エンティティの一括取得エラー（個別チェックにフォールバック）:`, error);
+                              devWarn(`⚠️ [埋め込み再生成] エンティティの一括取得エラー（個別チェックにフォールバック）:`, error);
                               // フォールバック: 個別チェック
                               const missingEntities: Entity[] = [];
                               for (const entity of targetEntities) {
@@ -2391,7 +2741,7 @@ function KnowledgeGraphPageContent() {
                                     missingEntities.push(entity);
                                   }
                                 } catch (err) {
-                                  console.debug(`エンティティ ${entity.id} のフラグ確認エラー:`, err);
+                                  devDebug(`エンティティ ${entity.id} のフラグ確認エラー:`, err);
                                   missingEntities.push(entity);
                                 }
                               }
@@ -2402,27 +2752,24 @@ function KnowledgeGraphPageContent() {
                           // リレーションのフィルタリング（query_getで一括取得）
                           if (selectedType === 'all' || selectedType === 'relations') {
                             try {
-                              // chromaSynced = 0 のリレーションを一括取得
+                              // chromaSynced = 0 のリレーションを一括取得（companyIdを持つものも含めるため、条件を指定せずに取得）
                               const missingRelationDocs = await callTauriCommand('query_get', {
                                 collectionName: 'relations',
                                 conditions: {
                                   chromaSynced: 0,
-                                  ...(selectedOrgId !== 'all' ? { organizationId: selectedOrgId } : {}),
                                 },
                               }) as Array<{ id: string; data: any }>;
                               
-                              console.log(`🔍 [埋め込み再生成] query_get結果: ${missingRelationDocs.length}件`, missingRelationDocs.slice(0, 3));
-                              
                               // query_getの結果は[{id: string, data: any}]の形式
                               const missingRelationIds = new Set(missingRelationDocs.map(doc => doc.id || doc.data?.id));
+                              // targetRelationsは既にcompanyIdを持つものを含むため、そのままフィルタリング
                               const missingRelations = targetRelations.filter(relation => missingRelationIds.has(relation.id));
                               
-                              console.log(`🔍 [埋め込み再生成] フィルタリング: targetRelations=${targetRelations.length}, missingRelationIds=${missingRelationIds.size}, missingRelations=${missingRelations.length}`);
-                              
-                              console.log(`📊 [埋め込み再生成] リレーションフィルタリング後: ${missingRelations.length}件（一括取得: ${missingRelationDocs.length}件）`);
+                              // ループ内のログを簡略化（パフォーマンス最適化）
+                              devLog(`📊 [埋め込み再生成] リレーションフィルタリング後: ${missingRelations.length}件`);
                               targetRelations = missingRelations;
                             } catch (error) {
-                              console.warn(`⚠️ [埋め込み再生成] リレーションの一括取得エラー（個別チェックにフォールバック）:`, error);
+                              devWarn(`⚠️ [埋め込み再生成] リレーションの一括取得エラー（個別チェックにフォールバック）:`, error);
                               // フォールバック: 個別チェック
                               const missingRelations: Relation[] = [];
                               for (const relation of targetRelations) {
@@ -2441,7 +2788,7 @@ function KnowledgeGraphPageContent() {
                                     missingRelations.push(relation);
                                   }
                                 } catch (err) {
-                                  console.debug(`リレーション ${relation.id} のフラグ確認エラー:`, err);
+                                  devDebug(`リレーション ${relation.id} のフラグ確認エラー:`, err);
                                   missingRelations.push(relation);
                                 }
                               }
@@ -2449,30 +2796,27 @@ function KnowledgeGraphPageContent() {
                             }
                           }
                           
-                          // トピックのフィルタリング（query_getで一括取得）
-                          if (selectedType === 'all' || selectedType === 'topics') {
+                          // トピックのフィルタリング（組織用のみ、query_getで一括取得）
+                          if (regenerationMode === 'organization' && (selectedType === 'all' || selectedType === 'topics')) {
                             try {
                               // chromaSynced = 0 のトピックを一括取得
                               const missingTopicDocs = await callTauriCommand('query_get', {
                                 collectionName: 'topics',
                                 conditions: {
                                   chromaSynced: 0,
-                                  ...(selectedOrgId !== 'all' ? { organizationId: selectedOrgId } : {}),
+                                  ...(selectedId !== 'all' ? { organizationId: selectedId } : {}),
                                 },
                               }) as Array<{ id: string; data: any }>;
-                              
-                              console.log(`🔍 [埋め込み再生成] query_get結果: ${missingTopicDocs.length}件`, missingTopicDocs.slice(0, 3));
                               
                               // query_getの結果は[{id: string, data: any}]の形式
                               const missingTopicIds = new Set(missingTopicDocs.map(doc => doc.id || doc.data?.id));
                               const missingTopics = targetTopics.filter(topic => missingTopicIds.has(topic.id));
                               
-                              console.log(`🔍 [埋め込み再生成] フィルタリング: targetTopics=${targetTopics.length}, missingTopicIds=${missingTopicIds.size}, missingTopics=${missingTopics.length}`);
-                              
-                              console.log(`📊 [埋め込み再生成] トピックフィルタリング後: ${missingTopics.length}件（一括取得: ${missingTopicDocs.length}件）`);
+                              // ループ内のログを簡略化（パフォーマンス最適化）
+                              devLog(`📊 [埋め込み再生成] トピックフィルタリング後: ${missingTopics.length}件`);
                               targetTopics = missingTopics;
                             } catch (error) {
-                              console.warn(`⚠️ [埋め込み再生成] トピックの一括取得エラー（個別チェックにフォールバック）:`, error);
+                              devWarn(`⚠️ [埋め込み再生成] トピックの一括取得エラー（個別チェックにフォールバック）:`, error);
                               // フォールバック: 個別チェック
                               const missingTopics: TopicInfo[] = [];
                               for (const topic of targetTopics) {
@@ -2492,7 +2836,7 @@ function KnowledgeGraphPageContent() {
                                     missingTopics.push(topic);
                                   }
                                 } catch (err) {
-                                  console.debug(`トピック ${topic.id} のフラグ確認エラー:`, err);
+                                  devDebug(`トピック ${topic.id} のフラグ確認エラー:`, err);
                                   missingTopics.push(topic);
                                 }
                               }
@@ -2500,7 +2844,7 @@ function KnowledgeGraphPageContent() {
                             }
                           }
                           
-                          console.log(`✅ [埋め込み再生成] フィルタリング完了: エンティティ=${targetEntities.length}, リレーション=${targetRelations.length}, トピック=${targetTopics.length}`);
+                          devLog(`✅ [埋め込み再生成] フィルタリング完了: エンティティ=${targetEntities.length}, リレーション=${targetRelations.length}, トピック=${targetTopics.length}`);
                         }
 
                         if (selectedType === 'all' || selectedType === 'entities') {
@@ -2509,16 +2853,16 @@ function KnowledgeGraphPageContent() {
                         if (selectedType === 'all' || selectedType === 'relations') {
                           totalRelations = targetRelations.length;
                         }
-                        if (selectedType === 'all' || selectedType === 'topics') {
+                        if (regenerationMode === 'organization' && (selectedType === 'all' || selectedType === 'topics')) {
                           totalTopics = targetTopics.length;
                         }
 
                         const total = totalEntities + totalRelations + totalTopics;
-                        console.log(`📊 [埋め込み再生成] 最終的な件数: エンティティ=${totalEntities}, リレーション=${totalRelations}, トピック=${totalTopics}, 合計=${total}`);
+                        devLog(`📊 [埋め込み再生成] 最終的な件数: エンティティ=${totalEntities}, リレーション=${totalRelations}, トピック=${totalTopics}, 合計=${total}`);
                         setRegenerationProgress(prev => ({ ...prev, total }));
                         
                         if (total === 0) {
-                          console.warn(`⚠️ [埋め込み再生成] 処理対象が0件です。フィルタリング処理を確認してください。`);
+                          devWarn(`⚠️ [埋め込み再生成] 処理対象が0件です。フィルタリング処理を確認してください。`);
                           setRegenerationProgress(prev => ({
                             ...prev,
                             status: 'completed',
@@ -2556,9 +2900,14 @@ function KnowledgeGraphPageContent() {
                               break;
                             }
                             
-                            // organizationIdがないものは既にtargetEntitiesから除外されているので、このチェックは不要だが念のため
-                            if (!entity.organizationId) {
-                              console.warn(`⚠️ エンティティ ${entity.id} (${entity.name}) にorganizationIdがありません。スキップします。`);
+                            // 事業会社用の場合はcompanyIdが必要
+                            if (regenerationMode === 'company' && !entity.companyId) {
+                              devWarn(`⚠️ エンティティ ${entity.id} (${entity.name}) にcompanyIdがありません。スキップします。`);
+                              continue;
+                            }
+                            // 組織用の場合はorganizationIdが必要
+                            if (regenerationMode === 'organization' && !entity.organizationId) {
+                              devWarn(`⚠️ エンティティ ${entity.id} (${entity.name}) にorganizationIdがありません。スキップします。`);
                               continue;
                             }
                             
@@ -2566,9 +2915,11 @@ function KnowledgeGraphPageContent() {
                             // batchUpdateEntityEmbeddings内でもSQLiteのchromaSyncedフラグをチェックするため、ここではスキップ
                             
                             const entityIds = [entity.id];
+                            // organizationIdまたはcompanyIdを使用（companyIdがある場合はそれを使用、なければorganizationIdを使用）
+                            const orgOrCompanyId = entity.companyId || entity.organizationId || '';
                             await batchUpdateEntityEmbeddings(
                               entityIds,
-                              entity.organizationId,
+                              orgOrCompanyId,
                               forceRegenerate, // 選択されたモードに応じて設定
                               (current, total, entityId, status) => {
                                 setRegenerationProgress(prev => ({
@@ -2621,22 +2972,34 @@ function KnowledgeGraphPageContent() {
                               break;
                             }
                             
-                            // organizationIdを取得（リレーション自体のorganizationIdを優先、なければ関連エンティティから取得）
+                            // organizationIdまたはcompanyIdを取得（リレーション自体のorganizationId/companyIdを優先、なければ関連エンティティから取得）
                             let organizationId = relation.organizationId;
-                            if (!organizationId) {
+                            let companyId = relation.companyId;
+                            if (!organizationId && !companyId) {
                               const relatedEntity = entities.find(e => e.id === relation.sourceEntityId || e.id === relation.targetEntityId);
                               organizationId = relatedEntity?.organizationId;
+                              companyId = relatedEntity?.companyId;
                             }
                             
-                            // organizationIdがないものは既にtargetRelationsから除外されているので、このチェックは不要だが念のため
-                            if (!organizationId) {
-                              console.warn(`⚠️ リレーション ${relation.id} (${relation.relationType}) にorganizationIdがありません。スキップします。`);
+                            // 事業会社用の場合はcompanyIdが必要
+                            if (regenerationMode === 'company' && !companyId) {
+                              devWarn(`⚠️ リレーション ${relation.id} (${relation.relationType}) にcompanyIdがありません。スキップします。`);
                               continue;
                             }
+                            // 組織用の場合はorganizationIdが必要
+                            if (regenerationMode === 'organization' && !organizationId) {
+                              devWarn(`⚠️ リレーション ${relation.id} (${relation.relationType}) にorganizationIdがありません。スキップします。`);
+                              continue;
+                            }
+                            
+                            // 事業会社用の場合はcompanyIdを優先、組織用の場合はorganizationIdを使用
+                            const orgOrCompanyId = regenerationMode === 'company' 
+                              ? (companyId || '')
+                              : (organizationId || '');
 
                             // topicIdがない場合はスキップ
                             if (!relation.topicId) {
-                              console.warn(`⚠️ リレーション ${relation.id} (${relation.relationType}) にtopicIdがありません。スキップします。`);
+                              devWarn(`⚠️ リレーション ${relation.id} (${relation.relationType}) にtopicIdがありません。スキップします。`);
                               continue;
                             }
 
@@ -2646,7 +3009,7 @@ function KnowledgeGraphPageContent() {
                             const relationIds = [relation.id];
                             await batchUpdateRelationEmbeddings(
                               relationIds,
-                              organizationId,
+                              orgOrCompanyId,
                               forceRegenerate, // 選択されたモードに応じて設定
                               (current, total, relationId, status) => {
                                 setRegenerationProgress(prev => ({
@@ -2679,14 +3042,14 @@ function KnowledgeGraphPageContent() {
                           }
                         }
 
-                        // トピックの再生成
-                        if (selectedType === 'all' || selectedType === 'topics') {
+                        // トピックの再生成（組織用のみ）
+                        if (regenerationMode === 'organization' && (selectedType === 'all' || selectedType === 'topics')) {
                           // トピックをmeetingNoteIdごとにグループ化
                           const topicsByMeetingNote = new Map<string, Array<{ id: string; title: string; content: string; metadata?: any }>>();
                           
                           for (const topic of targetTopics) {
                             if (!topic.organizationId || !topic.meetingNoteId) {
-                              console.warn(`⚠️ トピック ${topic.id} (${topic.title}) にorganizationIdまたはmeetingNoteIdがありません。スキップします。`);
+                              devWarn(`⚠️ トピック ${topic.id} (${topic.title}) にorganizationIdまたはmeetingNoteIdがありません。スキップします。`);
                               continue;
                             }
 
@@ -2737,7 +3100,7 @@ function KnowledgeGraphPageContent() {
                             // 組織IDを取得（最初のトピックから）
                             const orgTopic = targetTopics.find(t => t.meetingNoteId === meetingNoteId);
                             if (!orgTopic?.organizationId) {
-                              console.warn(`⚠️ 議事録 ${meetingNoteId} のトピックにorganizationIdがありません。スキップします。`);
+                              devWarn(`⚠️ 議事録 ${meetingNoteId} のトピックにorganizationIdがありません。スキップします。`);
                               continue;
                             }
 
@@ -2888,7 +3251,7 @@ function KnowledgeGraphPageContent() {
                       onClick={(e) => {
                         e.stopPropagation();
                         e.preventDefault();
-                        console.log('🛑 生成を中止ボタンがクリックされました');
+                        devLog('🛑 生成を中止ボタンがクリックされました');
                         isCancelledRef.current = true;
                         setRegenerationProgress(prev => ({
                           ...prev,
@@ -2941,15 +3304,17 @@ function KnowledgeGraphPageContent() {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
 
-                {regenerationProgress.status === 'cancelled' && (
-                  <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#FEF2F2', borderRadius: '6px' }}>
-                    <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '8px', color: '#991B1B' }}>中止されました</div>
-                    <div style={{ fontSize: '12px', color: '#6B7280' }}>
-                      処理が中止されました。一部のデータは既に処理されている可能性があります。
-                    </div>
+            {regenerationProgress.status === 'cancelled' && (
+              <div>
+                <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#FEF2F2', borderRadius: '6px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '8px', color: '#991B1B' }}>中止されました</div>
+                  <div style={{ fontSize: '12px', color: '#6B7280' }}>
+                    処理が中止されました。一部のデータは既に処理されている可能性があります。
                   </div>
-                )}
+                </div>
 
                 <div style={{ maxHeight: '300px', overflowY: 'auto', marginBottom: '16px' }}>
                   {regenerationProgress.logs.length === 0 ? (
@@ -2974,34 +3339,6 @@ function KnowledgeGraphPageContent() {
                     ))
                   )}
                 </div>
-
-                {regenerationProgress.status === 'completed' && (
-                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                    <button
-                      onClick={() => {
-                        setShowRegenerationModal(false);
-                        setRegenerationProgress({
-                          current: 0,
-                          total: 0,
-                          status: 'idle',
-                          logs: [],
-                          stats: { success: 0, skipped: 0, errors: 0 },
-                        });
-                      }}
-                      style={{
-                        padding: '8px 16px',
-                        backgroundColor: '#3B82F6',
-                        color: '#FFFFFF',
-                        border: 'none',
-                        borderRadius: '6px',
-                        fontSize: '14px',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      閉じる
-                    </button>
-                  </div>
-                )}
               </div>
             )}
           </div>
