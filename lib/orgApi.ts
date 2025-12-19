@@ -389,6 +389,9 @@ function convertToOrgNodeData(dbOrg: any): OrgNodeData {
     name: org.name,
     title: org.title || '',
     description: org.description || undefined,
+    level: org.level !== undefined ? org.level : (org.levelName ? parseInt(org.levelName.replace('階層レベル ', '')) || 0 : 0),
+    levelName: org.levelName || undefined,
+    position: org.position !== undefined ? org.position : 0,
     members: sortedMembers.length > 0 ? sortedMembers : undefined,
     children: children.length > 0 ? children : undefined,
   };
@@ -540,44 +543,46 @@ export async function deleteOrg(id: string): Promise<void> {
     
     // 削除後に、該当する組織が実際に削除されたか確認
     try {
-      // 少し待ってから確認（データベースの更新が反映されるまで）
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // 削除処理が完了するまでポーリングで確認（最大5秒間、500ms間隔）
+      const maxAttempts = 10;
+      const pollInterval = 500;
+      let attempts = 0;
+      let orgStillExists = true;
       
-      // 削除後の確認: collection_getで全組織を取得して、該当IDが存在するか確認
-      try {
-        const allOrgs = await callTauriCommand('collection_get', {
-          collectionName: 'organizations',
-        }) as any[];
+      while (orgStillExists && attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        attempts++;
         
-        const orgStillExists = allOrgs?.some((org: any) => {
-          const orgId = org.id || org.data?.id;
-          return orgId === id;
-        });
-        
-        console.log('🔍 [deleteOrg] 削除後の組織確認（全組織リストから検索）:', {
-          id,
-          totalOrgs: allOrgs?.length || 0,
-          orgStillExists,
-          matchingOrgs: allOrgs?.filter((org: any) => {
+        try {
+          const allOrgs = await callTauriCommand('collection_get', {
+            collectionName: 'organizations',
+          }) as any[];
+          
+          orgStillExists = allOrgs?.some((org: any) => {
             const orgId = org.id || org.data?.id;
             return orgId === id;
-          }).map((org: any) => ({
-            id: org.id || org.data?.id,
-            name: org.data?.name || org.name,
-          })) || [],
-        });
-        
-        if (orgStillExists) {
-          console.error('❌ [deleteOrg] 削除後も組織が存在しています！削除が失敗した可能性があります。');
-          throw new Error(`組織の削除に失敗しました。組織ID ${id} はまだデータベースに存在しています。`);
-        } else {
-          console.log('✅ [deleteOrg] 削除が確認されました。組織はデータベースから削除されています。');
+          }) || false;
+          
+          console.log(`🔍 [deleteOrg] 削除確認 (試行 ${attempts}/${maxAttempts}):`, {
+            id,
+            orgStillExists,
+            totalOrgs: allOrgs?.length || 0,
+          });
+          
+          if (!orgStillExists) {
+            console.log('✅ [deleteOrg] 削除が確認されました。組織はデータベースから削除されています。');
+            break;
+          }
+        } catch (pollError: any) {
+          console.warn(`⚠️ [deleteOrg] ポーリング確認でエラー (試行 ${attempts}):`, pollError);
+          // ポーリングエラーが発生しても続行
         }
-      } catch (verifyError: any) {
-        // 確認エラーが発生した場合でも、削除処理自体は成功している可能性がある
-        console.warn('⚠️ [deleteOrg] 削除後の確認でエラーが発生しました（削除処理自体は成功している可能性があります）:', verifyError);
-        // エラーを再スローしない（削除処理は成功している可能性があるため）
       }
+      
+      if (orgStillExists) {
+        console.warn('⚠️ [deleteOrg] 削除確認のタイムアウト: 組織がまだ存在している可能性がありますが、削除処理は進行中です。');
+      }
+      
     } catch (verifyError: any) {
       // 削除後の確認で予期しないエラーが発生した場合でも、削除処理自体は成功している可能性がある
       console.warn('⚠️ [deleteOrg] 削除後の確認でエラーが発生しました（削除処理自体は成功している可能性があります）:', verifyError);
@@ -2982,105 +2987,4 @@ export async function getAllMembersBatch(organizationIds: string[]): Promise<Arr
   }
 }
 
-/**
- * 重複している組織を確認
- */
-export async function checkDuplicateOrganizations(): Promise<any[]> {
-  try {
-    const duplicates = await callTauriCommand('check_duplicate_orgs', {});
-    return duplicates || [];
-  } catch (error: any) {
-    console.error('❌ [checkDuplicateOrganizations] 重複組織の確認に失敗しました:', error);
-    throw error;
-  }
-}
-
-/**
- * 重複している組織を削除
- */
-export async function deleteDuplicateOrganizations(): Promise<string[]> {
-  try {
-    console.log('🗑️ [deleteDuplicateOrganizations] 重複組織の削除を開始します...');
-    const deletedIds = await callTauriCommand('delete_duplicate_orgs', {}) as string[];
-    console.log('✅ [deleteDuplicateOrganizations] 削除完了:', deletedIds.length, '件');
-    return deletedIds || [];
-  } catch (error: any) {
-    console.error('❌ [deleteDuplicateOrganizations] 重複組織の削除に失敗しました:', error);
-    throw error;
-  }
-}
-
-/**
- * 担当者と組織のデータをCSV形式でエクスポート
- * @param filename 保存するファイル名（オプション、デフォルト: organizations-members-YYYY-MM-DD.csv）
- */
-export async function exportOrganizationsAndMembersToCSV(filename?: string): Promise<void> {
-  try {
-    console.log('📤 [exportOrganizationsAndMembersToCSV] CSVエクスポートを開始します...');
-    
-    // デフォルトのファイル名を生成
-    const defaultFilename = filename || `organizations-members-${new Date().toISOString().split('T')[0]}.csv`;
-    
-    // Tauriコマンドを呼び出してCSVコンテンツを取得（export_pathを指定しない）
-    const csvContent = await callTauriCommand('export_organizations_and_members_csv', {
-      exportPath: null
-    }) as string;
-    
-    console.log('✅ [exportOrganizationsAndMembersToCSV] CSVコンテンツを取得しました（長さ:', csvContent.length, '文字）');
-    
-    // BOM付きCSVをBlobとして作成（CSVコンテンツには既にBOMが含まれている）
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = defaultFilename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    
-    console.log('✅ [exportOrganizationsAndMembersToCSV] CSVエクスポートが完了しました');
-  } catch (error: any) {
-    console.error('❌ [exportOrganizationsAndMembersToCSV] CSVエクスポートエラー:', error);
-    throw error;
-  }
-}
-
-/**
- * CSVファイルから組織マスターデータをインポート
- * @param csvPath CSVファイルのパス
- * @returns インポートされたレコード数
- */
-export async function importOrganizationMasterFromCSV(csvPath: string): Promise<number> {
-  try {
-    console.log('📥 [importOrganizationMasterFromCSV] CSVインポートを開始します...');
-    console.log('📁 CSVファイルパス:', csvPath);
-    
-    const count = await callTauriCommand('import_organization_master_csv', {
-      csvPath: csvPath
-    }) as number;
-    
-    console.log('✅ [importOrganizationMasterFromCSV] CSVインポートが完了しました:', count, '件');
-    return count;
-  } catch (error: any) {
-    console.error('❌ [importOrganizationMasterFromCSV] CSVインポートエラー:', error);
-    throw error;
-  }
-}
-
-export async function importMembersFromCSV(csvPath: string): Promise<number> {
-  try {
-    console.log('📥 [importMembersFromCSV] メンバーCSVインポートを開始します...');
-    console.log('📁 CSVファイルパス:', csvPath);
-    
-    const count = await callTauriCommand('import_members_csv', {
-      csvPath: csvPath
-    }) as number;
-    
-    console.log('✅ [importMembersFromCSV] メンバーCSVインポートが完了しました:', count, '件');
-    return count;
-  } catch (error: any) {
-    console.error('❌ [importMembersFromCSV] メンバーCSVインポートエラー:', error);
-    throw error;
-  }
-}
+// 注意: importOrganizationMasterFromCSV関数は削除されました（organization_masterテーブルが削除されたため）

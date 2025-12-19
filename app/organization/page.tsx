@@ -1,11 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
-import dynamic from 'next/dynamic';
 import type { OrgNodeData, MemberInfo } from '@/components/OrgChart';
-import { getOrgTreeFromDb, getOrgMembers, exportOrganizationsAndMembersToCSV, importOrganizationMasterFromCSV, importMembersFromCSV, updateOrg, addOrgMember, updateOrgMember, deleteOrgMember, tauriAlert, tauriConfirm, createOrg, deleteOrg, checkDuplicateOrganizations, deleteDuplicateOrganizations } from '@/lib/orgApi';
+import { getOrgTreeFromDb, getOrgMembers, updateOrg, updateOrgParent, addOrgMember, updateOrgMember, deleteOrgMember, tauriAlert, tauriConfirm, createOrg, deleteOrg, getAllOrganizationsFromTree, findOrganizationById } from '@/lib/orgApi';
 import { callTauriCommand } from '@/lib/localFirebase';
 import { sortMembersByPosition } from '@/lib/memberSort';
 import { checkBpoMembersInDb } from '@/lib/check-bpo-members-db';
@@ -15,6 +14,10 @@ import { removeIctDivisionDuplicates } from '@/lib/remove-ict-division-duplicate
 import { saveIctDivisionMembers } from '@/lib/save-ict-division-members';
 import { reorderFrontierBusiness } from '@/lib/reorder-frontier-business';
 import { checkDepartmentOrder } from '@/lib/check-department-order';
+import HierarchyView from './views/HierarchyView';
+import BubbleView from './views/BubbleView';
+import FinderView from './views/FinderView';
+import SelectedOrganizationPanel from './components/SelectedOrganizationPanel';
 
 // 開発環境でのみログを有効化するヘルパー関数（パフォーマンス最適化）
 const isDev = process.env.NODE_ENV === 'development';
@@ -29,27 +32,7 @@ const devWarn = (...args: any[]) => {
   }
 };
 
-// OrgChartを動的インポート（SSRを回避）
-const OrgChart = dynamic(() => import('@/components/OrgChart'), {
-  ssr: false,
-  loading: () => (
-    <div style={{ padding: '40px', textAlign: 'center', color: '#666' }}>
-      組織図を読み込み中...
-    </div>
-  ),
-});
-
-// OrgBubbleChartを動的インポート（SSRを回避）
-const OrgBubbleChart = dynamic(() => import('@/components/OrgBubbleChart'), {
-  ssr: false,
-  loading: () => (
-    <div style={{ padding: '40px', textAlign: 'center', color: '#666' }}>
-      バブルチャートを読み込み中...
-    </div>
-  ),
-});
-
-type ViewMode = 'hierarchy' | 'bubble';
+type ViewMode = 'hierarchy' | 'bubble' | 'finder';
 
 // メンバー情報をMemberInfo形式に変換する共通関数
 const mapMembersToMemberInfo = (members: any[]): (MemberInfo & { id?: string })[] => {
@@ -86,237 +69,45 @@ const findOrgInTree = (tree: OrgNodeData, targetId: string): OrgNodeData | null 
   return null;
 };
 
-// 選択された組織の表示コンポーネント
-function SelectedOrganizationPanel({
-  selectedNode,
-  expandedMembers,
-  setExpandedMembers,
-  onEditClick,
-  onNavigateToDetail,
-  containerStyle,
-}: {
-  selectedNode: OrgNodeData;
-  expandedMembers: Set<number>;
-  setExpandedMembers: React.Dispatch<React.SetStateAction<Set<number>>>;
-  onEditClick: () => void;
-  onNavigateToDetail: () => void;
-  containerStyle?: React.CSSProperties;
-}) {
-  return (
-    <div style={containerStyle}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '15px' }}>
-        <h3 style={{ margin: 0 }}>選択された組織</h3>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          {selectedNode.id && (
-            <>
-              <button
-                onClick={onEditClick}
-                style={{
-                  padding: '6px 12px',
-                  backgroundColor: '#3B82F6',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: '500',
-                  whiteSpace: 'nowrap',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = '#2563EB';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = '#3B82F6';
-                }}
-              >
-                ✏️ 編集
-              </button>
-              <button
-                onClick={onNavigateToDetail}
-                style={{
-                  padding: '6px 12px',
-                  backgroundColor: 'var(--color-primary)',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: '500',
-                  whiteSpace: 'nowrap',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--color-primary-hover, #2563EB)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--color-primary)';
-                }}
-              >
-                専用ページへ →
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-      <div style={{ marginBottom: '15px' }}>
-        <p><strong>組織名:</strong> {selectedNode.name}</p>
-        <p><strong>英語名:</strong> {selectedNode.title}</p>
-        {selectedNode.description && (
-          <p><strong>説明:</strong> {selectedNode.description}</p>
-        )}
-      </div>
-      {selectedNode.members && selectedNode.members.length > 0 && (
-        <div>
-          <h4 style={{ marginBottom: '10px', fontSize: '16px', fontWeight: 'bold' }}>
-            所属メンバー ({selectedNode.members.length}名)
-          </h4>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
-              gap: '12px',
-            }}
-          >
-            {sortMembersByPosition(selectedNode.members, selectedNode.name).map((member, index) => {
-              // 役職があるメンバーかどうかでスタイルを変更
-              const hasPosition = member.title && member.title.trim() !== '';
-              const isExpanded = expandedMembers.has(index);
-              const hasDetails = member.extension || member.companyPhone || member.mobilePhone || 
-                                member.itochuEmail || member.teams || member.employeeType || 
-                                member.roleName || member.indicator || member.location || 
-                                member.floorDoorNo || member.previousName || member.department;
-              
-              return (
-              <div
-                key={index}
-                style={{
-                  padding: '12px 16px',
-                  backgroundColor: hasPosition ? '#F9FAFB' : '#ffffff',
-                  border: hasPosition ? '2px solid #3B82F6' : '1px solid #E5E7EB',
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  boxShadow: hasPosition ? '0 2px 4px rgba(59, 130, 246, 0.1)' : '0 1px 3px rgba(0,0,0,0.1)',
-                  cursor: hasDetails ? 'pointer' : 'default',
-                  transition: 'all 0.2s ease',
-                }}
-                onClick={() => {
-                  if (hasDetails) {
-                    setExpandedMembers(prev => {
-                      const newSet = new Set(prev);
-                      if (newSet.has(index)) {
-                        newSet.delete(index);
-                      } else {
-                        newSet.add(index);
-                      }
-                      return newSet;
-                    });
-                  }
-                }}
-                onMouseEnter={(e) => {
-                  if (hasDetails) {
-                    e.currentTarget.style.backgroundColor = hasPosition ? '#F3F4F6' : '#F9FAFB';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (hasDetails) {
-                    e.currentTarget.style.backgroundColor = hasPosition ? '#F9FAFB' : '#ffffff';
-                  }
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ marginBottom: '4px' }}>
-                      <strong style={{ fontSize: '15px', color: '#1F2937' }}>{member.name}</strong>
-                    </div>
-                    {member.title && (
-                      <div style={{ color: '#374151', fontWeight: '500', fontSize: '13px' }}>
-                        {member.title}
-                      </div>
-                    )}
-                  </div>
-                  {hasDetails && (
-                    <div style={{ 
-                      fontSize: '12px', 
-                      color: '#6B7280',
-                      marginLeft: '8px',
-                      transition: 'transform 0.2s ease',
-                      transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                    }}>
-                      ▼
-                    </div>
-                  )}
-                </div>
-                
-                {isExpanded && hasDetails && (
-                  <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #E5E7EB' }}>
-                    {member.department && (
-                      <div style={{ fontSize: '12px', color: '#6B7280', marginBottom: '4px' }}>
-                        <strong>部署:</strong> {member.department}
-                      </div>
-                    )}
-                    {member.extension && (
-                      <div style={{ fontSize: '12px', color: '#6B7280', marginBottom: '4px' }}>
-                        <strong>内線:</strong> {member.extension}
-                      </div>
-                    )}
-                    {member.companyPhone && (
-                      <div style={{ fontSize: '12px', color: '#6B7280', marginBottom: '4px' }}>
-                        <strong>会社:</strong> {member.companyPhone}
-                      </div>
-                    )}
-                    {member.mobilePhone && (
-                      <div style={{ fontSize: '12px', color: '#6B7280', marginBottom: '4px' }}>
-                        <strong>携帯:</strong> {member.mobilePhone}
-                      </div>
-                    )}
-                    {member.itochuEmail && (
-                      <div style={{ fontSize: '12px', color: '#6B7280', marginBottom: '4px' }}>
-                        <strong>伊藤忠メール:</strong>{' '}
-                        <a href={`mailto:${member.itochuEmail}`} style={{ color: '#2563EB', textDecoration: 'none' }}>
-                          {member.itochuEmail}
-                        </a>
-                      </div>
-                    )}
-                    {member.teams && (
-                      <div style={{ fontSize: '12px', color: '#6B7280', marginBottom: '4px' }}>
-                        <strong>コラボレーション:</strong> {member.teams}
-                      </div>
-                    )}
-                    {member.employeeType && (
-                      <div style={{ fontSize: '12px', color: '#6B7280', marginBottom: '4px' }}>
-                        <strong>社員区分:</strong> {member.employeeType}
-                      </div>
-                    )}
-                    {member.roleName && (
-                      <div style={{ fontSize: '12px', color: '#6B7280', marginBottom: '4px' }}>
-                        <strong>役割名:</strong> {member.roleName}
-                      </div>
-                    )}
-                    {member.location && (
-                      <div style={{ fontSize: '12px', color: '#6B7280', marginBottom: '4px' }}>
-                        <strong>勤務地:</strong> {member.location}
-                      </div>
-                    )}
-                    {member.floorDoorNo && (
-                      <div style={{ fontSize: '12px', color: '#6B7280', marginBottom: '4px' }}>
-                        <strong>フロア／ドアNo.:</strong> {member.floorDoorNo}
-                      </div>
-                    )}
-                    {member.previousName && (
-                      <div style={{ fontSize: '12px', color: '#6B7280', marginBottom: '4px' }}>
-                        <strong>旧姓:</strong> {member.previousName}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+// レーベンシュタイン距離を計算する関数
+const levenshteinDistance = (str1: string, str2: string): number => {
+  const matrix: number[][] = [];
+  const len1 = str1.length;
+  const len2 = str2.length;
+
+  for (let i = 0; i <= len1; i++) {
+    matrix[i] = [i];
+  }
+
+  for (let j = 0; j <= len2; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= len1; i++) {
+    for (let j = 1; j <= len2; j++) {
+      if (str1[i - 1] === str2[j - 1]) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,     // 削除
+          matrix[i][j - 1] + 1,     // 挿入
+          matrix[i - 1][j - 1] + 1  // 置換
+        );
+      }
+    }
+  }
+
+  return matrix[len1][len2];
+};
+
+// 類似度を計算する関数（0-1の範囲、1が完全一致）
+const calculateSimilarity = (str1: string, str2: string): number => {
+  const maxLen = Math.max(str1.length, str2.length);
+  if (maxLen === 0) return 1;
+  const distance = levenshteinDistance(str1.toLowerCase(), str2.toLowerCase());
+  return 1 - (distance / maxLen);
+};
+
 
 export default function OrganizationPage() {
   const router = useRouter();
@@ -324,21 +115,25 @@ export default function OrganizationPage() {
   const [orgData, setOrgData] = useState<OrgNodeData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>('bubble');
+  const [viewMode, setViewMode] = useState<ViewMode>('hierarchy');
   const [expandedMembers, setExpandedMembers] = useState<Set<number>>(new Set());
-  const [isExportingCSV, setIsExportingCSV] = useState(false);
-  const [isImportingCSV, setIsImportingCSV] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedNodeMembers, setSelectedNodeMembers] = useState<(MemberInfo & { id?: string })[]>([]);
-  const [showAddOrgModal, setShowAddOrgModal] = useState(false);
   const [showDeleteOrgModal, setShowDeleteOrgModal] = useState(false);
   const [orgToDelete, setOrgToDelete] = useState<OrgNodeData | null>(null);
-  const [isCheckingDuplicates, setIsCheckingDuplicates] = useState(false);
-  const [isDeletingDuplicates, setIsDeletingDuplicates] = useState(false);
-  const [showDeleteDuplicatesModal, setShowDeleteDuplicatesModal] = useState(false);
+  
+  // Finder風カラム表示用のstate
+  const [finderSelectedPath, setFinderSelectedPath] = useState<OrgNodeData[]>([]);
+  const [editingOrgId, setEditingOrgId] = useState<string | null>(null);
+  const [editingOrgName, setEditingOrgName] = useState('');
+  const [creatingOrgParentId, setCreatingOrgParentId] = useState<string | null>(null);
+  const [showFinderDeleteModal, setShowFinderDeleteModal] = useState(false);
+  const [orgToDeleteInFinder, setOrgToDeleteInFinder] = useState<{ id: string; name: string } | null>(null);
   
   // フィルター関連のstate
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(''); // 実際に適用される検索クエリ
+  const [searchInput, setSearchInput] = useState(''); // 検索入力欄の値（検索ボタンを押すまで適用されない）
+  const [searchCandidates, setSearchCandidates] = useState<Array<{ org: OrgNodeData; score: number }>>([]); // 検索候補
   const [levelFilter, setLevelFilter] = useState<string>('all'); // 'all', '部門', '部', '課', 'チーム'
   const [minMembers, setMinMembers] = useState<number>(0);
   const [selectedRootOrgId, setSelectedRootOrgId] = useState<string | null>(null); // 選択されたルート組織のID
@@ -384,17 +179,23 @@ export default function OrganizationPage() {
   const filterOrgTree = (node: OrgNodeData | null): OrgNodeData | null => {
     if (!node) return null;
 
-    // 検索クエリでフィルター
-    const matchesSearch = !searchQuery || 
-      node.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      node.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      node.description?.toLowerCase().includes(searchQuery.toLowerCase());
+    // 検索クエリでフィルター（組織名、英語名、説明で検索）
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const matchesSearch = !normalizedQuery || 
+      node.name.toLowerCase().includes(normalizedQuery) ||
+      node.title?.toLowerCase().includes(normalizedQuery) ||
+      node.description?.toLowerCase().includes(normalizedQuery) ||
+      // メンバー名でも検索可能にする
+      node.members?.some(member => 
+        member.name?.toLowerCase().includes(normalizedQuery) ||
+        member.title?.toLowerCase().includes(normalizedQuery)
+      );
 
-    // レベルでフィルター
+    // レベルでフィルター（常に'all'なので常にtrue）
     const matchesLevel = levelFilter === 'all' || 
       node.levelName === levelFilter;
 
-    // メンバー数でフィルター
+    // メンバー数でフィルター（常に0以上なので常にtrue）
     const memberCount = node.members?.length || 0;
     const matchesMembers = memberCount >= minMembers;
 
@@ -418,8 +219,101 @@ export default function OrganizationPage() {
   };
 
   // 選択されたルート組織の傘下を取得し、フィルターを適用
-  const selectedRootOrgTree = getSelectedRootOrgTree();
-  const filteredOrgData = filterOrgTree(selectedRootOrgTree);
+  const selectedRootOrgTree = useMemo(() => getSelectedRootOrgTree(), [orgData, selectedRootOrgId]);
+  const filteredOrgData = useMemo(() => filterOrgTree(selectedRootOrgTree), [selectedRootOrgTree, searchQuery, levelFilter, minMembers]);
+
+  // 検索候補を計算する関数
+  const calculateSearchCandidates = useCallback((query: string, tree: OrgNodeData | null) => {
+    if (!query.trim() || !tree) {
+      setSearchCandidates([]);
+      return;
+    }
+
+    const normalizedQuery = query.trim().toLowerCase();
+    const candidates: Array<{ org: OrgNodeData; score: number }> = [];
+
+    // 組織ツリーからすべての組織を取得
+    const allOrgs: OrgNodeData[] = [];
+    const traverse = (node: OrgNodeData) => {
+      if (node.id) {
+        allOrgs.push(node);
+      }
+      if (node.children) {
+        node.children.forEach(child => traverse(child));
+      }
+    };
+    traverse(tree);
+
+    // 各組織の類似度を計算
+    allOrgs.forEach(org => {
+      const scores: number[] = [];
+      
+      // 組織名での類似度
+      if (org.name) {
+        scores.push(calculateSimilarity(normalizedQuery, org.name.toLowerCase()));
+        // 部分一致の場合はボーナス
+        if (org.name.toLowerCase().includes(normalizedQuery)) {
+          scores.push(0.8);
+        }
+      }
+      
+      // 英語名での類似度
+      if (org.title) {
+        scores.push(calculateSimilarity(normalizedQuery, org.title.toLowerCase()));
+        if (org.title.toLowerCase().includes(normalizedQuery)) {
+          scores.push(0.7);
+        }
+      }
+      
+      // 説明での類似度
+      if (org.description) {
+        scores.push(calculateSimilarity(normalizedQuery, org.description.toLowerCase()) * 0.5);
+        if (org.description.toLowerCase().includes(normalizedQuery)) {
+          scores.push(0.6);
+        }
+      }
+      
+      // メンバー名での類似度
+      if (org.members) {
+        org.members.forEach(member => {
+          if (member.name) {
+            const memberScore = calculateSimilarity(normalizedQuery, member.name.toLowerCase()) * 0.3;
+            scores.push(memberScore);
+            if (member.name.toLowerCase().includes(normalizedQuery)) {
+              scores.push(0.5);
+            }
+          }
+          if (member.title) {
+            const titleScore = calculateSimilarity(normalizedQuery, member.title.toLowerCase()) * 0.2;
+            scores.push(titleScore);
+          }
+        });
+      }
+
+      // 最高スコアを使用
+      const maxScore = scores.length > 0 ? Math.max(...scores) : 0;
+      
+      // スコアが0.3以上の候補のみ追加
+      if (maxScore >= 0.3) {
+        candidates.push({ org, score: maxScore });
+      }
+    });
+
+    // スコアでソート（降順）
+    candidates.sort((a, b) => b.score - a.score);
+    
+    // 上位10件まで
+    setSearchCandidates(candidates.slice(0, 10));
+  }, []);
+
+  // 検索クエリが変更されたときに候補を計算
+  useEffect(() => {
+    if (searchQuery && selectedRootOrgTree) {
+      calculateSearchCandidates(searchQuery, selectedRootOrgTree);
+    } else {
+      setSearchCandidates([]);
+    }
+  }, [searchQuery, selectedRootOrgTree, calculateSearchCandidates]);
 
   useEffect(() => {
     const loadOrgData = async () => {
@@ -532,71 +426,6 @@ export default function OrganizationPage() {
     }
   }, []);
 
-  // CSVインポート処理
-  const handleCSVImport = async () => {
-    // ファイル選択用のinput要素を作成
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.csv';
-    input.style.display = 'none';
-    
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (!file) {
-        return;
-      }
-
-      setIsImportingCSV(true);
-      try {
-        // ファイルを読み込む
-        const fileContent = await file.text();
-        
-        // アプリデータディレクトリのパスを取得
-        const appDataPath = await callTauriCommand('get_path', {}) as string;
-        const tempPath = `${appDataPath}/temp_${Date.now()}_${file.name}`;
-        
-        // Tauriコマンドでファイルを書き込み
-        const writeResult = await callTauriCommand('write_file', {
-          filePath: tempPath,
-          data: fileContent,
-        });
-        
-        if (!writeResult.success) {
-          throw new Error(writeResult.error || 'ファイルの保存に失敗しました');
-        }
-
-        // CSVファイルの内容を確認して、組織マスターかメンバーかを判定
-        const isMemberCSV = fileContent.includes('=== メンバーデータ ===');
-        
-        let count: number;
-        if (isMemberCSV) {
-          // メンバーCSVインポート
-          count = await importMembersFromCSV(tempPath);
-          await tauriAlert(`メンバーデータのインポートが完了しました。\n${count}件のレコードをインポートしました。`);
-        } else {
-          // 組織マスターCSVインポート
-          count = await importOrganizationMasterFromCSV(tempPath);
-          await tauriAlert(`組織マスターデータのインポートが完了しました。\n${count}件のレコードをインポートしました。`);
-          
-          // 組織データを再読み込み（組織マスターの場合のみ）
-          const data = await getOrgTreeFromDb();
-          if (data) {
-            setOrgData(data);
-            devLog('✅ 組織データを再読み込みしました');
-          }
-        }
-      } catch (error: any) {
-        console.error('CSVインポートエラー:', error);
-        await tauriAlert(`CSVインポートに失敗しました: ${error.message}`);
-      } finally {
-        setIsImportingCSV(false);
-        document.body.removeChild(input);
-      }
-    };
-    
-    document.body.appendChild(input);
-    input.click();
-  };
 
   const handleNodeClick = async (node: OrgNodeData, event: MouseEvent) => {
     devLog('🔗 [組織一覧] ノードがクリックされました:', { id: node.id, name: node.name });
@@ -619,6 +448,7 @@ export default function OrganizationPage() {
         // ノードにメンバー情報を追加（IDなし、表示用）
         const nodeWithMembers = {
           ...node,
+          id: node.id, // IDを明示的に保持
           members: sortedMembers.map(m => {
             // idプロパティが存在する場合は削除
             if ('id' in m) {
@@ -629,6 +459,11 @@ export default function OrganizationPage() {
           }),
         };
         
+        devLog('✅ [handleNodeClick] selectedNodeを設定:', { 
+          id: nodeWithMembers.id, 
+          name: nodeWithMembers.name,
+          hasId: !!nodeWithMembers.id
+        });
         setSelectedNode(nodeWithMembers);
       } catch (error: any) {
         console.error(`${node.name}のメンバー取得に失敗しました:`, error);
@@ -638,6 +473,130 @@ export default function OrganizationPage() {
     } else {
       setSelectedNode(node);
       setSelectedNodeMembers([]);
+    }
+  };
+
+  // 組織詳細ページへの遷移ハンドラー
+  const handleNavigateToDetail = useCallback(() => {
+    if (!selectedNode?.id) {
+      devWarn('⚠️ [組織一覧] 組織IDが存在しないため、詳細ページに遷移できません:', {
+        selectedNode,
+        hasId: !!selectedNode?.id
+      });
+      tauriAlert('組織IDが存在しないため、詳細ページに遷移できません。');
+      return;
+    }
+    
+    devLog('🔗 [組織一覧] 組織詳細ページに遷移:', { 
+      selectedNode,
+      organizationId: selectedNode.id, 
+      organizationName: selectedNode.name,
+      hasId: !!selectedNode.id
+    });
+    
+    router.push(`/organization/detail?id=${selectedNode.id}`);
+  }, [selectedNode, router]);
+
+  // 組織追加ハンドラー（組織データがない場合に使用）
+  const handleAddOrg = async () => {
+    try {
+      const level = 0;
+      const levelName = '部門';
+      
+      console.log('🔍 [handleAddOrg] ルート組織を作成中:', {
+        parentId: null,
+        name: 'ルート組織',
+        level,
+        levelName,
+      });
+      
+      // 組織を作成
+      const result = await createOrg(null, 'ルート組織', null, null, level, levelName, 0);
+      
+      if (!result || !result.id) {
+        throw new Error('組織の作成に失敗しました。IDが返されませんでした。');
+      }
+      
+      console.log('✅ [handleAddOrg] 組織を作成しました:', result.id);
+      
+      // データベースの更新を待つために、複数回再取得を試みる
+      let tree: OrgNodeData | null = null;
+      let attempts = 0;
+      const maxAttempts = 5;
+      
+      while (attempts < maxAttempts && !tree) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+        tree = await getOrgTreeFromDb();
+        
+        if (tree) {
+          // 作成された組織がツリーに含まれているか確認
+          const findNewOrg = (node: OrgNodeData, targetId: string): OrgNodeData | null => {
+            if (node.id === targetId) return node;
+            if (node.children) {
+              for (const child of node.children) {
+                const found = findNewOrg(child, targetId);
+                if (found) return found;
+              }
+            }
+            return null;
+          };
+          
+          const foundOrg = findNewOrg(tree, result.id);
+          if (foundOrg) {
+            console.log('✅ [handleAddOrg] 作成された組織をツリーで確認:', result.id);
+            break;
+          } else {
+            console.log(`⏳ [handleAddOrg] 組織がまだツリーに反映されていません (試行 ${attempts + 1}/${maxAttempts})`);
+            tree = null; // 見つからない場合は再試行
+          }
+        }
+        attempts++;
+      }
+      
+      if (!tree) {
+        // 最後の試行として、もう一度取得
+        tree = await getOrgTreeFromDb();
+      }
+      
+      if (!tree) {
+        throw new Error('組織ツリーの取得に失敗しました。');
+      }
+      
+      console.log('✅ [handleAddOrg] 組織ツリーを更新:', tree);
+      setOrgData(tree);
+      
+      // 作成された組織を初期選択として設定
+      if (tree.id === result.id) {
+        try {
+          const members = await getOrgMembers(tree.id);
+          const memberInfos = mapMembersToMemberInfo(members);
+          const sortedMembers = sortMembersByPosition(memberInfos, tree.name);
+          setSelectedNodeMembers(sortedMembers);
+          setSelectedNode({
+            ...tree,
+            members: sortedMembers.map(m => {
+              if ('id' in m) {
+                const { id, ...memberWithoutId } = m as any;
+                return memberWithoutId;
+              }
+              return m;
+            }),
+          });
+        } catch (error: any) {
+          devWarn('ルートノードのメンバー取得に失敗しました:', error);
+          setSelectedNode(tree);
+          setSelectedNodeMembers([]);
+        }
+      } else {
+        setSelectedNode(tree);
+        setSelectedNodeMembers([]);
+      }
+      
+      await tauriAlert('ルート組織を作成しました。');
+    } catch (error: any) {
+      console.error('❌ [handleAddOrg] 組織の作成に失敗しました:', error);
+      const errorMessage = error?.response?.data?.error || error?.message || String(error);
+      await tauriAlert(`組織の作成に失敗しました: ${errorMessage}`);
     }
   };
 
@@ -710,91 +669,15 @@ export default function OrganizationPage() {
                   }
                 }}
               >
-                バブルチャート
+                バブル表示
               </button>
               <button
-                onClick={async () => {
-                  if (isExportingCSV) return;
-                  setIsExportingCSV(true);
-                  try {
-                    await exportOrganizationsAndMembersToCSV();
-                    await tauriAlert('CSVエクスポートが完了しました');
-                  } catch (error: any) {
-                    console.error('CSVエクスポートエラー:', error);
-                    await tauriAlert(`CSVエクスポートに失敗しました: ${error.message}`);
-                  } finally {
-                    setIsExportingCSV(false);
-                  }
-                }}
-                disabled={isExportingCSV}
+                onClick={() => setViewMode('finder')}
                 style={{
                   padding: '8px 16px',
                   borderRadius: '8px',
                   border: 'none',
-                  backgroundColor: isExportingCSV ? '#9CA3AF' : '#10B981',
-                  color: '#ffffff',
-                  cursor: isExportingCSV ? 'not-allowed' : 'pointer',
-                  fontSize: '14px',
-                  fontWeight: '600',
-                  transition: 'all 0.2s',
-                  fontFamily: "'Inter', 'Noto Sans JP', -apple-system, sans-serif",
-                  opacity: isExportingCSV ? 0.7 : 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                }}
-                onMouseEnter={(e) => {
-                  if (!isExportingCSV) {
-                    e.currentTarget.style.backgroundColor = '#059669';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isExportingCSV) {
-                    e.currentTarget.style.backgroundColor = '#10B981';
-                  }
-                }}
-              >
-                {isExportingCSV ? 'エクスポート中...' : '📥 CSVエクスポート'}
-              </button>
-              <button
-                onClick={handleCSVImport}
-                disabled={isImportingCSV}
-                style={{
-                  padding: '8px 16px',
-                  borderRadius: '8px',
-                  border: 'none',
-                  backgroundColor: isImportingCSV ? '#9CA3AF' : '#3B82F6',
-                  color: '#ffffff',
-                  cursor: isImportingCSV ? 'not-allowed' : 'pointer',
-                  fontSize: '14px',
-                  fontWeight: '600',
-                  transition: 'all 0.2s',
-                  fontFamily: "'Inter', 'Noto Sans JP', -apple-system, sans-serif",
-                  opacity: isImportingCSV ? 0.7 : 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                }}
-                onMouseEnter={(e) => {
-                  if (!isImportingCSV) {
-                    e.currentTarget.style.backgroundColor = '#2563EB';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isImportingCSV) {
-                    e.currentTarget.style.backgroundColor = '#3B82F6';
-                  }
-                }}
-              >
-                {isImportingCSV ? 'インポート中...' : '📤 CSVインポート'}
-              </button>
-              <button
-                onClick={() => setShowAddOrgModal(true)}
-                style={{
-                  padding: '8px 16px',
-                  borderRadius: '8px',
-                  border: 'none',
-                  backgroundColor: '#10B981',
+                  backgroundColor: viewMode === 'finder' ? '#3B82F6' : '#10B981',
                   color: '#ffffff',
                   cursor: 'pointer',
                   fontSize: '14px',
@@ -804,108 +687,17 @@ export default function OrganizationPage() {
                   display: 'flex',
                   alignItems: 'center',
                   gap: '6px',
+                  gap: '6px',
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.backgroundColor = '#059669';
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = '#10B981';
+                  e.currentTarget.style.backgroundColor = viewMode === 'finder' ? '#3B82F6' : '#10B981';
                 }}
               >
-                + 組織を追加
+                {viewMode === 'finder' ? '✓ Finder表示' : 'Finder表示'}
               </button>
-              {process.env.NODE_ENV === 'development' && (
-                <>
-                  <button
-                    onClick={async () => {
-                      if (isCheckingDuplicates) return;
-                      setIsCheckingDuplicates(true);
-                      try {
-                        const duplicates = await checkDuplicateOrganizations();
-                        if (duplicates.length === 0) {
-                          await tauriAlert('重複している組織は見つかりませんでした。');
-                        } else {
-                          const message = `重複している組織が ${duplicates.length} 件見つかりました。\n\n` +
-                            duplicates.map(dup => 
-                              `・${dup.name}: ${dup.count}件\n` +
-                              dup.organizations.map((org: any) => 
-                                `  - ID: ${org.id}, メンバー: ${org.member_count}名, 子組織: ${org.child_count}個`
-                              ).join('\n')
-                            ).join('\n\n') +
-                            '\n\n削除する場合は「重複組織を削除」ボタンをクリックしてください。';
-                          await tauriAlert(message);
-                        }
-                      } catch (error: any) {
-                        console.error('重複組織の確認エラー:', error);
-                        await tauriAlert(`重複組織の確認に失敗しました: ${error.message}`);
-                      } finally {
-                        setIsCheckingDuplicates(false);
-                      }
-                    }}
-                    disabled={isCheckingDuplicates}
-                    style={{
-                      padding: '8px 16px',
-                      borderRadius: '8px',
-                      border: 'none',
-                      backgroundColor: isCheckingDuplicates ? '#9CA3AF' : '#F59E0B',
-                      color: '#ffffff',
-                      cursor: isCheckingDuplicates ? 'not-allowed' : 'pointer',
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      transition: 'all 0.2s',
-                      fontFamily: "'Inter', 'Noto Sans JP', -apple-system, sans-serif",
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      opacity: isCheckingDuplicates ? 0.7 : 1,
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isCheckingDuplicates) {
-                        e.currentTarget.style.backgroundColor = '#D97706';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isCheckingDuplicates) {
-                        e.currentTarget.style.backgroundColor = '#F59E0B';
-                      }
-                    }}
-                  >
-                    {isCheckingDuplicates ? '確認中...' : '🔍 重複組織を確認'}
-                  </button>
-                  <button
-                    onClick={() => setShowDeleteDuplicatesModal(true)}
-                    disabled={isDeletingDuplicates}
-                    style={{
-                      padding: '8px 16px',
-                      borderRadius: '8px',
-                      border: 'none',
-                      backgroundColor: isDeletingDuplicates ? '#9CA3AF' : '#EF4444',
-                      color: '#ffffff',
-                      cursor: isDeletingDuplicates ? 'not-allowed' : 'pointer',
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      transition: 'all 0.2s',
-                      fontFamily: "'Inter', 'Noto Sans JP', -apple-system, sans-serif",
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      opacity: isDeletingDuplicates ? 0.7 : 1,
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isDeletingDuplicates) {
-                        e.currentTarget.style.backgroundColor = '#DC2626';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isDeletingDuplicates) {
-                        e.currentTarget.style.backgroundColor = '#EF4444';
-                      }
-                    }}
-                  >
-                    {isDeletingDuplicates ? '削除中...' : '🗑️ 重複組織を削除'}
-                  </button>
-                </>
-              )}
             </div>
           </div>
           
@@ -1015,7 +807,7 @@ export default function OrganizationPage() {
                     }}
                   >
                     {isFilterExpanded ? '▼' : '▶'} フィルター
-                    {(searchQuery || levelFilter !== 'all' || minMembers > 0) && (
+                    {searchQuery && (
                       <span style={{ 
                         marginLeft: '4px',
                         padding: '2px 6px',
@@ -1028,12 +820,11 @@ export default function OrganizationPage() {
                       </span>
                     )}
                   </button>
-                  {(searchQuery || levelFilter !== 'all' || minMembers > 0) && (
+                  {searchQuery && (
                     <button
                       onClick={() => {
                         setSearchQuery('');
-                        setLevelFilter('all');
-                        setMinMembers(0);
+                        setSearchInput('');
                       }}
                       style={{
                         padding: '6px 12px',
@@ -1097,7 +888,7 @@ export default function OrganizationPage() {
                   }}
                 >
                   {isFilterExpanded ? '▼' : '▶'} フィルター
-                  {(searchQuery || levelFilter !== 'all' || minMembers > 0) && (
+                  {searchQuery && (
                     <span style={{ 
                       marginLeft: '4px',
                       padding: '2px 6px',
@@ -1110,12 +901,11 @@ export default function OrganizationPage() {
                     </span>
                   )}
                 </button>
-                {(searchQuery || levelFilter !== 'all' || minMembers > 0) && (
+                {searchQuery && (
                   <button
                     onClick={() => {
                       setSearchQuery('');
-                      setLevelFilter('all');
-                      setMinMembers(0);
+                      setSearchInput('');
                     }}
                     style={{
                       padding: '6px 12px',
@@ -1153,117 +943,239 @@ export default function OrganizationPage() {
             }}>
               <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                 {/* 検索ボックス */}
-                <div style={{ flex: '1', minWidth: '200px' }}>
+                <div style={{ flex: '1', minWidth: '250px' }}>
                   <label style={{ 
-                  display: 'block', 
-                  fontSize: '13px', 
-                  fontWeight: '500', 
-                  color: '#374151', 
-                  marginBottom: '6px' 
-                }}>
-                  組織名で検索
-                </label>
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="組織名、英語名、説明で検索..."
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid #D1D5DB',
-                    fontSize: '14px',
-                    fontFamily: "'Inter', 'Noto Sans JP', -apple-system, sans-serif",
-                  }}
-                />
-              </div>
+                    display: 'block', 
+                    fontSize: '13px', 
+                    fontWeight: '500', 
+                    color: '#374151', 
+                    marginBottom: '6px' 
+                  }}>
+                    組織名で検索
+                  </label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <div style={{ position: 'relative', flex: '1' }}>
+                      <input
+                        type="text"
+                        value={searchInput}
+                        onChange={(e) => setSearchInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            setSearchQuery(searchInput.trim());
+                          }
+                        }}
+                        placeholder="組織名、英語名、説明、メンバー名で検索..."
+                        style={{
+                          width: '100%',
+                          padding: '8px 36px 8px 12px',
+                          borderRadius: '6px',
+                          border: '1px solid #D1D5DB',
+                          fontSize: '14px',
+                          fontFamily: "'Inter', 'Noto Sans JP', -apple-system, sans-serif",
+                          transition: 'border-color 0.2s',
+                        }}
+                        onFocus={(e) => {
+                          e.currentTarget.style.borderColor = '#3B82F6';
+                        }}
+                        onBlur={(e) => {
+                          e.currentTarget.style.borderColor = '#D1D5DB';
+                        }}
+                      />
+                      {searchInput && (
+                        <button
+                          onClick={() => {
+                            setSearchInput('');
+                            setSearchQuery('');
+                          }}
+                          style={{
+                            position: 'absolute',
+                            right: '8px',
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            padding: '4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: '#6B7280',
+                            fontSize: '18px',
+                            lineHeight: '1',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.color = '#374151';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.color = '#6B7280';
+                          }}
+                          title="検索をクリア"
+                        >
+                          ×
+                        </button>
+                      )}
+                      {!searchInput && (
+                        <span style={{
+                          position: 'absolute',
+                          right: '12px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          color: '#9CA3AF',
+                          fontSize: '16px',
+                          pointerEvents: 'none',
+                        }}>
+                          🔍
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => setSearchQuery(searchInput.trim())}
+                      disabled={!searchInput.trim() && !searchQuery}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: '6px',
+                        border: 'none',
+                        backgroundColor: searchInput.trim() || searchQuery ? '#3B82F6' : '#D1D5DB',
+                        color: '#fff',
+                        fontSize: '14px',
+                        fontWeight: '500',
+                        cursor: searchInput.trim() || searchQuery ? 'pointer' : 'not-allowed',
+                        fontFamily: "'Inter', 'Noto Sans JP', -apple-system, sans-serif",
+                        whiteSpace: 'nowrap',
+                        transition: 'background-color 0.2s',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (searchInput.trim() || searchQuery) {
+                          e.currentTarget.style.backgroundColor = '#2563EB';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (searchInput.trim() || searchQuery) {
+                          e.currentTarget.style.backgroundColor = '#3B82F6';
+                        }
+                      }}
+                    >
+                      検索
+                    </button>
+                  </div>
+                </div>
 
-              {/* レベルフィルター */}
-              <div style={{ minWidth: '150px' }}>
-                <label style={{ 
-                  display: 'block', 
-                  fontSize: '13px', 
-                  fontWeight: '500', 
-                  color: '#374151', 
-                  marginBottom: '6px' 
-                }}>
-                  レベル
-                </label>
-                <select
-                  value={levelFilter}
-                  onChange={(e) => setLevelFilter(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid #D1D5DB',
-                    fontSize: '14px',
-                    fontFamily: "'Inter', 'Noto Sans JP', -apple-system, sans-serif",
-                    backgroundColor: '#fff',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <option value="all">すべて</option>
-                  <option value="部門">部門</option>
-                  <option value="部">部</option>
-                  <option value="課">課</option>
-                  <option value="チーム">チーム</option>
-                </select>
-              </div>
-
-              {/* メンバー数フィルター */}
-              <div style={{ minWidth: '150px' }}>
-                <label style={{ 
-                  display: 'block', 
-                  fontSize: '13px', 
-                  fontWeight: '500', 
-                  color: '#374151', 
-                  marginBottom: '6px' 
-                }}>
-                  最小メンバー数
-                </label>
-                <input
-                  type="number"
-                  value={minMembers}
-                  onChange={(e) => setMinMembers(parseInt(e.target.value) || 0)}
-                  min="0"
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid #D1D5DB',
-                    fontSize: '14px',
-                    fontFamily: "'Inter', 'Noto Sans JP', -apple-system, sans-serif",
-                  }}
-                />
-              </div>
               </div>
               
+              {/* 検索候補の表示 */}
+              {searchQuery && searchCandidates.length > 0 && (
+                <div style={{ 
+                  marginTop: '12px',
+                  maxHeight: '300px',
+                  overflowY: 'auto',
+                  border: '1px solid #E5E7EB',
+                  borderRadius: '6px',
+                  backgroundColor: '#fff',
+                }}>
+                  <div style={{ 
+                    padding: '8px 12px',
+                    backgroundColor: '#F9FAFB',
+                    borderBottom: '1px solid #E5E7EB',
+                    fontSize: '12px',
+                    fontWeight: '500',
+                    color: '#6B7280',
+                  }}>
+                    検索候補 ({searchCandidates.length}件)
+                  </div>
+                  {searchCandidates.map((candidate, index) => (
+                    <div
+                      key={candidate.org.id || index}
+                      onClick={async () => {
+                        // 候補をクリックしたときに、その組織を選択して表示
+                        const foundOrg = findOrganizationById(selectedRootOrgTree, candidate.org.id || '');
+                        if (foundOrg) {
+                          await handleNodeClick(foundOrg, new MouseEvent('click'));
+                          // 検索をクリア
+                          setSearchQuery('');
+                          setSearchInput('');
+                        }
+                      }}
+                      style={{
+                        padding: '10px 12px',
+                        borderBottom: index < searchCandidates.length - 1 ? '1px solid #F3F4F6' : 'none',
+                        cursor: 'pointer',
+                        transition: 'background-color 0.2s',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = '#F3F4F6';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = '#fff';
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <div style={{ fontSize: '14px', fontWeight: '500', color: '#1F2937' }}>
+                            {candidate.org.name}
+                          </div>
+                          {candidate.org.title && (
+                            <div style={{ fontSize: '12px', color: '#6B7280', marginTop: '2px' }}>
+                              {candidate.org.title}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ 
+                          fontSize: '11px',
+                          color: '#9CA3AF',
+                          padding: '2px 6px',
+                          backgroundColor: '#F3F4F6',
+                          borderRadius: '4px',
+                        }}>
+                          {Math.round(candidate.score * 100)}%
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* フィルター結果の表示 */}
-              {(searchQuery || levelFilter !== 'all' || minMembers > 0 || selectedRootOrgId) && (
+              {(searchQuery || selectedRootOrgId) && (
                 <div style={{ 
                   marginTop: '12px', 
-                  padding: '8px 12px', 
-                  backgroundColor: '#EFF6FF', 
+                  padding: '10px 14px', 
+                  backgroundColor: searchQuery && orgData && !filteredOrgData && searchCandidates.length === 0 ? '#FEF2F2' : '#EFF6FF', 
                   borderRadius: '6px',
                   fontSize: '13px',
-                  color: '#1E40AF',
+                  color: searchQuery && orgData && !filteredOrgData && searchCandidates.length === 0 ? '#DC2626' : '#1E40AF',
+                  border: `1px solid ${searchQuery && orgData && !filteredOrgData && searchCandidates.length === 0 ? '#FECACA' : '#BFDBFE'}`,
                 }}>
                   {orgData && filteredOrgData ? (
-                    <>
-                      フィルター適用中: 
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: '500' }}>検索結果:</span>
                       {selectedRootOrgId && (
-                        <> 組織: {getRootOrganizations().find(org => org.id === selectedRootOrgId)?.name || ''}</>
+                        <span style={{ 
+                          padding: '2px 8px',
+                          backgroundColor: '#DBEAFE',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                        }}>
+                          組織: {getRootOrganizations().find(org => org.id === selectedRootOrgId)?.name || ''}
+                        </span>
                       )}
-                      {searchQuery && ` 検索: 「${searchQuery}」`}
-                      {levelFilter !== 'all' && ` レベル: ${levelFilter}`}
-                      {minMembers > 0 && ` メンバー数: ${minMembers}名以上`}
-                    </>
-                  ) : orgData ? (
-                    <>条件に一致する組織が見つかりませんでした</>
+                      {searchQuery && (
+                        <span style={{ 
+                          padding: '2px 8px',
+                          backgroundColor: '#DBEAFE',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                        }}>
+                          「{searchQuery}」に一致
+                        </span>
+                      )}
+                    </div>
+                  ) : orgData && searchCandidates.length === 0 ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span>⚠️</span>
+                      <span>「{searchQuery}」に一致する組織が見つかりませんでした</span>
+                    </div>
                   ) : (
-                    <>組織データがありません</>
+                    <span>組織データがありません</span>
                   )}
                 </div>
               )}
@@ -1290,178 +1202,453 @@ export default function OrganizationPage() {
         minHeight: '600px',
         alignItems: 'flex-start',
         width: '100%',
+        flexDirection: 'row',
       }}>
-        <div style={{ 
-          background: 'var(--color-surface)',
-          borderRadius: '6px',
-          padding: '0',
-          boxShadow: '0 1px 2px rgba(0, 0, 0, 0.03)',
-          marginBottom: '0',
-          border: 'none',
-          overflow: 'hidden',
-          flex: viewMode === 'bubble' && selectedNode ? '0 0 60%' : '1',
-          display: 'flex',
-          flexDirection: 'column',
-          transition: 'flex 0.3s ease',
-          height: '100%',
-        }}>
-          {!orgData ? (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: '100%',
-              padding: '40px',
-              textAlign: 'center',
-              color: '#6B7280',
-            }}>
-              <div>
-                <p style={{ fontSize: '16px', marginBottom: '8px', color: '#374151' }}>
-                  {error || '組織データが見つかりませんでした。'}
-                </p>
-                <p style={{ fontSize: '14px', color: '#6B7280' }}>
-                  組織を追加するには、右上の「+ 組織を追加」ボタンをクリックしてください。
-                </p>
-              </div>
-            </div>
-          ) : (filteredOrgData || orgData) ? (
-            viewMode === 'hierarchy' ? (
-              <OrgChart
-                data={filteredOrgData || orgData!}
-                onNodeClick={handleNodeClick}
-              />
-            ) : (
-              <OrgBubbleChart
-                data={filteredOrgData || orgData!}
-                onNodeClick={handleNodeClick}
-                width={1200}
-                height={800}
-              />
-            )
-          ) : (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: '100%',
-              padding: '40px',
-              textAlign: 'center',
-              color: '#6B7280',
-            }}>
-              <div>
-                <p style={{ fontSize: '16px', marginBottom: '8px', color: '#374151' }}>
-                  組織データがフィルター条件に一致しませんでした。
-                </p>
-                <p style={{ fontSize: '14px', color: '#6B7280' }}>
-                  フィルター条件を変更してください。
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {viewMode === 'bubble' && selectedNode && (
-          <div style={{ 
-            background: 'var(--color-surface)',
-            borderRadius: '6px',
-            padding: '24px',
-            boxShadow: '0 1px 2px rgba(0, 0, 0, 0.03)',
-            marginBottom: '0',
-            border: 'none',
-            flex: '0 0 38%',
-            overflowY: 'auto',
-            height: '100%',
-            position: 'sticky',
-            top: 0,
-            alignSelf: 'flex-start',
-            maxWidth: '500px',
-          }}>
-            <SelectedOrganizationPanel
-              selectedNode={selectedNode}
-              expandedMembers={expandedMembers}
-              setExpandedMembers={setExpandedMembers}
-              onEditClick={() => setShowEditModal(true)}
-              onNavigateToDetail={() => {
-                if (selectedNode?.id) {
-                  devLog('🔗 [組織一覧] 組織詳細ページに遷移:', { 
-                    organizationId: selectedNode.id, 
-                    organizationName: selectedNode.name 
-                  });
-                  router.push(`/organization/detail?id=${selectedNode.id}`);
-                } else {
-                  devWarn('⚠️ [組織一覧] 組織IDが存在しないため、詳細ページに遷移できません');
-                }
-              }}
-            />
-          </div>
-        )}
-      </div>
-
-      {viewMode === 'hierarchy' && selectedNode && (
-        <div className="card" style={{ marginTop: '20px', padding: '20px' }}>
-          <SelectedOrganizationPanel
+        {viewMode === 'hierarchy' ? (
+          <HierarchyView
+            orgData={orgData}
+            filteredOrgData={filteredOrgData}
             selectedNode={selectedNode}
             expandedMembers={expandedMembers}
             setExpandedMembers={setExpandedMembers}
+            onNodeClick={handleNodeClick}
             onEditClick={() => setShowEditModal(true)}
-            onNavigateToDetail={() => {
-              if (selectedNode?.id) {
-                devLog('🔗 [組織一覧] 組織詳細ページに遷移:', { 
-                  organizationId: selectedNode.id, 
-                  organizationName: selectedNode.name 
-                });
-                router.push(`/organization/detail?id=${selectedNode.id}`);
-              } else {
-                devWarn('⚠️ [組織一覧] 組織IDが存在しないため、詳細ページに遷移できません');
-              }
-            }}
+            onNavigateToDetail={handleNavigateToDetail}
+            onAddOrg={handleAddOrg}
+            error={error}
           />
-        </div>
-      )}
-
-      {/* 組織追加モーダル */}
-      {showAddOrgModal && (
-        <AddOrganizationModal
-          orgTree={orgData}
-          onClose={() => setShowAddOrgModal(false)}
-          onSave={async () => {
-            // 組織ツリーを再取得
-            const tree = await getOrgTreeFromDb();
-            if (tree) {
-              setOrgData(tree);
-              // 選択されたノードが存在する場合、そのノードも更新
-              if (selectedNode?.id) {
-                const foundOrg = findOrgInTree(tree, selectedNode.id);
-                if (foundOrg) {
-                  if (foundOrg.id) {
-                    try {
-                      const members = await getOrgMembers(foundOrg.id);
-                      const memberInfos = mapMembersToMemberInfo(members);
-                      const sortedMembers = sortMembersByPosition(memberInfos, foundOrg.name);
-                      setSelectedNodeMembers(sortedMembers);
-                      setSelectedNode({
-                        ...foundOrg,
-                        members: sortedMembers.map(m => {
-                          // idプロパティが存在する場合は削除
-                          if ('id' in m) {
-                            const { id, ...memberWithoutId } = m as any;
-                          return memberWithoutId;
+        ) : viewMode === 'bubble' ? (
+          <BubbleView
+            orgData={orgData}
+            filteredOrgData={filteredOrgData}
+            selectedNode={selectedNode}
+            expandedMembers={expandedMembers}
+            setExpandedMembers={setExpandedMembers}
+            onNodeClick={handleNodeClick}
+            onEditClick={() => setShowEditModal(true)}
+            onNavigateToDetail={handleNavigateToDetail}
+            onAddOrg={handleAddOrg}
+            error={error}
+          />
+        ) : (
+          <FinderView
+                orgData={orgData}
+                filteredOrgData={filteredOrgData}
+                finderSelectedPath={finderSelectedPath}
+                setFinderSelectedPath={setFinderSelectedPath}
+                editingOrgId={editingOrgId}
+                editingOrgName={editingOrgName}
+                setEditingOrgId={setEditingOrgId}
+                setEditingOrgName={setEditingOrgName}
+                onReorderOrg={async (orgId: string, newPosition: number, parentId: string | null) => {
+                  try {
+                    // positionを更新
+                    await updateOrg(orgId, undefined, undefined, undefined, newPosition);
+                    
+                    // 組織ツリーを再取得
+                    const tree = await getOrgTreeFromDb();
+                    if (tree) {
+                      setOrgData(tree);
+                      
+                      // selectedPathを最新の組織ツリーから再構築
+                      const rebuildSelectedPath = (currentPath: OrgNodeData[], newTree: OrgNodeData): OrgNodeData[] => {
+                        const findOrgInTree = (node: OrgNodeData, targetId: string): OrgNodeData | null => {
+                          if (node.id === targetId) return node;
+                          if (node.children) {
+                            for (const child of node.children) {
+                              const found = findOrgInTree(child, targetId);
+                              if (found) return found;
+                            }
                           }
-                          return m;
-                        }),
-                      });
-                    } catch (error: any) {
-                      console.error('メンバー取得エラー:', error);
-                      setSelectedNode(foundOrg);
+                          return null;
+                        };
+                        
+                        const newPath: OrgNodeData[] = [];
+                        for (const org of currentPath) {
+                          if (org.id) {
+                            const updatedOrg = findOrgInTree(newTree, org.id);
+                            if (updatedOrg) {
+                              newPath.push(updatedOrg);
+                            } else {
+                              break;
+                            }
+                          }
+                        }
+                        return newPath;
+                      };
+                      
+                      const updatedPath = rebuildSelectedPath(finderSelectedPath, tree);
+                      setFinderSelectedPath(updatedPath);
                     }
-                  } else {
-                    setSelectedNode(foundOrg);
+                  } catch (error: any) {
+                    console.error('❌ [onReorderOrg] 組織の順番変更に失敗しました:', error);
+                    await tauriAlert(`組織の順番変更に失敗しました: ${error.message || error}`);
                   }
-                }
-              }
+                }}
+                onMoveOrg={async (orgId: string, newParentId: string | null) => {
+                  try {
+                    // 親を変更
+                    await updateOrgParent(orgId, newParentId);
+                    
+                    // 組織ツリーを再取得
+                    const tree = await getOrgTreeFromDb();
+                    if (tree) {
+                      setOrgData(tree);
+                      
+                      // selectedPathを最新の組織ツリーから再構築
+                      const rebuildSelectedPath = (currentPath: OrgNodeData[], newTree: OrgNodeData): OrgNodeData[] => {
+                        const findOrgInTree = (node: OrgNodeData, targetId: string): OrgNodeData | null => {
+                          if (node.id === targetId) return node;
+                          if (node.children) {
+                            for (const child of node.children) {
+                              const found = findOrgInTree(child, targetId);
+                              if (found) return found;
+                            }
+                          }
+                          return null;
+                        };
+                        
+                        const newPath: OrgNodeData[] = [];
+                        for (const org of currentPath) {
+                          if (org.id) {
+                            const updatedOrg = findOrgInTree(newTree, org.id);
+                            if (updatedOrg) {
+                              newPath.push(updatedOrg);
+                            } else {
+                              // 移動した組織が現在のパスに含まれている場合は、パスをクリア
+                              break;
+                            }
+                          }
+                        }
+                        return newPath;
+                      };
+                      
+                      const updatedPath = rebuildSelectedPath(finderSelectedPath, tree);
+                      setFinderSelectedPath(updatedPath);
+                    }
+                  } catch (error: any) {
+                    console.error('❌ [onMoveOrg] 組織の移動に失敗しました:', error);
+                    await tauriAlert(`組織の移動に失敗しました: ${error.message || error}`);
+                  }
+                }}
+                onEditSave={async (orgId, newName) => {
+                  try {
+                    await updateOrg(orgId, newName);
+                    const tree = await getOrgTreeFromDb();
+                    if (tree) {
+                      setOrgData(tree);
+                      
+                      // selectedPathを最新の組織ツリーから再構築
+                      const rebuildSelectedPath = (currentPath: OrgNodeData[], newTree: OrgNodeData): OrgNodeData[] => {
+                        const findOrgInTree = (node: OrgNodeData, targetId: string): OrgNodeData | null => {
+                          if (node.id === targetId) return node;
+                          if (node.children) {
+                            for (const child of node.children) {
+                              const found = findOrgInTree(child, targetId);
+                              if (found) return found;
+                            }
+                          }
+                          return null;
+                        };
+                        
+                        const newPath: OrgNodeData[] = [];
+                        for (const org of currentPath) {
+                          if (org.id) {
+                            const updatedOrg = findOrgInTree(newTree, org.id);
+                            if (updatedOrg) {
+                              newPath.push(updatedOrg);
+                            } else {
+                              break;
+                            }
+                          }
+                        }
+                        return newPath;
+                      };
+                      
+                      const updatedPath = rebuildSelectedPath(finderSelectedPath, tree);
+                      setFinderSelectedPath(updatedPath);
+                    }
+                    setEditingOrgId(null);
+                    setEditingOrgName('');
+                  } catch (error: any) {
+                    await tauriAlert(`組織名の更新に失敗しました: ${error.message || error}`);
+                  }
+                }}
+                onCreateOrg={async (parentId) => {
+                  try {
+                    const findOrgInTree = (node: OrgNodeData, targetId: string): OrgNodeData | null => {
+                      if (node.id === targetId) return node;
+                      if (node.children) {
+                        for (const child of node.children) {
+                          const found = findOrgInTree(child, targetId);
+                          if (found) return found;
+                        }
+                      }
+                      return null;
+                    };
+                    
+                    const currentTree = filteredOrgData || orgData!;
+                    if (!currentTree) {
+                      await tauriAlert('組織データが読み込まれていません。ページをリロードしてください。');
+                      return;
+                    }
+                    
+                    let parentLevel = -1;
+                    if (parentId) {
+                      const parentOrg = findOrgInTree(currentTree, parentId);
+                      if (!parentOrg) {
+                        await tauriAlert(`親組織（ID: ${parentId}）が見つかりません。`);
+                        return;
+                      }
+                      parentLevel = (parentOrg as any)?.level ?? 0;
+                    }
+                    
+                    const level = parentLevel >= 0 ? parentLevel + 1 : 1;
+                    const levelName = `階層レベル ${level}`;
+                    
+                    console.log('🔍 [onCreateOrg] 組織を作成中:', {
+                      parentId,
+                      name: '新しい組織',
+                      level,
+                      levelName,
+                    });
+                    
+                    // 組織を作成
+                    const result = await createOrg(parentId, '新しい組織', null, null, level, levelName, 0);
+                    
+                    devLog('🔍 [onCreateOrg] createOrgの結果:', {
+                      result,
+                      hasId: !!result?.id,
+                      id: result?.id,
+                      fullResult: JSON.stringify(result, null, 2)
+                    });
+                    
+                    if (!result || !result.id) {
+                      throw new Error('組織の作成に失敗しました。IDが返されませんでした。');
+                    }
+                    
+                    devLog('✅ [onCreateOrg] 組織を作成しました:', {
+                      id: result.id,
+                      name: result.name || '新しい組織',
+                      parentId: result.parent_id || parentId,
+                      level: result.level || level,
+                      levelName: result.level_name || levelName
+                    });
+                    
+                    // データベースの更新を待つために、複数回再取得を試みる
+                    let tree: OrgNodeData | null = null;
+                    let attempts = 0;
+                    const maxAttempts = 5;
+                    
+                    while (attempts < maxAttempts && !tree) {
+                      await new Promise(resolve => setTimeout(resolve, 300));
+                      tree = await getOrgTreeFromDb();
+                      
+                      if (tree) {
+                        // 作成された組織がツリーに含まれているか確認
+                        const findNewOrg = (node: OrgNodeData, targetId: string): OrgNodeData | null => {
+                          if (node.id === targetId) return node;
+                          if (node.children) {
+                            for (const child of node.children) {
+                              const found = findNewOrg(child, targetId);
+                              if (found) return found;
+                            }
+                          }
+                          return null;
+                        };
+                        
+                        const foundOrg = findNewOrg(tree, result.id);
+                        if (foundOrg) {
+                          console.log('✅ [onCreateOrg] 作成された組織をツリーで確認:', result.id);
+                          break;
+                        } else {
+                          console.log(`⏳ [onCreateOrg] 組織がまだツリーに反映されていません (試行 ${attempts + 1}/${maxAttempts})`);
+                          tree = null; // 見つからない場合は再試行
+                        }
+                      }
+                      attempts++;
+                    }
+                    
+                    if (!tree) {
+                      // 最後の試行として、もう一度取得
+                      tree = await getOrgTreeFromDb();
+                    }
+                    
+                    if (!tree) {
+                      throw new Error('組織ツリーの取得に失敗しました。');
+                    }
+                    
+                    console.log('✅ [onCreateOrg] 組織ツリーを更新:', tree);
+                    setOrgData(tree);
+                    
+                    // selectedPathを最新の組織ツリーから再構築する関数
+                    const rebuildSelectedPath = (currentPath: OrgNodeData[], newTree: OrgNodeData): OrgNodeData[] => {
+                      const findOrgInTree = (node: OrgNodeData, targetId: string): OrgNodeData | null => {
+                        if (node.id === targetId) return node;
+                        if (node.children) {
+                          for (const child of node.children) {
+                            const found = findOrgInTree(child, targetId);
+                            if (found) return found;
+                          }
+                        }
+                        return null;
+                      };
+                      
+                      const newPath: OrgNodeData[] = [];
+                      for (const org of currentPath) {
+                        if (org.id) {
+                          const updatedOrg = findOrgInTree(newTree, org.id);
+                          if (updatedOrg) {
+                            newPath.push(updatedOrg);
+                          } else {
+                            // 組織が見つからない場合は、パスをここで終了
+                            break;
+                          }
+                        }
+                      }
+                      return newPath;
+                    };
+                    
+                    // selectedPathを最新のツリーから再構築
+                    const updatedPath = rebuildSelectedPath(finderSelectedPath, tree);
+                    setFinderSelectedPath(updatedPath);
+                    
+                    // 新しく作成された組織を探す（作成されたIDを使用）
+                    const newOrg = (() => {
+                      const findNewOrg = (node: OrgNodeData, targetId: string): OrgNodeData | null => {
+                        if (node.id === targetId) return node;
+                        if (node.children) {
+                          for (const child of node.children) {
+                            const found = findNewOrg(child, targetId);
+                            if (found) return found;
+                          }
+                        }
+                        return null;
+                      };
+                      return findNewOrg(tree, result.id);
+                    })();
+                    
+                    devLog('🔍 [onCreateOrg] 作成された組織をツリーで検索:', {
+                      searchId: result.id,
+                      foundOrg: newOrg,
+                      foundOrgId: newOrg?.id,
+                      foundOrgName: newOrg?.name,
+                      hasId: !!newOrg?.id
+                    });
+                    
+                    if (newOrg?.id) {
+                      devLog('✅ [onCreateOrg] 作成された組織が見つかりました。編集モードに設定:', {
+                        id: newOrg.id,
+                        name: newOrg.name
+                      });
+                      setEditingOrgId(newOrg.id);
+                      setEditingOrgName('新しい組織');
+                      
+                      // 親組織が選択されている場合、選択パスを更新して新しく作成された組織を表示
+                      if (parentId) {
+                        const parentOrg = findOrgInTree(tree, parentId);
+                        if (parentOrg) {
+                          // 親組織がパスに含まれているか確認
+                          const parentIndex = updatedPath.findIndex(org => org.id === parentId);
+                          if (parentIndex >= 0) {
+                            // 親組織がパスにある場合、その位置までパスを更新（既に更新済み）
+                            // 必要に応じて、新しく作成された組織の親を選択パスに追加
+                          } else {
+                            // 親組織がパスにない場合、親組織を追加
+                            setFinderSelectedPath([...updatedPath, parentOrg]);
+                          }
+                        }
+                      }
+                    } else {
+                      console.warn('⚠️ [onCreateOrg] 新しく作成された組織が見つかりませんでした:', result.id);
+                    }
+                  } catch (error: any) {
+                    console.error('❌ [onCreateOrg] 組織の作成に失敗しました:', error);
+                    const errorMessage = error?.response?.data?.error || error?.message || String(error);
+                    await tauriAlert(`組織の作成に失敗しました: ${errorMessage}`);
+                  }
+                }}
+                onDeleteOrg={async (orgId, orgName) => {
+                  setOrgToDeleteInFinder({ id: orgId, name: orgName });
+                  setShowFinderDeleteModal(true);
+                }}
+                error={error}
+              />
+        )}
+      </div>
+
+
+      {/* Finder形式用の組織削除確認モーダル */}
+      {showFinderDeleteModal && orgToDeleteInFinder && (
+        <DeleteOrganizationModal
+          organization={{ id: orgToDeleteInFinder.id, name: orgToDeleteInFinder.name } as OrgNodeData}
+          onClose={() => {
+            setShowFinderDeleteModal(false);
+            setOrgToDeleteInFinder(null);
+          }}
+          onConfirm={async () => {
+            if (!orgToDeleteInFinder?.id) {
+              console.error('❌ [Finder削除] orgToDeleteInFinder.idがありません');
+              await tauriAlert('組織IDが取得できませんでした。');
+              return;
             }
-            await tauriAlert('組織を追加しました');
-            setShowAddOrgModal(false);
+
+            try {
+              devLog('🗑️ [Finder削除] 削除開始:', { id: orgToDeleteInFinder.id, name: orgToDeleteInFinder.name });
+              
+              const deletedOrgId = orgToDeleteInFinder.id;
+              const deletedOrgName = orgToDeleteInFinder.name;
+              
+              await deleteOrg(deletedOrgId);
+              devLog('✅ [Finder削除] 削除成功:', { id: deletedOrgId, name: deletedOrgName });
+              
+              // 組織ツリーを再取得
+              const tree = await getOrgTreeFromDb();
+              
+              if (tree) {
+                setOrgData(tree);
+                
+                // selectedPathを最新の組織ツリーから再構築（削除された組織を除外）
+                const rebuildSelectedPath = (currentPath: OrgNodeData[], newTree: OrgNodeData): OrgNodeData[] => {
+                  const findOrgInTree = (node: OrgNodeData, targetId: string): OrgNodeData | null => {
+                    if (node.id === targetId) return node;
+                    if (node.children) {
+                      for (const child of node.children) {
+                        const found = findOrgInTree(child, targetId);
+                        if (found) return found;
+                      }
+                    }
+                    return null;
+                  };
+                  
+                  const newPath: OrgNodeData[] = [];
+                  for (const org of currentPath) {
+                    if (org.id && org.id !== deletedOrgId) {
+                      const updatedOrg = findOrgInTree(newTree, org.id);
+                      if (updatedOrg) {
+                        newPath.push(updatedOrg);
+                      } else {
+                        break;
+                      }
+                    } else if (org.id === deletedOrgId) {
+                      // 削除された組織の場合は、パスをここで終了
+                      break;
+                    }
+                  }
+                  return newPath;
+                };
+                
+                const updatedPath = rebuildSelectedPath(finderSelectedPath, tree);
+                setFinderSelectedPath(updatedPath);
+              }
+              
+              await tauriAlert('組織を削除しました');
+              setShowFinderDeleteModal(false);
+              setOrgToDeleteInFinder(null);
+            } catch (error: any) {
+              console.error('❌ [Finder削除] 削除処理でエラーが発生しました:', error);
+              await tauriAlert(`組織の削除に失敗しました: ${error.message || error}`);
+            }
           }}
         />
       )}
@@ -1579,36 +1766,6 @@ export default function OrganizationPage() {
         />
       )}
 
-      {/* 重複組織削除確認モーダル */}
-      {showDeleteDuplicatesModal && (
-        <DeleteDuplicatesModal
-          onClose={() => setShowDeleteDuplicatesModal(false)}
-          onConfirm={async () => {
-            setIsDeletingDuplicates(true);
-            try {
-              const deletedIds = await deleteDuplicateOrganizations();
-              if (deletedIds.length === 0) {
-                await tauriAlert('削除された組織はありませんでした。');
-              } else {
-                // 組織ツリーを再取得
-                const tree = await getOrgTreeFromDb();
-                if (tree) {
-                  setOrgData(tree);
-                  setSelectedNode(null);
-                  setSelectedNodeMembers([]);
-                }
-                await tauriAlert(`重複組織を ${deletedIds.length} 件削除しました。\n\n削除された組織ID:\n${deletedIds.join('\n')}`);
-              }
-              setShowDeleteDuplicatesModal(false);
-            } catch (error: any) {
-              console.error('重複組織の削除エラー:', error);
-              await tauriAlert(`重複組織の削除に失敗しました: ${error.message}`);
-            } finally {
-              setIsDeletingDuplicates(false);
-            }
-          }}
-        />
-      )}
 
       {/* 組織・メンバー編集モーダル */}
       {showEditModal && selectedNode && (
@@ -1986,7 +2143,7 @@ function OrganizationEditModal({
                   }}
                 />
                 <div style={{ fontSize: '12px', color: 'var(--color-text-light)', marginTop: '4px' }}>
-                  このIDは変更できません。重複組織の確認に使用します。
+                  このIDは変更できません。
                 </div>
               </div>
             )}
@@ -2620,7 +2777,358 @@ function MemberEditForm({
   );
 }
 
-// 組織追加モーダルコンポーネント
+// Finder風カラム表示コンポーネント
+function FinderColumnView({
+  orgTree,
+  selectedPath,
+  onPathChange,
+  editingOrgId,
+  editingOrgName,
+  onEditStart,
+  onEditCancel,
+  onEditSave,
+  onCreateOrg,
+  onEditNameChange,
+  onDeleteOrg,
+}: {
+  orgTree: OrgNodeData;
+  selectedPath: OrgNodeData[];
+  onPathChange: (path: OrgNodeData[]) => void;
+  editingOrgId: string | null;
+  editingOrgName: string;
+  onEditStart: (orgId: string, orgName: string) => void;
+  onEditCancel: () => void;
+  onEditSave: (orgId: string, newName: string) => Promise<void>;
+  onCreateOrg: (parentId: string | null) => Promise<void>;
+  onEditNameChange: (name: string) => void;
+  onDeleteOrg: (orgId: string, orgName: string) => Promise<void>;
+}) {
+  // 組織ツリーからルート組織を取得
+  const getRootOrganizations = (): OrgNodeData[] => {
+    if (!orgTree) return [];
+    
+    if (orgTree.id === 'virtual-root' && orgTree.children) {
+      return orgTree.children;
+    }
+    
+    return [orgTree];
+  };
+
+  // 組織を選択したときの処理
+  const handleOrgSelect = (org: OrgNodeData, columnIndex: number) => {
+    if (editingOrgId) return; // 編集中は選択不可
+    const newPath = selectedPath.slice(0, columnIndex);
+    newPath.push(org);
+    onPathChange(newPath);
+  };
+
+  // 組織名をダブルクリックで編集開始
+  const handleOrgDoubleClick = (org: OrgNodeData) => {
+    if (org.id) {
+      onEditStart(org.id, org.name);
+    }
+  };
+
+  // 編集保存
+  const handleEditSave = async () => {
+    if (editingOrgId && editingOrgName.trim()) {
+      await onEditSave(editingOrgId, editingOrgName.trim());
+    }
+  };
+
+  // 編集キャンセル
+  const handleEditCancel = () => {
+    onEditCancel();
+  };
+
+  // Enterキーで保存、Escキーでキャンセル
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleEditSave();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      handleEditCancel();
+    }
+  };
+
+  return (
+    <div style={{
+      display: 'flex',
+      gap: '1px',
+      border: '1px solid var(--color-border-color)',
+      borderRadius: '6px',
+      overflow: 'hidden',
+      backgroundColor: 'var(--color-border-color)',
+      height: '100%',
+      minHeight: '400px',
+    }}>
+      {/* 最初のカラム（ルート組織） */}
+      <div style={{
+        flex: '0 0 250px',
+        backgroundColor: 'var(--color-surface)',
+        overflowY: 'auto',
+        borderRight: '1px solid var(--color-border-color)',
+      }}>
+        <div style={{
+          padding: '8px 12px',
+          backgroundColor: 'var(--color-background)',
+          borderBottom: '1px solid var(--color-border-color)',
+          fontSize: '12px',
+          fontWeight: '600',
+          color: 'var(--color-text-light)',
+          position: 'sticky',
+          top: 0,
+          zIndex: 1,
+        }}>
+          ルート組織
+        </div>
+        {/* +ボタン（ルート組織を作成） */}
+        <div
+          onClick={() => onCreateOrg(null)}
+          style={{
+            padding: '8px 12px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontSize: '13px',
+            color: '#3B82F6',
+            fontWeight: '500',
+            transition: 'background-color 0.2s',
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--color-background)'}
+          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+        >
+          <span style={{ fontSize: '18px', lineHeight: '1' }}>+</span>
+          <span>新しい組織</span>
+        </div>
+        {getRootOrganizations().map((org) => (
+          <div
+            key={org.id}
+            style={{
+              padding: '8px 12px',
+              cursor: 'pointer',
+              backgroundColor: selectedPath[0]?.id === org.id ? 'var(--color-background)' : 'transparent',
+              borderLeft: selectedPath[0]?.id === org.id ? '3px solid #3B82F6' : '3px solid transparent',
+              fontSize: '13px',
+              transition: 'background-color 0.2s',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '8px',
+            }}
+            onMouseEnter={(e) => {
+              if (selectedPath[0]?.id !== org.id && editingOrgId !== org.id) {
+                e.currentTarget.style.backgroundColor = 'var(--color-background)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (selectedPath[0]?.id !== org.id && editingOrgId !== org.id) {
+                e.currentTarget.style.backgroundColor = 'transparent';
+              }
+            }}
+          >
+            <div
+              onClick={() => handleOrgSelect(org, 0)}
+              onDoubleClick={() => handleOrgDoubleClick(org)}
+              style={{ flex: 1, minWidth: 0 }}
+            >
+              {editingOrgId === org.id ? (
+                <input
+                  type="text"
+                  value={editingOrgName}
+                  onChange={(e) => onEditNameChange(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  onBlur={handleEditSave}
+                  autoFocus
+                  style={{
+                    width: '100%',
+                    padding: '4px 8px',
+                    border: '2px solid #3B82F6',
+                    borderRadius: '4px',
+                    fontSize: '13px',
+                    backgroundColor: 'var(--color-surface)',
+                  }}
+                />
+              ) : (
+                org.name
+              )}
+            </div>
+            {editingOrgId !== org.id && org.id && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteOrg(org.id!, org.name);
+                }}
+                style={{
+                  padding: '4px',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: 0.3,
+                  transition: 'opacity 0.2s',
+                  color: 'var(--color-text-light)',
+                  fontSize: '14px',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.opacity = '0.7';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.opacity = '0.3';
+                }}
+                title="削除"
+              >
+                🗑️
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* 選択されたパスに基づいて追加のカラムを表示 */}
+      {selectedPath.map((selectedOrg, columnIndex) => {
+        const childOrgs = selectedOrg.children || [];
+        const columnNumber = columnIndex + 1;
+
+        return (
+          <div
+            key={selectedOrg.id || columnIndex}
+            style={{
+              flex: '0 0 250px',
+              backgroundColor: 'var(--color-surface)',
+              overflowY: 'auto',
+              borderRight: columnIndex < selectedPath.length - 1 ? '1px solid var(--color-border-color)' : 'none',
+            }}
+          >
+            <div style={{
+              padding: '8px 12px',
+              backgroundColor: 'var(--color-background)',
+              borderBottom: '1px solid var(--color-border-color)',
+              fontSize: '12px',
+              fontWeight: '600',
+              color: 'var(--color-text-light)',
+              position: 'sticky',
+              top: 0,
+              zIndex: 1,
+            }}>
+              {selectedOrg.name}
+            </div>
+            {/* +ボタン（この組織の子組織を作成） */}
+            <div
+              onClick={() => onCreateOrg(selectedOrg.id || null)}
+              style={{
+                padding: '8px 12px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontSize: '13px',
+                color: '#3B82F6',
+                fontWeight: '500',
+                transition: 'background-color 0.2s',
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--color-background)'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+            >
+              <span style={{ fontSize: '18px', lineHeight: '1' }}>+</span>
+              <span>新しい組織</span>
+            </div>
+            {childOrgs.map((childOrg) => (
+              <div
+                key={childOrg.id}
+                style={{
+                  padding: '8px 12px',
+                  cursor: 'pointer',
+                  backgroundColor: selectedPath[columnNumber]?.id === childOrg.id ? 'var(--color-background)' : 'transparent',
+                  borderLeft: selectedPath[columnNumber]?.id === childOrg.id ? '3px solid #3B82F6' : '3px solid transparent',
+                  fontSize: '13px',
+                  transition: 'background-color 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedPath[columnNumber]?.id !== childOrg.id && editingOrgId !== childOrg.id) {
+                    e.currentTarget.style.backgroundColor = 'var(--color-background)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedPath[columnNumber]?.id !== childOrg.id && editingOrgId !== childOrg.id) {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }
+                }}
+              >
+                <div
+                  onClick={() => handleOrgSelect(childOrg, columnNumber)}
+                  onDoubleClick={() => handleOrgDoubleClick(childOrg)}
+                  style={{ flex: 1, minWidth: 0 }}
+                >
+                  {editingOrgId === childOrg.id ? (
+                    <input
+                      type="text"
+                      value={editingOrgName}
+                      onChange={(e) => onEditNameChange(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      onBlur={handleEditSave}
+                      autoFocus
+                      style={{
+                        width: '100%',
+                        padding: '4px 8px',
+                        border: '2px solid #3B82F6',
+                        borderRadius: '4px',
+                        fontSize: '13px',
+                        backgroundColor: 'var(--color-surface)',
+                      }}
+                    />
+                  ) : (
+                    childOrg.name
+                  )}
+                </div>
+                {editingOrgId !== childOrg.id && childOrg.id && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteOrg(childOrg.id!, childOrg.name);
+                    }}
+                    style={{
+                      padding: '4px',
+                      backgroundColor: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: 0.3,
+                      transition: 'opacity 0.2s',
+                      color: 'var(--color-text-light)',
+                      fontSize: '14px',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.opacity = '0.7';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.opacity = '0.3';
+                    }}
+                    title="削除"
+                  >
+                    🗑️
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// 組織追加モーダルコンポーネント（削除予定）
 function AddOrganizationModal({
   orgTree,
   onClose,
@@ -2631,47 +3139,60 @@ function AddOrganizationModal({
   onSave: () => Promise<void>;
 }) {
   const [parentId, setParentId] = useState<string | null>(null);
+  const [selectedPath, setSelectedPath] = useState<OrgNodeData[]>([]); // Finder風の選択パス
   const [name, setName] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [level, setLevel] = useState(1);
-  const [levelName, setLevelName] = useState('課');
   const [position, setPosition] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [creatingAtPath, setCreatingAtPath] = useState<number | null>(null); // どのカラムで作成中か
 
-  // 組織ツリーから親組織の選択肢を生成
-  const getOrgOptions = (node: OrgNodeData | null, depth: number = 0): Array<{ id: string | null; name: string; level: number }> => {
-    if (!node) return [];
-    const options: Array<{ id: string | null; name: string; level: number }> = [];
-    if (node.id) {
-      options.push({ id: node.id, name: '  '.repeat(depth) + node.name, level: node.level || 0 });
+  // 組織ツリーからルート組織を取得
+  const getRootOrganizations = (): OrgNodeData[] => {
+    if (!orgTree) return [];
+    
+    // virtual-rootの場合は、その子ノード（実際のルート組織）を返す
+    if (orgTree.id === 'virtual-root' && orgTree.children) {
+      return orgTree.children;
     }
-    if (node.children) {
-      for (const child of node.children) {
-        options.push(...getOrgOptions(child, depth + 1));
-      }
-    }
-    return options;
+    
+    // 単一のルート組織の場合
+    return [orgTree];
   };
 
-  const orgOptions = orgTree ? [{ id: null, name: '（ルート）', level: -1 }, ...getOrgOptions(orgTree)] : [{ id: null, name: '（ルート）', level: -1 }];
-
-  const handleLevelChange = (newLevel: number) => {
-    setLevel(newLevel);
-    // レベルに応じてレベル名を自動設定
-    switch (newLevel) {
-      case 0:
-        setLevelName('部門');
-        break;
-      case 1:
-        setLevelName('課');
-        break;
-      case 2:
-        setLevelName('チーム');
-        break;
-      default:
-        setLevelName('組織');
+  // 選択されたパスに基づいて、現在表示すべきカラムの組織リストを取得
+  const getCurrentColumnOrgs = (): OrgNodeData[] => {
+    if (selectedPath.length === 0) {
+      // 最初のカラム: ルート組織
+      return getRootOrganizations();
     }
+    
+    // 最後に選択された組織の子組織を返す
+    const lastSelected = selectedPath[selectedPath.length - 1];
+    return lastSelected.children || [];
+  };
+
+  // 組織を選択したときの処理
+  const handleOrgSelect = (org: OrgNodeData, columnIndex: number) => {
+    // 選択されたカラムより後のパスを削除
+    const newPath = selectedPath.slice(0, columnIndex);
+    newPath.push(org);
+    setSelectedPath(newPath);
+    setParentId(org.id || null);
+    setCreatingAtPath(null); // 選択時は作成モードを解除
+  };
+
+  // 「+」ボタンで組織作成を開始
+  const handleCreateAtPath = (columnIndex: number) => {
+    // 選択パスをcolumnIndexまでに制限
+    const newPath = selectedPath.slice(0, columnIndex);
+    setSelectedPath(newPath);
+    setParentId(columnIndex === 0 ? null : (newPath[newPath.length - 1]?.id || null));
+    setCreatingAtPath(columnIndex);
+    setName(''); // 名前をリセット
+    setTitle('');
+    setDescription('');
+    setPosition(0);
   };
 
   const handleSave = async () => {
@@ -2681,6 +3202,12 @@ function AddOrganizationModal({
     }
     setSaving(true);
     try {
+      // 階層レベルを自動計算（親組織の階層レベル+1、親がない場合は1）
+      const parentLevel = selectedPath.length > 0 
+        ? ((selectedPath[selectedPath.length - 1] as any).level !== undefined ? (selectedPath[selectedPath.length - 1] as any).level : 0)
+        : -1;
+      const level = parentLevel >= 0 ? parentLevel + 1 : 1;
+      const levelName = `階層レベル ${level}`;
       await createOrg(
         parentId,
         name.trim(),
@@ -2725,7 +3252,7 @@ function AddOrganizationModal({
           backgroundColor: 'var(--color-surface)',
           borderRadius: '8px',
           padding: '32px',
-          maxWidth: '600px',
+          maxWidth: '1200px',
           width: '95%',
           maxHeight: '95vh',
           overflow: 'auto',
@@ -2752,185 +3279,417 @@ function AddOrganizationModal({
           </button>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500', color: 'var(--color-text)' }}>
-              親組織
-            </label>
-            <select
-              value={parentId || ''}
-              onChange={(e) => setParentId(e.target.value || null)}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                border: '1px solid var(--color-border-color)',
-                borderRadius: '6px',
-                fontSize: '14px',
-              }}
-            >
-              {orgOptions.map((opt) => (
-                <option key={opt.id || 'root'} value={opt.id || ''}>
-                  {opt.name}
-                </option>
-              ))}
-            </select>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* Finder風カラム表示セクション */}
+          <div style={{ 
+            padding: '16px', 
+            backgroundColor: 'var(--color-background)', 
+            borderRadius: '8px',
+            border: '1px solid var(--color-border-color)'
+          }}>
+            <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px', color: 'var(--color-text)' }}>
+              組織の作成
+            </h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500', color: 'var(--color-text)' }}>
+                  親組織の選択
+                </label>
+                
+                {/* 選択パスの表示 */}
+                {selectedPath.length > 0 && (
+                  <div style={{ 
+                    marginBottom: '12px', 
+                    padding: '8px 12px', 
+                    backgroundColor: 'var(--color-background)', 
+                    borderRadius: '6px',
+                    border: '1px solid var(--color-border-color)',
+                    fontSize: '13px',
+                    color: 'var(--color-text-light)'
+                  }}>
+                    <span style={{ fontWeight: '500', color: 'var(--color-text)' }}>選択パス: </span>
+                    {selectedPath.map((org, index) => (
+                      <span key={org.id || index}>
+                        {index > 0 && <span style={{ margin: '0 4px', color: 'var(--color-text-light)' }}>›</span>}
+                        <span style={{ color: index === selectedPath.length - 1 ? 'var(--color-text)' : 'var(--color-text-light)' }}>
+                          {org.name}
+                        </span>
+                      </span>
+                    ))}
+                    <button
+                      onClick={() => {
+                        setSelectedPath([]);
+                        setParentId(null);
+                      }}
+                      style={{
+                        marginLeft: '12px',
+                        padding: '4px 8px',
+                        fontSize: '12px',
+                        backgroundColor: 'transparent',
+                        border: '1px solid var(--color-border-color)',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        color: 'var(--color-text-light)',
+                      }}
+                    >
+                      クリア
+                    </button>
+                  </div>
+                )}
+
+                {/* Finder風カラム表示 */}
+                <div style={{ 
+                  display: 'flex', 
+                  gap: '1px', 
+                  border: '1px solid var(--color-border-color)',
+                  borderRadius: '6px',
+                  overflow: 'hidden',
+                  backgroundColor: 'var(--color-border-color)',
+                  minHeight: '300px',
+                  maxHeight: '400px',
+                }}>
+                  {/* 最初のカラム（ルート組織） */}
+                  <div style={{ 
+                    flex: '0 0 200px',
+                    backgroundColor: 'var(--color-surface)',
+                    overflowY: 'auto',
+                    borderRight: '1px solid var(--color-border-color)',
+                  }}>
+                    <div style={{ 
+                      padding: '8px 12px', 
+                      backgroundColor: 'var(--color-background)',
+                      borderBottom: '1px solid var(--color-border-color)',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      color: 'var(--color-text-light)',
+                      position: 'sticky',
+                      top: 0,
+                      zIndex: 1,
+                    }}>
+                      ルート組織
+                    </div>
+                    {/* +ボタン（ルート組織を作成） */}
+                    <div
+                      onClick={() => handleCreateAtPath(0)}
+                      style={{
+                        padding: '8px 12px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        backgroundColor: creatingAtPath === 0 ? 'var(--color-background)' : 'transparent',
+                        borderLeft: creatingAtPath === 0 ? '3px solid #3B82F6' : '3px solid transparent',
+                        fontSize: '13px',
+                        transition: 'background-color 0.2s',
+                        color: creatingAtPath === 0 ? '#3B82F6' : 'var(--color-text-light)',
+                        fontWeight: creatingAtPath === 0 ? '600' : '400',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (creatingAtPath !== 0) {
+                          e.currentTarget.style.backgroundColor = 'var(--color-background)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (creatingAtPath !== 0) {
+                          e.currentTarget.style.backgroundColor = 'transparent';
+                        }
+                      }}
+                    >
+                      <span style={{ fontSize: '16px', lineHeight: '1' }}>+</span>
+                      <span>新しい組織を作成</span>
+                    </div>
+                    {getRootOrganizations().map((org) => (
+                      <div
+                        key={org.id}
+                        onClick={() => handleOrgSelect(org, 0)}
+                        style={{
+                          padding: '8px 12px',
+                          cursor: 'pointer',
+                          backgroundColor: selectedPath[0]?.id === org.id ? 'var(--color-background)' : 'transparent',
+                          borderLeft: selectedPath[0]?.id === org.id ? '3px solid #3B82F6' : '3px solid transparent',
+                          fontSize: '13px',
+                          transition: 'background-color 0.2s',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (selectedPath[0]?.id !== org.id) {
+                            e.currentTarget.style.backgroundColor = 'var(--color-background)';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (selectedPath[0]?.id !== org.id) {
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                          }
+                        }}
+                      >
+                        {org.name}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* 選択されたパスに基づいて追加のカラムを表示 */}
+                  {selectedPath.map((selectedOrg, columnIndex) => {
+                    const childOrgs = selectedOrg.children || [];
+                    const columnNumber = columnIndex + 1;
+
+                    return (
+                      <div
+                        key={selectedOrg.id || columnIndex}
+                        style={{
+                          flex: '0 0 200px',
+                          backgroundColor: 'var(--color-surface)',
+                          overflowY: 'auto',
+                          borderRight: columnIndex < selectedPath.length - 1 ? '1px solid var(--color-border-color)' : 'none',
+                        }}
+                      >
+                        <div style={{
+                          padding: '8px 12px',
+                          backgroundColor: 'var(--color-background)',
+                          borderBottom: '1px solid var(--color-border-color)',
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          color: 'var(--color-text-light)',
+                          position: 'sticky',
+                          top: 0,
+                          zIndex: 1,
+                        }}>
+                          {selectedOrg.name}
+                        </div>
+                        {/* +ボタン（この組織の子組織を作成） */}
+                        <div
+                          onClick={() => handleCreateAtPath(columnNumber)}
+                          style={{
+                            padding: '8px 12px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            backgroundColor: creatingAtPath === columnNumber ? 'var(--color-background)' : 'transparent',
+                            borderLeft: creatingAtPath === columnNumber ? '3px solid #3B82F6' : '3px solid transparent',
+                            fontSize: '13px',
+                            transition: 'background-color 0.2s',
+                            color: creatingAtPath === columnNumber ? '#3B82F6' : 'var(--color-text-light)',
+                            fontWeight: creatingAtPath === columnNumber ? '600' : '400',
+                          }}
+                          onMouseEnter={(e) => {
+                            if (creatingAtPath !== columnNumber) {
+                              e.currentTarget.style.backgroundColor = 'var(--color-background)';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (creatingAtPath !== columnNumber) {
+                              e.currentTarget.style.backgroundColor = 'transparent';
+                            }
+                          }}
+                        >
+                          <span style={{ fontSize: '16px', lineHeight: '1' }}>+</span>
+                          <span>新しい組織を作成</span>
+                        </div>
+                        {childOrgs.map((childOrg) => (
+                          <div
+                            key={childOrg.id}
+                            onClick={() => handleOrgSelect(childOrg, columnNumber)}
+                            style={{
+                              padding: '8px 12px',
+                              cursor: 'pointer',
+                              backgroundColor: selectedPath[columnNumber]?.id === childOrg.id ? 'var(--color-background)' : 'transparent',
+                              borderLeft: selectedPath[columnNumber]?.id === childOrg.id ? '3px solid #3B82F6' : '3px solid transparent',
+                              fontSize: '13px',
+                              transition: 'background-color 0.2s',
+                            }}
+                            onMouseEnter={(e) => {
+                              if (selectedPath[columnNumber]?.id !== childOrg.id) {
+                                e.currentTarget.style.backgroundColor = 'var(--color-background)';
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              if (selectedPath[columnNumber]?.id !== childOrg.id) {
+                                e.currentTarget.style.backgroundColor = 'transparent';
+                              }
+                            }}
+                          >
+                            {childOrg.name}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+                
+                <p style={{ marginTop: '8px', fontSize: '12px', color: 'var(--color-text-light)' }}>
+                  各カラムの「+」ボタンをクリックして、その位置に新しい組織を作成できます。
+                </p>
+              </div>
+
+              {/* 組織名入力（作成モード時のみ表示） */}
+              {creatingAtPath !== null && (
+                <>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500', color: 'var(--color-text)' }}>
+                      組織名 <span style={{ color: '#EF4444' }}>*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        border: '1px solid var(--color-border-color)',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        backgroundColor: 'var(--color-surface)',
+                        transition: 'border-color 0.2s',
+                      }}
+                      onFocus={(e) => e.target.style.borderColor = '#3B82F6'}
+                      onBlur={(e) => e.target.style.borderColor = 'var(--color-border-color)'}
+                      placeholder="組織名を入力してください"
+                      autoFocus
+                    />
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500', color: 'var(--color-text)' }}>
-              組織名 <span style={{ color: 'red' }}>*</span>
-            </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                border: '1px solid var(--color-border-color)',
-                borderRadius: '6px',
-                fontSize: '14px',
-              }}
-              placeholder="組織名を入力"
-            />
-          </div>
+          {/* 詳細情報セクション（作成モード時のみ表示） */}
+          {creatingAtPath !== null && (
+            <div style={{ 
+              padding: '16px', 
+              backgroundColor: 'var(--color-background)', 
+              borderRadius: '8px',
+              border: '1px solid var(--color-border-color)'
+            }}>
+              <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px', color: 'var(--color-text)' }}>
+                詳細情報（任意）
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500', color: 'var(--color-text)' }}>
+                    英語名
+                  </label>
+                  <input
+                    type="text"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      border: '1px solid var(--color-border-color)',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      backgroundColor: 'var(--color-surface)',
+                      transition: 'border-color 0.2s',
+                    }}
+                    onFocus={(e) => e.target.style.borderColor = '#3B82F6'}
+                    onBlur={(e) => e.target.style.borderColor = 'var(--color-border-color)'}
+                    placeholder="英語名を入力してください（任意）"
+                  />
+                </div>
 
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500', color: 'var(--color-text)' }}>
-              英語名
-            </label>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                border: '1px solid var(--color-border-color)',
-                borderRadius: '6px',
-                fontSize: '14px',
-              }}
-              placeholder="英語名を入力"
-            />
-          </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500', color: 'var(--color-text)' }}>
+                    説明
+                  </label>
+                  <textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      border: '1px solid var(--color-border-color)',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      minHeight: '100px',
+                      resize: 'vertical',
+                      backgroundColor: 'var(--color-surface)',
+                      transition: 'border-color 0.2s',
+                      fontFamily: 'inherit',
+                    }}
+                    onFocus={(e) => e.target.style.borderColor = '#3B82F6'}
+                    onBlur={(e) => e.target.style.borderColor = 'var(--color-border-color)'}
+                    placeholder="組織の説明を入力してください（任意）"
+                  />
+                </div>
 
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500', color: 'var(--color-text)' }}>
-              説明
-            </label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                border: '1px solid var(--color-border-color)',
-                borderRadius: '6px',
-                fontSize: '14px',
-                minHeight: '100px',
-                resize: 'vertical',
-              }}
-              placeholder="説明を入力"
-            />
-          </div>
-
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500', color: 'var(--color-text)' }}>
-              階層レベル
-            </label>
-            <select
-              value={level}
-              onChange={(e) => handleLevelChange(parseInt(e.target.value))}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                border: '1px solid var(--color-border-color)',
-                borderRadius: '6px',
-                fontSize: '14px',
-              }}
-            >
-              <option value={0}>0 - 部門</option>
-              <option value={1}>1 - 課</option>
-              <option value={2}>2 - チーム</option>
-              <option value={3}>3 - その他</option>
-            </select>
-          </div>
-
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500', color: 'var(--color-text)' }}>
-              レベル名
-            </label>
-            <input
-              type="text"
-              value={levelName}
-              onChange={(e) => setLevelName(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                border: '1px solid var(--color-border-color)',
-                borderRadius: '6px',
-                fontSize: '14px',
-              }}
-              placeholder="レベル名を入力（例: 部門、課、チーム）"
-            />
-          </div>
-
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500', color: 'var(--color-text)' }}>
-              表示順序
-            </label>
-            <input
-              type="number"
-              value={position}
-              onChange={(e) => setPosition(parseInt(e.target.value) || 0)}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                border: '1px solid var(--color-border-color)',
-                borderRadius: '6px',
-                fontSize: '14px',
-              }}
-            />
-          </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '500', color: 'var(--color-text)' }}>
+                    表示順序
+                  </label>
+                  <input
+                    type="number"
+                    value={position}
+                    onChange={(e) => setPosition(parseInt(e.target.value) || 0)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      border: '1px solid var(--color-border-color)',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      backgroundColor: 'var(--color-surface)',
+                      transition: 'border-color 0.2s',
+                    }}
+                    onFocus={(e) => e.target.style.borderColor = '#3B82F6'}
+                    onBlur={(e) => e.target.style.borderColor = 'var(--color-border-color)'}
+                    placeholder="0"
+                    min="0"
+                  />
+                  <p style={{ marginTop: '4px', fontSize: '12px', color: 'var(--color-text-light)' }}>
+                    数値が小さいほど上に表示されます（デフォルト: 0）
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px', paddingTop: '24px', borderTop: '1px solid var(--color-border-color)' }}>
-          <button
-            onClick={onClose}
-            style={{
-              padding: '10px 20px',
-              backgroundColor: '#6B7280',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: '500',
-            }}
-          >
-            キャンセル
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            style={{
-              padding: '10px 20px',
-              backgroundColor: saving ? '#9CA3AF' : '#10B981',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: saving ? 'not-allowed' : 'pointer',
-              fontSize: '14px',
-              fontWeight: '500',
-            }}
-          >
-            {saving ? '追加中...' : '追加'}
-          </button>
-        </div>
+        {/* 保存ボタン（作成モード時のみ表示） */}
+        {creatingAtPath !== null && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px', paddingTop: '24px', borderTop: '1px solid var(--color-border-color)' }}>
+            <button
+              onClick={() => {
+                setCreatingAtPath(null);
+                setSelectedPath([]);
+                setParentId(null);
+                setName('');
+                setTitle('');
+                setDescription('');
+                setPosition(0);
+              }}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: '#6B7280',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '500',
+              }}
+            >
+              キャンセル
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: saving ? '#9CA3AF' : '#10B981',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: saving ? 'not-allowed' : 'pointer',
+                fontSize: '14px',
+                fontWeight: '500',
+              }}
+            >
+              {saving ? '作成中...' : '組織を作成'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
-}
+};
 
 // 組織削除確認モーダルコンポーネント
 function DeleteOrganizationModal({
@@ -3054,126 +3813,4 @@ function DeleteOrganizationModal({
   );
 }
 
-// 重複組織削除確認モーダルコンポーネント
-function DeleteDuplicatesModal({
-  onClose,
-  onConfirm,
-}: {
-  onClose: () => void;
-  onConfirm: () => Promise<void>;
-}) {
-  const [deleting, setDeleting] = useState(false);
-
-  const handleConfirm = async () => {
-    setDeleting(true);
-    try {
-      await onConfirm();
-    } catch (error: any) {
-      console.error('❌ [DeleteDuplicatesModal] 削除処理でエラーが発生しました:', error);
-      // エラーが発生してもモーダルを閉じる
-      onClose();
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 3000,
-        padding: '20px',
-      }}
-      onClick={onClose}
-    >
-      <div
-        style={{
-          backgroundColor: 'var(--color-surface)',
-          borderRadius: '8px',
-          padding: '32px',
-          maxWidth: '600px',
-          width: '90%',
-          boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2)',
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div style={{ marginBottom: '24px' }}>
-          <h2 style={{ fontSize: '24px', fontWeight: 600, marginBottom: '12px', color: '#991B1B' }}>
-            重複組織を削除
-          </h2>
-          <p style={{ fontSize: '16px', color: 'var(--color-text-light)', lineHeight: '1.6', marginBottom: '12px' }}>
-            重複している組織を削除しますか？
-          </p>
-          <div style={{ 
-            padding: '12px', 
-            backgroundColor: '#FEF2F2', 
-            borderRadius: '6px', 
-            border: '1px solid #FECACA',
-            marginTop: '16px'
-          }}>
-            <p style={{ fontSize: '14px', color: '#7F1D1D', lineHeight: '1.6', margin: 0 }}>
-              <strong>⚠️ 警告:</strong> この操作は取り消せません。
-            </p>
-            <p style={{ fontSize: '14px', color: '#7F1D1D', lineHeight: '1.6', marginTop: '8px', marginBottom: 0 }}>
-              以下のデータが削除されます：
-            </p>
-            <ul style={{ fontSize: '14px', color: '#7F1D1D', marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
-              <li>重複している組織（メンバー数・子組織数が少ない方）</li>
-              <li>削除される組織のすべての子組織（再帰的に）</li>
-              <li>削除される組織のすべてのメンバー</li>
-            </ul>
-            <p style={{ fontSize: '14px', color: '#7F1D1D', lineHeight: '1.6', marginTop: '12px', marginBottom: 0, fontWeight: '600' }}>
-              💡 削除前に必ずデータベースのバックアップを取ってください。
-            </p>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-          <button
-            onClick={onClose}
-            disabled={deleting}
-            style={{
-              padding: '10px 20px',
-              backgroundColor: '#6B7280',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: deleting ? 'not-allowed' : 'pointer',
-              fontSize: '14px',
-              fontWeight: '500',
-              opacity: deleting ? 0.5 : 1,
-            }}
-          >
-            キャンセル
-          </button>
-          <button
-            onClick={handleConfirm}
-            disabled={deleting}
-            style={{
-              padding: '10px 20px',
-              backgroundColor: '#EF4444',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: deleting ? 'not-allowed' : 'pointer',
-              fontSize: '14px',
-              fontWeight: '500',
-              opacity: deleting ? 0.5 : 1,
-            }}
-          >
-            {deleting ? '削除中...' : '削除する'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
