@@ -11,10 +11,11 @@ use tokio::process::Command as TokioCommand;
 use tokio::time::{sleep, Duration};
 use tokio::io::AsyncReadExt;
 use chromadb::client::{ChromaAuthMethod, ChromaClient, ChromaClientOptions};
-use chromadb::collection::{CollectionEntries, QueryOptions, GetOptions};
+use chromadb::collection::{ChromaCollection, CollectionEntries, QueryOptions, GetOptions};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fs;
 
 // ChromaDB Serverの管理
 pub struct ChromaDBServer {
@@ -281,6 +282,28 @@ fn get_default_chromadb_data_dir() -> Result<PathBuf, String> {
     }
 }
 
+/// ChromaDBのデータディレクトリをクリア（破損したデータベースを修復するため）
+/// 注意: この関数を呼び出す前に、ChromaDBサーバーを停止しておく必要があります
+pub async fn clear_chromadb_data_dir() -> Result<(), String> {
+    let data_dir = get_default_chromadb_data_dir()?;
+    
+    eprintln!("🗑️ ChromaDBのデータディレクトリをクリアします: {}", data_dir.display());
+    
+    // ディレクトリが存在する場合、削除
+    if data_dir.exists() {
+        // ディレクトリを削除
+        if let Err(e) = fs::remove_dir_all(&data_dir) {
+            return Err(format!("ChromaDBデータディレクトリの削除に失敗しました: {}", e));
+        }
+        
+        eprintln!("✅ ChromaDBのデータディレクトリをクリアしました");
+    } else {
+        eprintln!("ℹ️ ChromaDBのデータディレクトリは存在しませんでした");
+    }
+    
+    Ok(())
+}
+
 /// ChromaDB Serverを初期化（グローバルに保持）
 pub async fn init_chromadb_server(data_dir: PathBuf, port: u16) -> Result<(), String> {
     let server_lock = CHROMADB_SERVER.get_or_init(|| Arc::new(std::sync::Mutex::new(None)));
@@ -313,11 +336,17 @@ pub async fn init_chromadb_server(data_dir: PathBuf, port: u16) -> Result<(), St
 
 /// ChromaDB Serverを停止
 pub async fn stop_chromadb_server() -> Result<(), String> {
-    if let Some(server_lock) = CHROMADB_SERVER.get() {
+    // MutexGuardをスコープ内でドロップしてから.awaitする必要がある
+    let server_to_stop = if let Some(server_lock) = CHROMADB_SERVER.get() {
         let mut server_guard = server_lock.lock().unwrap();
-        if let Some(mut server) = server_guard.take() {
-            server.stop().await?;
-        }
+        server_guard.take()
+    } else {
+        None
+    };
+    
+    // MutexGuardをドロップした後、.awaitを呼び出す
+    if let Some(mut server) = server_to_stop {
+        server.stop().await?;
     }
     
     if let Some(client_lock) = CHROMADB_CLIENT.get() {
@@ -388,6 +417,118 @@ fn get_chromadb_client() -> Result<Arc<Mutex<Option<Arc<ChromaClient>>>>, String
     CHROMADB_CLIENT.get()
         .cloned()
         .ok_or("ChromaDBクライアントが初期化されていません".to_string())
+}
+
+/// コレクションを取得または作成（エラーハンドリング付き）
+async fn get_or_create_collection_with_error_handling(
+    client: Arc<ChromaClient>,
+    collection_name: &str,
+) -> Result<ChromaCollection, String> {
+    // 最初の試行
+    match client.get_or_create_collection(collection_name, None).await {
+        Ok(collection) => Ok(collection),
+        Err(e) => {
+            let error_msg = format!("{}", e);
+            // acquire_writeテーブルが見つからないエラーの場合、自動修復を試みる
+            if error_msg.contains("acquire_write") || error_msg.contains("no such table") {
+                eprintln!("⚠️ ChromaDBの内部データベースエラーを検出しました。自動修復を試みます...");
+                
+                // ChromaDBサーバーを再起動
+                let port = std::env::var("CHROMADB_PORT")
+                    .ok()
+                    .and_then(|s| s.parse::<u16>().ok())
+                    .unwrap_or(8000);
+                
+                let data_dir = match get_default_chromadb_data_dir() {
+                    Ok(dir) => dir,
+                    Err(e) => {
+                        return Err(format!(
+                            "コレクションの取得/作成に失敗しました: {}\nデータディレクトリの取得に失敗: {}",
+                            error_msg, e
+                        ));
+                    }
+                };
+                
+                // サーバーを停止
+                if let Err(e) = stop_chromadb_server().await {
+                    eprintln!("⚠️ ChromaDBサーバーの停止中にエラーが発生しました: {}", e);
+                }
+                
+                // 少し待機
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                
+                // データディレクトリをクリア（破損したデータベースを修復）
+                eprintln!("🗑️ 破損したデータベースを修復するため、データディレクトリをクリアします...");
+                if let Err(e) = clear_chromadb_data_dir().await {
+                    eprintln!("⚠️ データディレクトリのクリアに失敗しました: {}", e);
+                    // クリアに失敗しても続行
+                }
+                
+                // 少し待機してから再起動
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                
+                // サーバーを再起動
+                match init_chromadb_server(data_dir.clone(), port).await {
+                    Ok(_) => {
+                        eprintln!("✅ ChromaDBサーバーの再起動に成功しました。再度試行します...");
+                        
+                        // クライアントを再取得
+                        let client_lock = CHROMADB_CLIENT.get()
+                            .ok_or("ChromaDBクライアントが初期化されていません")?;
+                        let new_client = {
+                            let client_guard = client_lock.lock().await;
+                            client_guard.as_ref()
+                                .ok_or("ChromaDBクライアントが初期化されていません")?
+                                .clone()
+                        };
+                        
+                        // 再試行（最大3回まで）
+                        let mut retry_count = 0;
+                        loop {
+                            match new_client.get_or_create_collection(collection_name, None).await {
+                                Ok(collection) => {
+                                    eprintln!("✅ コレクションの取得/作成に成功しました（再試行後）");
+                                    return Ok(collection);
+                                }
+                                Err(e2) => {
+                                    retry_count += 1;
+                                    if retry_count >= 3 {
+                                        let data_dir_str = data_dir.display().to_string();
+                                        return Err(format!(
+                                            "コレクションの取得/作成に失敗しました（再試行後も失敗）: {}\n\n\
+                                            ChromaDBの内部データベースが破損している可能性があります。\n\
+                                            対処法:\n\
+                                            1. アプリケーションを再起動してください\n\
+                                            2. それでも解決しない場合、ChromaDBのデータディレクトリをクリアしてください\n\
+                                            3. データディレクトリの場所: {}",
+                                            e2, data_dir_str
+                                        ));
+                                    }
+                                    eprintln!("⚠️ 再試行 {}回目に失敗しました。待機してから再試行します...", retry_count);
+                                    tokio::time::sleep(Duration::from_secs(1)).await;
+                                }
+                            }
+                        }
+                    }
+                    Err(e2) => {
+                        let data_dir_str = data_dir.display().to_string();
+                        return Err(format!(
+                            "コレクションの取得/作成に失敗しました: {}\n\
+                            ChromaDBサーバーの再起動にも失敗しました: {}\n\n\
+                            ChromaDBの内部データベースが破損している可能性があります。\n\
+                            対処法:\n\
+                            1. アプリケーションを再起動してください\n\
+                            2. それでも解決しない場合、ChromaDBのデータディレクトリをクリアしてください\n\
+                            3. データディレクトリの場所: {}",
+                            error_msg, e2, data_dir_str
+                        ));
+                    }
+                }
+            } else {
+                Err(format!("コレクションの取得/作成に失敗しました: {}", error_msg))
+            }
+        }
+    }
 }
 
 /// エンティティ埋め込みを保存
@@ -493,8 +634,7 @@ pub async fn save_entity_embedding(
     };
     
     // コレクションを取得または作成
-    let collection = client.get_or_create_collection(&collection_name, None).await
-        .map_err(|e| format!("コレクションの取得/作成に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, &collection_name).await?;
     
     // メタデータにエンティティIDと組織IDを追加
     let mut embedding_metadata = metadata;
@@ -621,8 +761,7 @@ pub async fn get_entity_embedding(
     };
     
     // コレクションを取得
-    let collection = client.get_or_create_collection(&collection_name, None).await
-        .map_err(|e| format!("コレクションの取得に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, &collection_name).await?;
     
     // IDから直接取得
     let get_options = GetOptions {
@@ -701,8 +840,7 @@ async fn search_entities_in_collection(
     limit: usize,
 ) -> Result<Vec<(String, f32)>, String> {
     // コレクションを取得
-    let collection = client.get_or_create_collection(collection_name, None).await
-        .map_err(|e| format!("コレクションの取得に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, collection_name).await?;
     
     // コレクションの件数を取得（デバッグ用）
     match collection.count().await {
@@ -862,8 +1000,7 @@ pub async fn count_entities(organization_id: Option<String>) -> Result<usize, St
             .clone()
     };
     
-    let collection = client.get_or_create_collection(&collection_name, None).await
-        .map_err(|e| format!("コレクションの取得に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, &collection_name).await?;
     
     let count = collection.count().await
         .map_err(|e| format!("コレクションの件数取得に失敗しました: {}", e))?;
@@ -894,8 +1031,7 @@ pub async fn save_relation_embedding(
             .clone()
     };
     
-    let collection = client.get_or_create_collection(&collection_name, None).await
-        .map_err(|e| format!("コレクションの取得/作成に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, &collection_name).await?;
     
     let mut embedding_metadata = metadata;
     embedding_metadata.insert("relationId".to_string(), Value::String(relation_id.clone()));
@@ -1020,8 +1156,7 @@ pub async fn get_relation_embedding(
     };
     
     // コレクションを取得
-    let collection = client.get_or_create_collection(&collection_name, None).await
-        .map_err(|e| format!("コレクションの取得に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, &collection_name).await?;
     
     // IDから直接取得
     let get_options = GetOptions {
@@ -1084,8 +1219,7 @@ async fn search_relations_in_collection(
     query_embedding: Vec<f32>,
     limit: usize,
 ) -> Result<Vec<(String, f32)>, String> {
-    let collection = client.get_or_create_collection(collection_name, None).await
-        .map_err(|e| format!("コレクションの取得に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, collection_name).await?;
     
     let query_options = QueryOptions {
         query_texts: None,
@@ -1230,8 +1364,7 @@ pub async fn save_topic_embedding(
             .clone()
     };
     
-    let collection = client.get_or_create_collection(&collection_name, None).await
-        .map_err(|e| format!("コレクションの取得/作成に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, &collection_name).await?;
     
     let mut embedding_metadata = metadata;
     embedding_metadata.insert("topicId".to_string(), Value::String(topic_id.clone()));
@@ -1274,8 +1407,7 @@ async fn search_topics_in_collection(
     query_embedding: Vec<f32>,
     limit: usize,
 ) -> Result<Vec<TopicSearchResult>, String> {
-    let collection = client.get_or_create_collection(collection_name, None).await
-        .map_err(|e| format!("コレクションの取得に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, collection_name).await?;
     
     let query_options = QueryOptions {
         query_texts: None,
@@ -1448,8 +1580,7 @@ pub async fn get_topic_embedding(
     };
     
     // コレクションを取得
-    let collection = client.get_or_create_collection(&collection_name, None).await
-        .map_err(|e| format!("コレクションの取得に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, &collection_name).await?;
     
     // IDから直接取得
     let get_options = GetOptions {
@@ -1609,8 +1740,7 @@ pub async fn save_design_doc_embedding(
     };
     
     // コレクションを取得または作成
-    let collection = client.get_or_create_collection(&collection_name, None).await
-        .map_err(|e| format!("コレクションの取得/作成に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, &collection_name).await?;
     
     // メタデータにセクションIDを追加
     let mut embedding_metadata = metadata;
@@ -1683,8 +1813,7 @@ pub async fn find_similar_design_docs(
             .clone()
     };
     
-    let collection = client.get_or_create_collection(&collection_name, None).await
-        .map_err(|e| format!("コレクションの取得に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, &collection_name).await?;
     
     // メタデータフィルターを構築
     let mut where_metadata: Option<serde_json::Map<String, Value>> = None;
@@ -1763,8 +1892,7 @@ pub async fn get_design_doc_metadata(
             .clone()
     };
     
-    let collection = client.get_or_create_collection(&collection_name, None).await
-        .map_err(|e| format!("コレクションの取得に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, &collection_name).await?;
     
     // getメソッドを使用して特定のIDのメタデータを取得
     // ChromaDBのドキュメントIDはsection_idそのもの
@@ -1814,8 +1942,7 @@ pub async fn list_design_doc_section_ids() -> Result<Vec<String>, String> {
             .clone()
     };
     
-    let collection = client.get_or_create_collection(&collection_name, None).await
-        .map_err(|e| format!("コレクションの取得に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, &collection_name).await?;
     
     // 全データを取得（getメソッドを使用）
     // idsを空のベクトルにすると全IDを取得できる
@@ -1862,8 +1989,7 @@ pub async fn delete_topic_embedding(
             .clone()
     };
     
-    let collection = client.get_or_create_collection(&collection_name, None).await
-        .map_err(|e| format!("コレクションの取得に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, &collection_name).await?;
     
     // トピックIDで削除
     // ChromaDBのIDはtopicIdそのもの（save_topic_embeddingでtopic_idをそのままIDとして使用）
@@ -1898,8 +2024,7 @@ pub async fn delete_entity_embedding(
             .clone()
     };
     
-    let collection = client.get_or_create_collection(&collection_name, None).await
-        .map_err(|e| format!("コレクションの取得に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, &collection_name).await?;
     
     // エンティティIDで削除
     collection.delete(
@@ -1933,8 +2058,7 @@ pub async fn delete_relation_embedding(
             .clone()
     };
     
-    let collection = client.get_or_create_collection(&collection_name, None).await
-        .map_err(|e| format!("コレクションの取得に失敗しました: {}", e))?;
+    let collection = get_or_create_collection_with_error_handling(client, &collection_name).await?;
     
     // リレーションIDで削除
     collection.delete(

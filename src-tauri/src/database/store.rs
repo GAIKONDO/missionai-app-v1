@@ -282,8 +282,8 @@ pub fn set_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Value>
     
     eprintln!("✅ [set_doc] 有効なフィールド数: {} / {}", valid_fields.len(), row_data.len());
     
-    // meetingNotes、focusInitiatives、topicsテーブルの場合、外部キー制約を一時的に無効化（古い外部キー制約が残っている可能性があるため）
-    if collection_name == "meetingNotes" || collection_name == "focusInitiatives" || collection_name == "topics" {
+    // meetingNotes、focusInitiatives、topics、entities、relationsテーブルの場合、外部キー制約を一時的に無効化（古い外部キー制約が残っている可能性があるため）
+    if collection_name == "meetingNotes" || collection_name == "focusInitiatives" || collection_name == "topics" || collection_name == "entities" || collection_name == "relations" {
         if let Err(e) = conn.execute("PRAGMA foreign_keys = OFF", []) {
             eprintln!("⚠️ [set_doc] 外部キー制約の無効化に失敗しました（続行します）: {}", e);
         } else {
@@ -365,8 +365,8 @@ pub fn set_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Value>
                 eprintln!("✅ [set_doc] 更新成功: {}行更新", rows_affected);
                 tx.commit()?;
                 
-                // meetingNotes、focusInitiatives、topicsテーブルの場合、外部キー制約を再度有効化
-                if collection_name == "meetingNotes" || collection_name == "focusInitiatives" || collection_name == "topics" {
+                // meetingNotes、focusInitiatives、topics、entities、relationsテーブルの場合、外部キー制約を再度有効化
+                if collection_name == "meetingNotes" || collection_name == "focusInitiatives" || collection_name == "topics" || collection_name == "entities" || collection_name == "relations" {
                     if let Err(e) = conn.execute("PRAGMA foreign_keys = ON", []) {
                         eprintln!("⚠️ [set_doc] 外部キー制約の再有効化に失敗しました（続行します）: {}", e);
                     } else {
@@ -381,7 +381,7 @@ pub fn set_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Value>
                 eprintln!("❌ [set_doc] クエリ: {}", query);
                 
                 // エラー時も外部キー制約を再有効化
-                if collection_name == "meetingNotes" || collection_name == "focusInitiatives" || collection_name == "topics" {
+                if collection_name == "meetingNotes" || collection_name == "focusInitiatives" || collection_name == "topics" || collection_name == "entities" || collection_name == "relations" {
                     let _ = conn.execute("PRAGMA foreign_keys = ON", []);
                 }
                 
@@ -458,8 +458,8 @@ pub fn set_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Value>
                 eprintln!("✅ [set_doc] 挿入成功: {}行挿入", rows_affected);
                 tx.commit()?;
                 
-                // meetingNotes、focusInitiatives、topicsテーブルの場合、外部キー制約を再度有効化
-                if collection_name == "meetingNotes" || collection_name == "focusInitiatives" || collection_name == "topics" {
+                // meetingNotes、focusInitiatives、topics、entities、relationsテーブルの場合、外部キー制約を再度有効化
+                if collection_name == "meetingNotes" || collection_name == "focusInitiatives" || collection_name == "topics" || collection_name == "entities" || collection_name == "relations" {
                     if let Err(e) = conn.execute("PRAGMA foreign_keys = ON", []) {
                         eprintln!("⚠️ [set_doc] 外部キー制約の再有効化に失敗しました（続行します）: {}", e);
                     } else {
@@ -474,7 +474,7 @@ pub fn set_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Value>
                 eprintln!("❌ [set_doc] クエリ: {}", query);
                 
                 // エラー時も外部キー制約を再有効化
-                if collection_name == "meetingNotes" || collection_name == "focusInitiatives" || collection_name == "topics" {
+                if collection_name == "meetingNotes" || collection_name == "focusInitiatives" || collection_name == "topics" || collection_name == "entities" || collection_name == "relations" {
                     let _ = conn.execute("PRAGMA foreign_keys = ON", []);
                 }
                 

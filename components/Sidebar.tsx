@@ -18,12 +18,12 @@ export default function Sidebar({ isOpen, onToggle, currentPage }: SidebarProps)
 
   const menuItems = [
     { icon: DashboardIcon, label: 'ダッシュボード', id: 'dashboard', path: '/' },
+    { icon: OrganizationIcon, label: '組織', id: 'organization', path: '/organization' },
     { icon: LineChartIcon, label: '分析', id: 'analytics', path: '/analytics' },
     { icon: TargetIcon, label: 'A to C 100', id: 'a2c100', path: '/a2c100' },
     { icon: KnowledgeGraphIcon, label: 'ナレッジグラフ', id: 'knowledge-graph', path: '/knowledge-graph' },
     { icon: RAGSearchIcon, label: 'RAG検索', id: 'rag-search', path: '/rag-search' },
     { icon: BarChartIcon, label: 'レポート', id: 'reports', path: '/reports' },
-    { icon: OrganizationIcon, label: '組織', id: 'organization', path: '/organization' },
     { icon: DesignIcon, label: '設計', id: 'design', path: '/design' },
     { icon: SettingsIcon, label: '設定', id: 'settings', path: '/settings' },
   ];

@@ -183,3 +183,9 @@ pub async fn chromadb_delete_relation_embedding(
 ) -> Result<(), String> {
     chromadb::delete_relation_embedding(relationId, organizationId).await
 }
+
+/// ChromaDBのデータディレクトリをクリア（破損したデータベースを修復するため）
+#[tauri::command]
+pub async fn chromadb_clear_data_dir() -> Result<(), String> {
+    chromadb::clear_chromadb_data_dir().await
+}
