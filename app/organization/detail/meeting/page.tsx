@@ -76,6 +76,25 @@ const EditIcon = ({ size = 18, color = 'currentColor' }: { size?: number; color?
   </svg>
 );
 
+const AIIcon = ({ size = 18, color = 'currentColor' }: { size?: number; color?: string }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+    <path d="M2 17l10 5 10-5"></path>
+    <path d="M2 12l10 5 10-5"></path>
+  </svg>
+);
+
+const TableOfContentsIcon = ({ size = 18, color = 'currentColor' }: { size?: number; color?: string }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="8" y1="6" x2="21" y2="6"></line>
+    <line x1="8" y1="12" x2="21" y2="12"></line>
+    <line x1="8" y1="18" x2="21" y2="18"></line>
+    <line x1="3" y1="6" x2="3.01" y2="6"></line>
+    <line x1="3" y1="12" x2="3.01" y2="12"></line>
+    <line x1="3" y1="18" x2="3.01" y2="18"></line>
+  </svg>
+);
+
 const DeleteIcon = ({ size = 18, color = 'currentColor' }: { size?: number; color?: string }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <polyline points="3 6 5 6 21 6"></polyline>
@@ -125,6 +144,17 @@ function MeetingNoteDetailPageContent() {
   
   // 各月のコンテンツデータ
   const [monthContents, setMonthContents] = useState<MeetingNoteData>({});
+  
+  // タブ名のカスタムラベル（編集可能なタブ名）
+  const [customTabLabels, setCustomTabLabels] = useState<Record<TabType, string | undefined>>({} as Record<TabType, string | undefined>);
+  
+  // タブ名編集モード
+  const [editingTabLabel, setEditingTabLabel] = useState<TabType | null>(null);
+  const [editingTabLabelValue, setEditingTabLabelValue] = useState<string>('');
+  
+  // 目次モーダル
+  const [showTableOfContentsModal, setShowTableOfContentsModal] = useState(false);
+  const [expandedMonthInTOC, setExpandedMonthInTOC] = useState<TabType | null>(null);
   
   // 編集モード
   const [editingMonth, setEditingMonth] = useState<MonthTab | SummaryTab | null>(null);
@@ -327,9 +357,15 @@ function MeetingNoteDetailPageContent() {
         // コンテンツをパース（JSON形式で保存されている想定）
         if (noteData.content) {
           try {
-            const parsed = JSON.parse(noteData.content) as MeetingNoteData;
+            const parsed = JSON.parse(noteData.content) as MeetingNoteData & { customTabLabels?: Record<TabType, string | undefined> };
             // 型チェックと初期化
             const initialized: MeetingNoteData = {};
+            
+            // カスタムタブラベルを復元
+            if (parsed.customTabLabels) {
+              setCustomTabLabels(parsed.customTabLabels);
+            }
+            
             MONTHS.forEach(month => {
               if (parsed[month.id] && typeof parsed[month.id] === 'object') {
                 const monthData = parsed[month.id] as MonthContent;
@@ -565,8 +601,13 @@ function MeetingNoteDetailPageContent() {
       setSavingStatus('saving');
       
       // 現在のコンテンツをJSON文字列に変換
-      const contentJson = JSON.stringify(monthContents, null, 2);
-      
+      // カスタムタブラベルも含めて保存
+      const contentToSave = {
+        ...monthContents,
+        customTabLabels: customTabLabels,
+      };
+      const contentJson = JSON.stringify(contentToSave, null, 2);
+
       // データを保存（事業会社の管理はorganizationsテーブルのtypeカラムで行うため、通常のsaveMeetingNoteを使用）
       await saveMeetingNote({
         ...meetingNote,
@@ -583,7 +624,7 @@ function MeetingNoteDetailPageContent() {
       alert(`保存に失敗しました: ${error?.message || '不明なエラー'}`);
       setSavingStatus('idle');
     }
-  }, [meetingNote, monthContents]);
+  }, [meetingNote, monthContents, customTabLabels]);
 
   // JSONダウンロード
   const handleDownloadJson = useCallback(async () => {
@@ -640,7 +681,8 @@ function MeetingNoteDetailPageContent() {
 
       // タブのコンテンツペインを生成
       const generateContentPane = (tabId: TabType, tabData: MonthContent, isFirst: boolean): string => {
-        const tabLabel = MONTHS.find(m => m.id === tabId)?.label || 
+        const tabLabel = customTabLabels[tabId] || 
+                        MONTHS.find(m => m.id === tabId)?.label || 
                         SUMMARY_TABS.find(t => t.id === tabId)?.label || 
                         tabId;
         const isMonthTab = MONTHS.some(m => m.id === tabId);
@@ -683,7 +725,8 @@ function MeetingNoteDetailPageContent() {
 
       // サイドバーナビゲーションを生成
       const generateSidebar = (tabId: TabType, tabData: MonthContent, isFirst: boolean): string => {
-        const tabLabel = MONTHS.find(m => m.id === tabId)?.label || 
+        const tabLabel = customTabLabels[tabId] || 
+                        MONTHS.find(m => m.id === tabId)?.label || 
                         SUMMARY_TABS.find(t => t.id === tabId)?.label || 
                         tabId;
         
@@ -715,12 +758,14 @@ function MeetingNoteDetailPageContent() {
       tabsHtml += `<div class="tabs">`;
       tabsHtml += `<div class="tabs-row">`;
       MONTHS.forEach((month, index) => {
-        tabsHtml += `<li class="tab-item${index === 0 ? ' active' : ''}" data-tab="${month.id}">${month.label}</li>`;
+        const monthLabel = customTabLabels[month.id] || month.label;
+        tabsHtml += `<li class="tab-item${index === 0 ? ' active' : ''}" data-tab="${month.id}">${monthLabel}</li>`;
       });
       tabsHtml += `</div>`;
       tabsHtml += `<div class="tabs-row">`;
       SUMMARY_TABS.forEach((tab) => {
-        tabsHtml += `<li class="tab-item" data-tab="${tab.id}">${tab.label}</li>`;
+        const tabLabel = customTabLabels[tab.id] || tab.label;
+        tabsHtml += `<li class="tab-item" data-tab="${tab.id}">${tabLabel}</li>`;
       });
       tabsHtml += `</div>`;
       tabsHtml += `</div>`;
@@ -1234,7 +1279,7 @@ function MeetingNoteDetailPageContent() {
       alert(`HTMLファイルのダウンロードに失敗しました: ${error?.message || '不明なエラー'}`);
       setDownloadingHtml(false);
     }
-  }, [meetingNote, monthContents, orgData, downloadingHtml]);
+  }, [meetingNote, monthContents, orgData, downloadingHtml, customTabLabels]);
 
   // ローカルモデルを読み込む
   useEffect(() => {
@@ -2051,243 +2096,335 @@ ${formatInstruction}
   const isSummaryTab = SUMMARY_TABS.some(t => t.id === activeTab);
   const currentSummaryId = currentTabData?.summaryId;
 
+  // 目次データを集計する関数
+  const getTableOfContentsData = () => {
+    const tocData: Array<{
+      tabId: TabType;
+      tabLabel: string;
+      itemCount: number;
+      topicCount: number;
+      items: Array<{
+        id: string;
+        title: string;
+        topicCount: number;
+      }>;
+      isSummaryTab: boolean;
+    }> = [];
+
+    // 月タブを追加
+    MONTHS.forEach((month) => {
+      const monthData = monthContents[month.id] as MonthContent | undefined;
+      const items = monthData?.items || [];
+      let totalTopicCount = 0;
+      
+      const itemData = items.map((item) => {
+        const topicCount = item.topics?.length || 0;
+        totalTopicCount += topicCount;
+        return {
+          id: item.id,
+          title: item.title || '無題',
+          topicCount,
+        };
+      });
+
+      tocData.push({
+        tabId: month.id,
+        tabLabel: customTabLabels[month.id] || month.label,
+        itemCount: items.length,
+        topicCount: totalTopicCount,
+        items: itemData,
+        isSummaryTab: false,
+      });
+    });
+
+    // 総括タブを追加
+    SUMMARY_TABS.forEach((tab) => {
+      const tabData = monthContents[tab.id] as MonthContent | undefined;
+      const items = tabData?.items || [];
+      let totalTopicCount = 0;
+      
+      const itemData = items.map((item) => {
+        const topicCount = item.topics?.length || 0;
+        totalTopicCount += topicCount;
+        return {
+          id: item.id,
+          title: item.title || '無題',
+          topicCount,
+        };
+      });
+
+      tocData.push({
+        tabId: tab.id,
+        tabLabel: customTabLabels[tab.id] || tab.label,
+        itemCount: items.length,
+        topicCount: totalTopicCount,
+        items: itemData,
+        isSummaryTab: true,
+      });
+    });
+
+    return tocData;
+  };
+
   return (
     <Layout>
       <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto', backgroundColor: '#F9FAFB', minHeight: '100vh' }}>
         {/* ヘッダー */}
         <div style={{
-          background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 30%, #334155 100%)',
-          color: '#FFFFFF',
-          padding: '48px 32px 36px 32px',
-          textAlign: 'center',
-          borderBottom: '5px solid #0066CC',
-          boxShadow: '0 10px 32px rgba(15, 23, 42, 0.25), 0 4px 12px rgba(0, 0, 0, 0.15)',
+          backgroundColor: '#FFFFFF',
+          padding: '24px 32px',
           marginBottom: '32px',
-          borderRadius: '14px 14px 0 0',
-          position: 'relative',
-          overflow: 'hidden',
+          borderBottom: '1px solid #E5E7EB',
         }}>
-          {/* 装飾的な背景パターン */}
-          <div style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'radial-gradient(circle at 20% 50%, rgba(0, 102, 204, 0.15) 0%, transparent 50%), radial-gradient(circle at 80% 50%, rgba(0, 191, 255, 0.12) 0%, transparent 50%)',
-            pointerEvents: 'none',
-          }} />
-          <div style={{ position: 'relative', zIndex: 1 }}>
-            <h1 style={{ 
-              margin: 0, 
-              fontSize: '3.2em', 
-              letterSpacing: '2px',
-              fontWeight: '800',
-              textShadow: '0 3px 12px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3)',
-              color: '#FFFFFF',
-              marginBottom: '20px',
-              lineHeight: '1.2',
-            }}>
-              {meetingNote.title}
-            </h1>
-            <div style={{
-              display: 'inline-block',
-              width: '100px',
-              height: '5px',
-              background: 'linear-gradient(90deg, #0066CC 0%, #00BFFF 50%, #0066CC 100%)',
-              borderRadius: '3px',
-              marginBottom: '16px',
-              boxShadow: '0 2px 8px rgba(0, 102, 204, 0.4)',
-            }} />
-            <p style={{ 
-              margin: 0, 
-              fontSize: '1.1em', 
-              fontWeight: '500',
-              color: '#E2E8F0',
-              letterSpacing: '0.5px',
-              textShadow: '0 2px 6px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2)',
-              lineHeight: '1.5',
-            }}>
-              議事録アーカイブ
-            </p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '8px' }}>
+                <div style={{
+                  width: '4px',
+                  height: '32px',
+                  backgroundColor: '#0066CC',
+                  borderRadius: '2px',
+                }} />
+                <h1 style={{ 
+                  margin: 0, 
+                  fontSize: '28px', 
+                  fontWeight: 600,
+                  color: '#1F2937',
+                  letterSpacing: '-0.01em',
+                  lineHeight: '1.3',
+                }}>
+                  {meetingNote.title}
+                </h1>
+              </div>
+              <p style={{ 
+                margin: 0,
+                marginLeft: '20px',
+                fontSize: '14px', 
+                color: '#6B7280',
+                lineHeight: '1.5',
+              }}>
+                議事録アーカイブ
+              </p>
+            </div>
+            
+            {/* アクションボタン */}
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              {savingStatus !== 'idle' && (
+                <div style={{
+                  padding: '8px 12px',
+                  fontSize: '12px',
+                  color: savingStatus === 'saving' ? '#6B7280' : '#10B981',
+                  backgroundColor: savingStatus === 'saving' ? '#F3F4F6' : '#D1FAE5',
+                  borderRadius: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}>
+                  {savingStatus === 'saving' ? '💾 保存中...' : '✅ 保存完了'}
+                </div>
+              )}
+              <button
+                onClick={handleManualSave}
+                disabled={savingStatus === 'saving'}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '40px',
+                  height: '40px',
+                  backgroundColor: savingStatus === 'saving' ? '#9CA3AF' : '#10B981',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: savingStatus === 'saving' ? 'not-allowed' : 'pointer',
+                  transition: 'background-color 0.2s, opacity 0.2s',
+                  opacity: savingStatus === 'saving' ? 0.7 : 1,
+                }}
+                onMouseEnter={(e) => {
+                  if (savingStatus !== 'saving') {
+                    e.currentTarget.style.backgroundColor = '#059669';
+                    e.currentTarget.style.opacity = '1';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (savingStatus !== 'saving') {
+                    e.currentTarget.style.backgroundColor = '#10B981';
+                    e.currentTarget.style.opacity = '1';
+                  }
+                }}
+                title="編集内容を保存します"
+              >
+                <SaveIcon size={18} color="white" />
+              </button>
+              <button
+                onClick={handleDownloadJson}
+                disabled={downloadingJson}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '40px',
+                  height: '40px',
+                  backgroundColor: downloadingJson ? '#9CA3AF' : '#3B82F6',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: downloadingJson ? 'not-allowed' : 'pointer',
+                  transition: 'background-color 0.2s, opacity 0.2s',
+                  opacity: downloadingJson ? 0.7 : 1,
+                  position: 'relative',
+                }}
+                onMouseEnter={(e) => {
+                  if (!downloadingJson) {
+                    e.currentTarget.style.backgroundColor = '#2563EB';
+                    e.currentTarget.style.opacity = '1';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!downloadingJson) {
+                    e.currentTarget.style.backgroundColor = '#3B82F6';
+                    e.currentTarget.style.opacity = '1';
+                  }
+                }}
+                title={downloadingJson ? 'JSONファイルをダウンロード中...' : 'JSONファイルをダウンロード'}
+              >
+                {downloadingJson ? (
+                  <div style={{
+                    width: '18px',
+                    height: '18px',
+                    border: '2px solid rgba(255, 255, 255, 0.3)',
+                    borderTop: '2px solid white',
+                    borderRadius: '50%',
+                    animation: 'spin 0.8s linear infinite',
+                  }} />
+                ) : (
+                  <DownloadIcon size={18} color="white" />
+                )}
+              </button>
+              <button
+                onClick={handleDownloadHtml}
+                disabled={downloadingHtml}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '40px',
+                  height: '40px',
+                  backgroundColor: downloadingHtml ? '#9CA3AF' : '#8B5CF6',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: downloadingHtml ? 'not-allowed' : 'pointer',
+                  transition: 'background-color 0.2s, opacity 0.2s',
+                  opacity: downloadingHtml ? 0.7 : 1,
+                  position: 'relative',
+                }}
+                onMouseEnter={(e) => {
+                  if (!downloadingHtml) {
+                    e.currentTarget.style.backgroundColor = '#7C3AED';
+                    e.currentTarget.style.opacity = '1';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!downloadingHtml) {
+                    e.currentTarget.style.backgroundColor = '#8B5CF6';
+                    e.currentTarget.style.opacity = '1';
+                  }
+                }}
+                title={downloadingHtml ? 'HTMLファイルをダウンロード中...' : 'HTMLファイルをダウンロード'}
+              >
+                {downloadingHtml ? (
+                  <div style={{
+                    width: '18px',
+                    height: '18px',
+                    border: '2px solid rgba(255, 255, 255, 0.3)',
+                    borderTop: '2px solid white',
+                    borderRadius: '50%',
+                    animation: 'spin 0.8s linear infinite',
+                  }} />
+                ) : (
+                  <DownloadIcon size={18} color="white" />
+                )}
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    if (hasUnsavedChanges) {
+                      const { tauriConfirm } = await import('@/lib/orgApi');
+                      const confirmed = await tauriConfirm('保存されていない変更があります。このページを離れますか？', 'ページを離れる確認');
+                      if (!confirmed) {
+                        return;
+                      }
+                    }
+                    router.push(`/organization/detail?id=${organizationId}&tab=meetingNotes`);
+                  } catch (error) {
+                    console.error('❌ [戻るボタン] エラーが発生しましたが、ページ遷移を続行します:', error);
+                    // エラーが発生してもページ遷移を続行
+                    router.push(`/organization/detail?id=${organizationId}&tab=meetingNotes`);
+                  }
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '40px',
+                  height: '40px',
+                  backgroundColor: '#6B7280',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.2s, opacity 0.2s',
+                  opacity: 0.9,
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#4B5563';
+                  e.currentTarget.style.opacity = '1';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#6B7280';
+                  e.currentTarget.style.opacity = '0.9';
+                }}
+                title="戻る"
+              >
+                <BackIcon size={18} color="white" />
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* アクションボタン */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '20px', alignItems: 'center' }}>
-          {savingStatus !== 'idle' && (
-            <div style={{
-              padding: '8px 12px',
-              fontSize: '12px',
-              color: savingStatus === 'saving' ? '#6B7280' : '#10B981',
-              backgroundColor: savingStatus === 'saving' ? '#F3F4F6' : '#D1FAE5',
-              borderRadius: '4px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-            }}>
-              {savingStatus === 'saving' ? '💾 保存中...' : '✅ 保存完了'}
-            </div>
-          )}
+        {/* 目次ボタン */}
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'flex-start', 
+          marginBottom: '12px',
+        }}>
           <button
-            onClick={handleManualSave}
-            disabled={savingStatus === 'saving'}
+            onClick={() => setShowTableOfContentsModal(true)}
             style={{
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              width: '40px',
-              height: '40px',
-              backgroundColor: savingStatus === 'saving' ? '#9CA3AF' : '#10B981',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: savingStatus === 'saving' ? 'not-allowed' : 'pointer',
-              transition: 'background-color 0.2s, opacity 0.2s',
-              opacity: savingStatus === 'saving' ? 0.7 : 1,
-            }}
-            onMouseEnter={(e) => {
-              if (savingStatus !== 'saving') {
-                e.currentTarget.style.backgroundColor = '#059669';
-                e.currentTarget.style.opacity = '1';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (savingStatus !== 'saving') {
-                e.currentTarget.style.backgroundColor = '#10B981';
-                e.currentTarget.style.opacity = '1';
-              }
-            }}
-            title="編集内容を保存します"
-          >
-            <SaveIcon size={18} color="white" />
-          </button>
-          <button
-            onClick={handleDownloadJson}
-            disabled={downloadingJson}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '40px',
-              height: '40px',
-              backgroundColor: downloadingJson ? '#9CA3AF' : '#3B82F6',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: downloadingJson ? 'not-allowed' : 'pointer',
-              transition: 'background-color 0.2s, opacity 0.2s',
-              opacity: downloadingJson ? 0.7 : 1,
-              position: 'relative',
-            }}
-            onMouseEnter={(e) => {
-              if (!downloadingJson) {
-                e.currentTarget.style.backgroundColor = '#2563EB';
-                e.currentTarget.style.opacity = '1';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!downloadingJson) {
-                e.currentTarget.style.backgroundColor = '#3B82F6';
-                e.currentTarget.style.opacity = '1';
-              }
-            }}
-            title={downloadingJson ? 'JSONファイルをダウンロード中...' : 'JSONファイルをダウンロード'}
-          >
-            {downloadingJson ? (
-              <div style={{
-                width: '18px',
-                height: '18px',
-                border: '2px solid rgba(255, 255, 255, 0.3)',
-                borderTop: '2px solid white',
-                borderRadius: '50%',
-                animation: 'spin 0.8s linear infinite',
-              }} />
-            ) : (
-              <DownloadIcon size={18} color="white" />
-            )}
-          </button>
-          <button
-            onClick={handleDownloadHtml}
-            disabled={downloadingHtml}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '40px',
-              height: '40px',
-              backgroundColor: downloadingHtml ? '#9CA3AF' : '#8B5CF6',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: downloadingHtml ? 'not-allowed' : 'pointer',
-              transition: 'background-color 0.2s, opacity 0.2s',
-              opacity: downloadingHtml ? 0.7 : 1,
-              position: 'relative',
-            }}
-            onMouseEnter={(e) => {
-              if (!downloadingHtml) {
-                e.currentTarget.style.backgroundColor = '#7C3AED';
-                e.currentTarget.style.opacity = '1';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!downloadingHtml) {
-                e.currentTarget.style.backgroundColor = '#8B5CF6';
-                e.currentTarget.style.opacity = '1';
-              }
-            }}
-            title={downloadingHtml ? 'HTMLファイルをダウンロード中...' : 'HTMLファイルをダウンロード'}
-          >
-            {downloadingHtml ? (
-              <div style={{
-                width: '18px',
-                height: '18px',
-                border: '2px solid rgba(255, 255, 255, 0.3)',
-                borderTop: '2px solid white',
-                borderRadius: '50%',
-                animation: 'spin 0.8s linear infinite',
-              }} />
-            ) : (
-              <DownloadIcon size={18} color="white" />
-            )}
-          </button>
-          <button
-            onClick={async () => {
-              if (hasUnsavedChanges) {
-                const { tauriConfirm } = await import('@/lib/orgApi');
-                const confirmed = await tauriConfirm('保存されていない変更があります。このページを離れますか？', 'ページを離れる確認');
-                if (!confirmed) {
-                  return;
-                }
-              }
-              router.push(`/organization/detail?id=${organizationId}&tab=meetingNotes`);
-            }}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '40px',
-              height: '40px',
+              gap: '8px',
+              padding: '10px 16px',
               backgroundColor: '#6B7280',
               color: '#fff',
               border: 'none',
               borderRadius: '6px',
               cursor: 'pointer',
-              transition: 'background-color 0.2s, opacity 0.2s',
-              opacity: 0.9,
+              fontSize: '14px',
+              fontWeight: '500',
+              transition: 'all 0.2s ease',
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.backgroundColor = '#4B5563';
-              e.currentTarget.style.opacity = '1';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.backgroundColor = '#6B7280';
-              e.currentTarget.style.opacity = '0.9';
             }}
-            title="戻る"
+            title="目次を表示"
           >
-            <BackIcon size={18} color="white" />
+            <TableOfContentsIcon size={16} color="white" />
+            <span>目次</span>
           </button>
         </div>
 
@@ -2347,7 +2484,7 @@ ${formatInstruction}
                     }
                   }}
                 >
-                  {month.label}
+                  {customTabLabels[month.id] || month.label}
                 </button>
               ))}
             </div>
@@ -2399,12 +2536,355 @@ ${formatInstruction}
                     }
                   }}
                 >
-                  {tab.label}
+                  {customTabLabels[tab.id] || tab.label}
                 </button>
               ))}
             </div>
           </div>
         </div>
+
+        {/* 目次モーダル */}
+        {showTableOfContentsModal && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 3000,
+              padding: '20px',
+            }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setShowTableOfContentsModal(false);
+              }
+            }}
+          >
+            <div
+              style={{
+                backgroundColor: '#FFFFFF',
+                borderRadius: '12px',
+                padding: '24px',
+                maxWidth: '1200px',
+                width: '95%',
+                maxHeight: '85vh',
+                overflowY: 'auto',
+                boxShadow: '0 10px 40px rgba(0, 0, 0, 0.2)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                <h2 style={{ fontSize: '24px', fontWeight: 600, margin: 0, color: '#1E293B' }}>
+                  目次
+                </h2>
+                <button
+                  onClick={() => setShowTableOfContentsModal(false)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '32px',
+                    height: '32px',
+                    backgroundColor: 'transparent',
+                    color: '#6B7280',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#F3F4F6';
+                    e.currentTarget.style.color = '#1E293B';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                    e.currentTarget.style.color = '#6B7280';
+                  }}
+                  title="閉じる"
+                >
+                  <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                </button>
+              </div>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {getTableOfContentsData().map((tabData) => (
+                  <div
+                    key={tabData.tabId}
+                    style={{
+                      border: '1px solid #E5E7EB',
+                      borderRadius: '8px',
+                      padding: '16px',
+                      backgroundColor: tabData.isSummaryTab ? '#F0F9FF' : '#F9FAFB',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        marginBottom: '12px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+                        {editingTabLabel === tabData.tabId ? (
+                          <input
+                            type="text"
+                            value={editingTabLabelValue}
+                            onChange={(e) => setEditingTabLabelValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                const updatedLabels = { ...customTabLabels };
+                                updatedLabels[tabData.tabId] = editingTabLabelValue.trim() || undefined;
+                                setCustomTabLabels(updatedLabels);
+                                setHasUnsavedChanges(true);
+                                setEditingTabLabel(null);
+                                setEditingTabLabelValue('');
+                              } else if (e.key === 'Escape') {
+                                setEditingTabLabel(null);
+                                setEditingTabLabelValue('');
+                              }
+                            }}
+                            onBlur={() => {
+                              const updatedLabels = { ...customTabLabels };
+                              updatedLabels[tabData.tabId] = editingTabLabelValue.trim() || undefined;
+                              setCustomTabLabels(updatedLabels);
+                              setHasUnsavedChanges(true);
+                              setEditingTabLabel(null);
+                              setEditingTabLabelValue('');
+                            }}
+                            style={{
+                              fontSize: '18px',
+                              fontWeight: 600,
+                              color: '#1E293B',
+                              border: '2px solid #0066CC',
+                              borderRadius: '4px',
+                              padding: '4px 8px',
+                              width: '200px',
+                            }}
+                            autoFocus
+                          />
+                        ) : (
+                          <h3 
+                            style={{ 
+                              fontSize: '18px', 
+                              fontWeight: 600, 
+                              margin: 0, 
+                              color: '#1E293B',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                            }}
+                            onClick={() => {
+                              if (expandedMonthInTOC === tabData.tabId) {
+                                setExpandedMonthInTOC(null);
+                              } else {
+                                setExpandedMonthInTOC(tabData.tabId);
+                              }
+                            }}
+                          >
+                            <span style={{
+                              fontSize: '12px',
+                              transition: 'transform 0.2s ease',
+                              transform: expandedMonthInTOC === tabData.tabId ? 'rotate(90deg)' : 'rotate(0deg)',
+                              display: 'inline-block',
+                            }}>
+                              ▶
+                            </span>
+                            {tabData.tabLabel}
+                          </h3>
+                        )}
+                        {editingTabLabel !== tabData.tabId && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const defaultLabel = MONTHS.find(m => m.id === tabData.tabId)?.label || 
+                                                  SUMMARY_TABS.find(t => t.id === tabData.tabId)?.label || 
+                                                  tabData.tabId;
+                              setEditingTabLabel(tabData.tabId);
+                              setEditingTabLabelValue(customTabLabels[tabData.tabId] || defaultLabel);
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              width: '28px',
+                              height: '28px',
+                              backgroundColor: 'transparent',
+                              color: '#64748B',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s ease',
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.backgroundColor = '#EFF6FF';
+                              e.currentTarget.style.color = '#0066CC';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.backgroundColor = 'transparent';
+                              e.currentTarget.style.color = '#64748B';
+                            }}
+                            title="タブ名を編集"
+                          >
+                            <EditIcon size={14} color="currentColor" />
+                          </button>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                        <span style={{ 
+                          fontSize: '14px', 
+                          color: '#64748B',
+                          backgroundColor: '#E2E8F0',
+                          padding: '4px 12px',
+                          borderRadius: '12px',
+                          fontWeight: '500',
+                        }}>
+                          議事録: {tabData.itemCount}件
+                        </span>
+                        <span style={{ 
+                          fontSize: '14px', 
+                          color: '#64748B',
+                          backgroundColor: '#DBEAFE',
+                          padding: '4px 12px',
+                          borderRadius: '12px',
+                          fontWeight: '500',
+                        }}>
+                          トピック: {tabData.topicCount}件
+                        </span>
+                      </div>
+                    </div>
+                    
+                    {expandedMonthInTOC === tabData.tabId && (
+                      <div style={{ 
+                        marginTop: '12px',
+                        padding: '16px',
+                        backgroundColor: '#F9FAFB',
+                        borderRadius: '8px',
+                        border: '1px solid #E5E7EB',
+                      }}>
+                        {tabData.items.length > 0 ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                            <div>
+                              <h4 style={{ 
+                                fontSize: '14px', 
+                                fontWeight: 600, 
+                                color: '#1E293B',
+                                margin: '0 0 12px 0',
+                              }}>
+                                議事録一覧 ({tabData.itemCount}件)
+                              </h4>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                {tabData.items.map((item) => {
+                                  const itemData = (monthContents[tabData.tabId] as MonthContent | undefined)?.items?.find(i => i.id === item.id);
+                                  const topics = itemData?.topics || [];
+                                  return (
+                                    <div
+                                      key={item.id}
+                                      style={{
+                                        padding: '12px',
+                                        backgroundColor: '#FFFFFF',
+                                        borderRadius: '6px',
+                                        border: '1px solid #E5E7EB',
+                                      }}
+                                    >
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: topics.length > 0 ? '8px' : '0' }}>
+                                        <span style={{ 
+                                          fontSize: '14px', 
+                                          fontWeight: 500,
+                                          color: '#1E293B',
+                                          cursor: 'pointer',
+                                        }}
+                                        onClick={() => {
+                                          setActiveTab(tabData.tabId);
+                                          setActiveSection(item.id);
+                                          setShowTableOfContentsModal(false);
+                                        }}
+                                        >
+                                          {item.title}
+                                        </span>
+                                        <span style={{ 
+                                          fontSize: '12px', 
+                                          color: '#64748B',
+                                          backgroundColor: '#DBEAFE',
+                                          padding: '2px 8px',
+                                          borderRadius: '8px',
+                                        }}>
+                                          トピック: {item.topicCount}件
+                                        </span>
+                                      </div>
+                                      {topics.length > 0 && (
+                                        <div style={{ marginTop: '8px', paddingLeft: '12px', borderLeft: '2px solid #CBD5E1' }}>
+                                          <div style={{ fontSize: '12px', fontWeight: 600, color: '#64748B', marginBottom: '6px' }}>
+                                            トピック一覧:
+                                          </div>
+                                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                            {topics.map((topic) => (
+                                              <div
+                                                key={topic.id}
+                                                style={{
+                                                  fontSize: '12px',
+                                                  color: '#475569',
+                                                  padding: '4px 8px',
+                                                  backgroundColor: '#F3F4F6',
+                                                  borderRadius: '4px',
+                                                  cursor: 'pointer',
+                                                }}
+                                                onClick={() => {
+                                                  setActiveTab(tabData.tabId);
+                                                  setActiveSection(item.id);
+                                                  setShowTableOfContentsModal(false);
+                                                  setTimeout(() => {
+                                                    const topicElement = document.getElementById(`${item.id}-topic-${topic.id}`);
+                                                    if (topicElement) {
+                                                      topicElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                                      topicElement.style.backgroundColor = '#fff9e6';
+                                                      setTimeout(() => {
+                                                        topicElement.style.backgroundColor = '';
+                                                      }, 2000);
+                                                    }
+                                                  }, 100);
+                                                }}
+                                              >
+                                                {topic.title || '無題'}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ 
+                            padding: '24px',
+                            textAlign: 'center',
+                            color: '#9CA3AF',
+                            fontSize: '14px',
+                          }}>
+                            議事録が登録されていません
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
 
         {/* コンテンツレイアウト */}
         <div style={{ display: 'flex', gap: '28px', marginTop: '24px' }}>
@@ -2450,7 +2930,7 @@ ${formatInstruction}
                           fontWeight: '600',
                           letterSpacing: '0.3px',
                         }}>
-                          {SUMMARY_TABS.find(t => t.id === activeTab)?.label}サマリ
+                          {(customTabLabels[activeTab] || SUMMARY_TABS.find(t => t.id === activeTab)?.label)}サマリ
                         </h3>
                         {currentSummaryId && (
                           <p style={{
@@ -2511,26 +2991,30 @@ ${formatInstruction}
                             style={{
                               display: 'flex',
                               alignItems: 'center',
-                              gap: '6px',
-                              padding: '8px 16px',
-                              backgroundColor: '#3B82F6',
-                              color: '#FFFFFF',
+                              justifyContent: 'center',
+                              width: '40px',
+                              height: '40px',
+                              backgroundColor: 'transparent',
+                              color: '#475569',
                               border: 'none',
                               borderRadius: '6px',
                               cursor: 'pointer',
-                              fontSize: '14px',
-                              fontWeight: 500,
-                              transition: 'all 0.2s',
+                              opacity: 0.7,
+                              transition: 'all 0.2s ease',
                             }}
                             onMouseEnter={(e) => {
-                              e.currentTarget.style.backgroundColor = '#2563EB';
+                              e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 0.1)';
+                              e.currentTarget.style.opacity = '1';
+                              e.currentTarget.style.color = '#3B82F6';
                             }}
                             onMouseLeave={(e) => {
-                              e.currentTarget.style.backgroundColor = '#3B82F6';
+                              e.currentTarget.style.backgroundColor = 'transparent';
+                              e.currentTarget.style.opacity = '0.7';
+                              e.currentTarget.style.color = '#475569';
                             }}
+                            title="AIで作文"
                           >
-                            <span>🤖</span>
-                            <span>AIで作文</span>
+                            <AIIcon size={18} color="currentColor" />
                           </button>
                           <button
                             onClick={() => handleStartEditSummary(activeTab as SummaryTab as any)}
@@ -3445,7 +3929,7 @@ ${formatInstruction}
                   lineHeight: '1.3',
                   textShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
                 }}>
-                  {MONTHS.find(m => m.id === activeTab)?.label}の議事録
+                  {(customTabLabels[activeTab] || MONTHS.find(m => m.id === activeTab)?.label)}の議事録
                 </h2>
                 
                   {/* 月サマリ - サマリが選択されている場合のみ表示 */}
@@ -3460,7 +3944,7 @@ ${formatInstruction}
                         fontWeight: '600',
                         letterSpacing: '0.3px',
                       }}>
-                        {MONTHS.find(m => m.id === activeTab)?.label}サマリ
+                        {(customTabLabels[activeTab] || MONTHS.find(m => m.id === activeTab)?.label)}サマリ
                       </h3>
                       {currentSummaryId && (
                         <p style={{
@@ -3520,26 +4004,30 @@ ${formatInstruction}
                           style={{
                             display: 'flex',
                             alignItems: 'center',
-                            gap: '6px',
-                            padding: '8px 16px',
-                            backgroundColor: '#3B82F6',
-                            color: '#FFFFFF',
+                            justifyContent: 'center',
+                            width: '40px',
+                            height: '40px',
+                            backgroundColor: 'transparent',
+                            color: '#475569',
                             border: 'none',
                             borderRadius: '6px',
                             cursor: 'pointer',
-                            fontSize: '14px',
-                            fontWeight: 500,
-                            transition: 'all 0.2s',
+                            opacity: 0.7,
+                            transition: 'all 0.2s ease',
                           }}
                           onMouseEnter={(e) => {
-                            e.currentTarget.style.backgroundColor = '#2563EB';
+                            e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 0.1)';
+                            e.currentTarget.style.opacity = '1';
+                            e.currentTarget.style.color = '#3B82F6';
                           }}
                           onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = '#3B82F6';
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                            e.currentTarget.style.opacity = '0.7';
+                            e.currentTarget.style.color = '#475569';
                           }}
+                          title="AIで作文"
                         >
-                          <span>🤖</span>
-                          <span>AIで作文</span>
+                          <AIIcon size={18} color="currentColor" />
                         </button>
                         <button
                           onClick={() => handleStartEditSummary(activeTab as MonthTab)}

@@ -2764,11 +2764,7 @@ graph LR
             </button>
             <button
               onClick={() => {
-                if (companyId) {
-                  router.push(`/companies/detail?id=${companyId}&tab=focusInitiatives`);
-                } else {
-                  router.push(`/organization/detail?id=${organizationId}&tab=focusInitiatives`);
-                }
+                router.push(`/organization/detail?id=${organizationId}&tab=focusInitiatives`);
               }}
               style={{
                 display: 'flex',
@@ -3307,14 +3303,11 @@ graph LR
                   setIsTopicSelectModalOpen(false);
                   setTopicSearchQuery('');
                   setSelectedOrgId('');
-                  setSelectedCompanyId('');
                   setSelectedMeetingNoteId('');
                   setModalTopics([]);
                   setOrgIdInput('');
-                  setCompanyIdInput('');
                   setMeetingNoteIdInput('');
                   setFilteredMeetingNotes([]);
-                  setFilteredCompanyMeetingNotes([]);
                 }}
                 style={{
                   background: 'none',
@@ -3419,12 +3412,10 @@ graph LR
                             if (orgNote) {
                               setSelectedMeetingNoteId(orgNote.id);
                               setSelectedOrgId(orgNote.organizationId);
-                              setSelectedCompanyId('');
                               const topics = await getTopicsByMeetingNote(orgNote.id);
                               setModalTopics(topics);
                               const notes = allMeetingNotes.filter(n => n.organizationId === orgNote.organizationId);
                               setFilteredMeetingNotes(notes);
-                              setFilteredCompanyMeetingNotes([]);
                             } else {
                               alert('指定された議事録IDが見つかりませんでした');
                             }
@@ -3446,12 +3437,10 @@ graph LR
                             if (orgNote) {
                               setSelectedMeetingNoteId(orgNote.id);
                               setSelectedOrgId(orgNote.organizationId);
-                              setSelectedCompanyId('');
                               const topics = await getTopicsByMeetingNote(orgNote.id);
                               setModalTopics(topics);
                               const notes = allMeetingNotes.filter(n => n.organizationId === orgNote.organizationId);
                               setFilteredMeetingNotes(notes);
-                              setFilteredCompanyMeetingNotes([]);
                             } else {
                               alert('指定された議事録IDが見つかりませんでした');
                             }

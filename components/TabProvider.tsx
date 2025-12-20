@@ -528,6 +528,11 @@ export function TabProvider({ children }: TabProviderProps) {
         return;
       }
       
+      // 更新前にlastPathname等を更新して、重複チェックを防ぐ
+      lastPathname = currentPathname;
+      lastSearch = currentSearch;
+      lastHash = currentHash;
+      
       // アクティブなタブの現在のURLを取得
       if (currentActiveTab) {
         try {
@@ -548,24 +553,22 @@ export function TabProvider({ children }: TabProviderProps) {
           }
           
           // タブのURLと現在のURLが異なる場合
-          // タブ切り替え直後の可能性があるため、現在のURLがタブのURLと一致する方向に移動している場合は更新しない
-          // つまり、現在のURLがタブのURLと一致していない場合、タブ切り替え中の可能性があるので更新をスキップ
-          // ただし、ユーザーが手動でナビゲートした場合は更新する必要がある
-          // これを判定するために、現在のURLがタブのURLと一致する方向に移動しているかチェック
-          // タブ切り替え直後の場合、現在のURLはまだ切り替え前のURLなので、タブのURLと一致しない
-          // この場合、ナビゲーションが完了するまで待つ必要がある
-          // しかし、ユーザーが手動でナビゲートした場合は、現在のURLをタブのURLとして更新する必要がある
-          // これを区別するために、現在のURLがタブのURLと一致する方向に移動しているかチェック
-          // タブ切り替え直後の場合、現在のURLはタブのURLと一致しないが、ナビゲーションが完了すると一致する
-          // したがって、現在のURLがタブのURLと一致しない場合、タブ切り替え中の可能性があるので更新をスキップ
+          // pathnameが異なる場合は、タブ切り替え中の可能性があるので更新をスキップ
+          // ただし、pathnameが同じでsearchパラメータだけが異なる場合は、タブ内のタブ切り替えなので更新する
           if (currentUrlObj.pathname !== tabUrl.pathname) {
-            console.log('TabProvider: タブ切り替え中の可能性があるため更新をスキップ', {
-              tabUrl: tabUrl.pathname,
-              currentUrl: currentUrlObj.pathname,
-              lastPathname,
-            });
+            // デバッグログを削減（開発環境のみ）
+            if (process.env.NODE_ENV === 'development') {
+              console.log('TabProvider: タブ切り替え中の可能性があるため更新をスキップ', {
+                tabUrl: tabUrl.pathname,
+                currentUrl: currentUrlObj.pathname,
+                lastPathname,
+              });
+            }
             return;
           }
+          
+          // pathnameが同じでsearchパラメータだけが異なる場合は、タブ内のタブ切り替えなので更新する
+          // この場合は更新を続行
           
           console.log('TabProvider: タブのURLと現在のURLが異なります（手動ナビゲーションの可能性）', {
             tabUrl: tabUrl.pathname,
@@ -578,9 +581,6 @@ export function TabProvider({ children }: TabProviderProps) {
       }
       
       isUpdating = true;
-      lastPathname = currentPathname;
-      lastSearch = currentSearch;
-      lastHash = currentHash;
       
       try {
         const newTitle = getTitleFromUrl(currentUrl);
@@ -631,6 +631,7 @@ export function TabProvider({ children }: TabProviderProps) {
     window.addEventListener('popstate', updateActiveTabUrl);
     
     // Next.jsのルーター変更を監視（pathnameの変更を監視）
+    // 注意: lastPathname等はupdateActiveTabUrl内で更新されるため、ここでは比較のみ
     const intervalId = setInterval(() => {
       const currentPathname = window.location.pathname;
       const currentSearch = window.location.search;
@@ -641,14 +642,17 @@ export function TabProvider({ children }: TabProviderProps) {
         currentSearch !== lastSearch ||
         currentHash !== lastHash
       ) {
-        console.log('TabProvider: URL変更を検出しました', {
-          lastPathname,
-          currentPathname,
-          lastSearch,
-          currentSearch,
-          lastHash,
-          currentHash,
-        });
+        // デバッグログを削減（開発環境のみ、かつ実際に変更があった場合のみ）
+        if (process.env.NODE_ENV === 'development') {
+          console.log('TabProvider: URL変更を検出しました', {
+            lastPathname,
+            currentPathname,
+            lastSearch,
+            currentSearch,
+            lastHash,
+            currentHash,
+          });
+        }
         updateActiveTabUrl();
       }
     }, 100); // 100msごとにチェック

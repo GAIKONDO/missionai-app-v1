@@ -282,6 +282,15 @@ pub fn set_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Value>
     
     eprintln!("✅ [set_doc] 有効なフィールド数: {} / {}", valid_fields.len(), row_data.len());
     
+    // meetingNotes、focusInitiatives、topicsテーブルの場合、外部キー制約を一時的に無効化（古い外部キー制約が残っている可能性があるため）
+    if collection_name == "meetingNotes" || collection_name == "focusInitiatives" || collection_name == "topics" {
+        if let Err(e) = conn.execute("PRAGMA foreign_keys = OFF", []) {
+            eprintln!("⚠️ [set_doc] 外部キー制約の無効化に失敗しました（続行します）: {}", e);
+        } else {
+            eprintln!("✅ [set_doc] 外部キー制約を無効化しました（{}用）", collection_name);
+        }
+    }
+    
     // トランザクションを開始（データベースロックを最小化）
     let tx = conn.unchecked_transaction()?;
     
@@ -355,11 +364,27 @@ pub fn set_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Value>
             Ok(rows_affected) => {
                 eprintln!("✅ [set_doc] 更新成功: {}行更新", rows_affected);
                 tx.commit()?;
+                
+                // meetingNotes、focusInitiatives、topicsテーブルの場合、外部キー制約を再度有効化
+                if collection_name == "meetingNotes" || collection_name == "focusInitiatives" || collection_name == "topics" {
+                    if let Err(e) = conn.execute("PRAGMA foreign_keys = ON", []) {
+                        eprintln!("⚠️ [set_doc] 外部キー制約の再有効化に失敗しました（続行します）: {}", e);
+                    } else {
+                        eprintln!("✅ [set_doc] 外部キー制約を再有効化しました（{}用）", collection_name);
+                    }
+                }
+                
                 Ok(())
             },
             Err(e) => {
                 eprintln!("❌ [set_doc] UPDATEエラー: {}", e);
                 eprintln!("❌ [set_doc] クエリ: {}", query);
+                
+                // エラー時も外部キー制約を再有効化
+                if collection_name == "meetingNotes" || collection_name == "focusInitiatives" || collection_name == "topics" {
+                    let _ = conn.execute("PRAGMA foreign_keys = ON", []);
+                }
+                
                 Err(e)
             }
         }
@@ -432,11 +457,27 @@ pub fn set_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Value>
             Ok(rows_affected) => {
                 eprintln!("✅ [set_doc] 挿入成功: {}行挿入", rows_affected);
                 tx.commit()?;
+                
+                // meetingNotes、focusInitiatives、topicsテーブルの場合、外部キー制約を再度有効化
+                if collection_name == "meetingNotes" || collection_name == "focusInitiatives" || collection_name == "topics" {
+                    if let Err(e) = conn.execute("PRAGMA foreign_keys = ON", []) {
+                        eprintln!("⚠️ [set_doc] 外部キー制約の再有効化に失敗しました（続行します）: {}", e);
+                    } else {
+                        eprintln!("✅ [set_doc] 外部キー制約を再有効化しました（{}用）", collection_name);
+                    }
+                }
+                
                 Ok(())
             },
             Err(e) => {
                 eprintln!("❌ [set_doc] INSERTエラー: {}", e);
                 eprintln!("❌ [set_doc] クエリ: {}", query);
+                
+                // エラー時も外部キー制約を再有効化
+                if collection_name == "meetingNotes" || collection_name == "focusInitiatives" || collection_name == "topics" {
+                    let _ = conn.execute("PRAGMA foreign_keys = ON", []);
+                }
+                
                 Err(e)
             }
         }
@@ -643,6 +684,15 @@ pub fn delete_doc(collection_name: &str, doc_id: &str) -> SqlResult<()> {
     })?;
     let conn = db.get_connection()?;
     
+    // focusInitiativesテーブルの場合、外部キー制約を一時的に無効化（古い外部キー制約が残っている可能性があるため）
+    if collection_name == "focusInitiatives" {
+        if let Err(e) = conn.execute("PRAGMA foreign_keys = OFF", []) {
+            eprintln!("⚠️ [delete_doc] 外部キー制約の無効化に失敗しました（続行します）: {}", e);
+        } else {
+            eprintln!("✅ [delete_doc] 外部キー制約を無効化しました（{}用）", collection_name);
+        }
+    }
+    
     // テーブルが存在するか確認
     let table_exists: bool = conn.query_row(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
@@ -652,6 +702,10 @@ pub fn delete_doc(collection_name: &str, doc_id: &str) -> SqlResult<()> {
     
     if !table_exists {
         eprintln!("❌ [delete_doc] テーブル '{}' が存在しません", collection_name);
+        // focusInitiativesの場合、外部キー制約を再有効化
+        if collection_name == "focusInitiatives" {
+            let _ = conn.execute("PRAGMA foreign_keys = ON", []);
+        }
         return Err(rusqlite::Error::SqliteFailure(
             rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
             Some(format!("テーブル '{}' が存在しません", collection_name))
@@ -670,6 +724,10 @@ pub fn delete_doc(collection_name: &str, doc_id: &str) -> SqlResult<()> {
     
     if !exists {
         eprintln!("⚠️ [delete_doc] レコードが存在しません: doc_id={}", doc_id);
+        // focusInitiativesの場合、外部キー制約を再有効化
+        if collection_name == "focusInitiatives" {
+            let _ = conn.execute("PRAGMA foreign_keys = ON", []);
+        }
         return Err(rusqlite::Error::SqliteFailure(
             rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_NOTFOUND),
             Some(format!("レコード '{}' が存在しません", doc_id))
@@ -681,15 +739,36 @@ pub fn delete_doc(collection_name: &str, doc_id: &str) -> SqlResult<()> {
     let query = format!("DELETE FROM {} WHERE id = ?1", collection_name);
     eprintln!("📝 [delete_doc] 実行するSQL: {}", query);
     
-    let rows_affected = tx.execute(&query, [doc_id])?;
-    eprintln!("✅ [delete_doc] 削除成功: {} 行が削除されました", rows_affected);
-    
-    if rows_affected == 0 {
-        eprintln!("⚠️ [delete_doc] 警告: 0行が削除されました（レコードが存在しない可能性があります）");
+    match tx.execute(&query, [doc_id]) {
+        Ok(rows_affected) => {
+            eprintln!("✅ [delete_doc] 削除成功: {} 行が削除されました", rows_affected);
+            
+            if rows_affected == 0 {
+                eprintln!("⚠️ [delete_doc] 警告: 0行が削除されました（レコードが存在しない可能性があります）");
+            }
+            
+            tx.commit()?;
+            
+            // focusInitiativesテーブルの場合、外部キー制約を再度有効化
+            if collection_name == "focusInitiatives" {
+                if let Err(e) = conn.execute("PRAGMA foreign_keys = ON", []) {
+                    eprintln!("⚠️ [delete_doc] 外部キー制約の再有効化に失敗しました（続行します）: {}", e);
+                } else {
+                    eprintln!("✅ [delete_doc] 外部キー制約を再有効化しました（{}用）", collection_name);
+                }
+            }
+            
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("❌ [delete_doc] 削除エラー: {}", e);
+            // focusInitiativesの場合、外部キー制約を再有効化
+            if collection_name == "focusInitiatives" {
+                let _ = conn.execute("PRAGMA foreign_keys = ON", []);
+            }
+            Err(e)
+        }
     }
-    
-    tx.commit()?;
-    Ok(())
 }
 
 pub fn add_doc(collection_name: &str, data: HashMap<String, Value>) -> SqlResult<String> {
@@ -878,8 +957,15 @@ pub fn delete_meeting_note_with_relations(note_id: &str) -> SqlResult<()> {
     
     let mut conn = db.get_connection()?;
     
+    // 外部キー制約を一時的に無効化（古い外部キー制約が残っている可能性があるため）
+    if let Err(e) = conn.execute("PRAGMA foreign_keys = OFF", []) {
+        eprintln!("⚠️ [delete_meeting_note_with_relations] 外部キー制約の無効化に失敗しました（続行します）: {}", e);
+    } else {
+        eprintln!("✅ [delete_meeting_note_with_relations] 外部キー制約を無効化しました");
+    }
+    
     // 1つのトランザクション内で全ての削除を実行
-    let tx = conn.transaction()?;
+    let tx = conn.unchecked_transaction()?;
     
     // 1. 関連するrelationsを取得（削除用、topicRelationsからリネーム済み）
     eprintln!("📊 [delete_meeting_note_with_relations] 関連するrelationsを取得中...");
@@ -940,6 +1026,13 @@ pub fn delete_meeting_note_with_relations(note_id: &str) -> SqlResult<()> {
     
     // トランザクションをコミット
     tx.commit()?;
+    
+    // 外部キー制約を再度有効化
+    if let Err(e) = conn.execute("PRAGMA foreign_keys = ON", []) {
+        eprintln!("⚠️ [delete_meeting_note_with_relations] 外部キー制約の再有効化に失敗しました（続行します）: {}", e);
+    } else {
+        eprintln!("✅ [delete_meeting_note_with_relations] 外部キー制約を再有効化しました");
+    }
     
     eprintln!("✅ [delete_meeting_note_with_relations] 全ての削除が完了しました (リレーション: {}件, トピック: {}件, 議事録: {}件)", 
         relation_ids.len(), deleted_topics, deleted_notes);
