@@ -83,7 +83,6 @@ fn main() {
             
             // ChromaDB ServerとAPIサーバーを並列で初期化（非同期）
             let app_handle_chroma = app.handle().clone();
-            let app_handle_api = app.handle().clone();
             
             // ChromaDB Serverを初期化（非同期、待機時間なし）
             tauri::async_runtime::spawn(async move {
@@ -180,6 +179,7 @@ fn main() {
             commands::organization::delete_org_member,
             commands::organization::update_theme_positions_cmd,
             commands::organization::get_themes_cmd,
+            commands::organization::get_deletion_targets_cmd,
             // 事業会社管理コマンドは削除（事業会社ページ削除のため）
             // commands::companies::create_company_cmd,
             // commands::companies::update_company_cmd,

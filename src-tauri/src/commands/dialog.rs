@@ -67,7 +67,7 @@ pub async fn show_confirm_dialog(
 pub async fn show_alert_dialog(
     app: tauri::AppHandle,
     message: String,
-    title: String,
+    _title: String,
 ) -> Result<(), String> {
     let window = app.get_webview_window("main").ok_or("メインウィンドウが見つかりません")?;
     

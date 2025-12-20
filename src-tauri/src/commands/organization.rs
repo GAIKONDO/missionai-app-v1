@@ -9,6 +9,7 @@ use crate::database::{
     update_theme_positions,
     get_all_themes,
     delete_organization,
+    get_deletion_targets,
 };
 use crate::db::{WriteJob, WriteQueueState};
 use serde_json::json;
@@ -368,5 +369,48 @@ pub async fn get_themes_cmd() -> Result<Vec<serde_json::Value>, String> {
             Ok(themes_json)
         }
         Err(e) => Err(format!("テーマ取得に失敗しました: {}", e)),
+    }
+}
+
+/// 削除対象の子組織とメンバーを取得
+#[tauri::command]
+pub fn get_deletion_targets_cmd(organization_id: String) -> Result<serde_json::Value, String> {
+    match get_deletion_targets(&organization_id) {
+        Ok((child_orgs, members)) => {
+            let child_orgs_json: Vec<serde_json::Value> = child_orgs
+                .iter()
+                .map(|org| {
+                    json!({
+                        "id": org.id,
+                        "name": org.name,
+                        "title": org.title,
+                        "description": org.description,
+                        "level": org.level,
+                        "levelName": org.level_name,
+                        "position": org.position,
+                        "type": org.org_type,
+                        "parentId": org.parent_id,
+                    })
+                })
+                .collect();
+            
+            let members_json: Vec<serde_json::Value> = members
+                .iter()
+                .map(|member| {
+                    json!({
+                        "id": member.id,
+                        "organizationId": member.organization_id,
+                        "name": member.name,
+                        "position": member.position,
+                    })
+                })
+                .collect();
+            
+            Ok(json!({
+                "childOrganizations": child_orgs_json,
+                "members": members_json,
+            }))
+        }
+        Err(e) => Err(format!("削除対象の取得に失敗しました: {}", e)),
     }
 }

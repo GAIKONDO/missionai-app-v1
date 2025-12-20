@@ -224,7 +224,7 @@ pub async fn add_organization_member(
 }
 
 pub async fn update_organization_member(
-    Path((org_id, member_id)): Path<(String, String)>,
+    Path((_org_id, member_id)): Path<(String, String)>,
     AxumJson(payload): AxumJson<HashMap<String, Value>>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let name = payload.get("name").and_then(|v| v.as_str().map(|s| s.to_string()));

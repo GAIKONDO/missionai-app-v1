@@ -391,6 +391,45 @@ fn build_organization_tree(org: &Organization) -> SqlResult<OrganizationWithMemb
     })
 }
 
+/// 削除対象の子組織（再帰的）とメンバーを取得
+pub fn get_deletion_targets(organization_id: &str) -> SqlResult<(Vec<Organization>, Vec<OrganizationMember>)> {
+    let mut child_orgs = Vec::new();
+    let mut all_members = Vec::new();
+    
+    // 再帰的に子組織を取得
+    fn collect_children_recursive(
+        parent_id: &str,
+        child_orgs: &mut Vec<Organization>,
+        all_members: &mut Vec<OrganizationMember>,
+    ) -> SqlResult<()> {
+        // 直接の子組織を取得
+        let children = get_organizations_by_parent_id(Some(parent_id))?;
+        
+        for child in children {
+            // 子組織をリストに追加
+            child_orgs.push(child.clone());
+            
+            // 子組織のメンバーを取得
+            let members = get_members_by_organization_id(&child.id)?;
+            all_members.extend(members);
+            
+            // さらに子組織を再帰的に取得
+            collect_children_recursive(&child.id, child_orgs, all_members)?;
+        }
+        
+        Ok(())
+    }
+    
+    // 指定された組織の直接の子組織から開始
+    collect_children_recursive(organization_id, &mut child_orgs, &mut all_members)?;
+    
+    // 指定された組織自体のメンバーも取得
+    let org_members = get_members_by_organization_id(organization_id)?;
+    all_members.extend(org_members);
+    
+    Ok((child_orgs, all_members))
+}
+
 /// 組織を削除
 pub fn delete_organization(id: &str) -> SqlResult<()> {
     println!("🗑️ [delete_organization] 削除開始: id={}", id);

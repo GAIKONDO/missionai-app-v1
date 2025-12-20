@@ -505,6 +505,27 @@ export async function searchOrgsByName(namePattern: string): Promise<any[]> {
 /**
  * 組織を削除
  */
+/**
+ * 削除対象の子組織とメンバーを取得
+ */
+export async function getDeletionTargets(organizationId: string): Promise<{
+  childOrganizations: Array<{ id: string; name: string; title?: string; level: number; levelName: string; type?: string }>;
+  members: Array<{ id: string; name: string; position?: string; organizationId: string }>;
+}> {
+  try {
+    const result = await callTauriCommand('get_deletion_targets_cmd', {
+      organizationId,
+    }) as {
+      childOrganizations: Array<{ id: string; name: string; title?: string; level: number; levelName: string }>;
+      members: Array<{ id: string; name: string; position?: string; organizationId: string }>;
+    };
+    return result;
+  } catch (error: any) {
+    console.error('❌ [getDeletionTargets] 削除対象の取得に失敗しました:', error);
+    throw new Error(`削除対象の取得に失敗しました: ${error.message || error}`);
+  }
+}
+
 export async function deleteOrg(id: string): Promise<void> {
   console.log('🗑️ [deleteOrg] 削除開始:', id);
   

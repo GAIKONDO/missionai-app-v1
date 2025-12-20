@@ -52,6 +52,7 @@ pub use container::{
 pub use organization::{
     create_organization, update_organization, update_organization_parent_id, get_organization_by_id,
     search_organizations_by_name, get_organizations_by_parent_id, get_organization_tree, delete_organization,
+    get_deletion_targets,
     add_member, add_member_simple, update_member, get_member_by_id, get_members_by_organization_id, delete_member,
     get_all_organizations, get_all_members,
     export_organizations_and_members_to_csv,

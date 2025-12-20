@@ -285,7 +285,7 @@ fn get_plantuml_jar_path(app_handle: &AppHandle) -> Result<PathBuf> {
             {
                 // MissionAI.app/Contents/Resources/plantuml.jar
                 if let Some(contents_dir) = exe_dir.parent() {
-                    if let Some(app_dir) = contents_dir.parent() {
+                    if let Some(_app_dir) = contents_dir.parent() {
                         let resources_dir = contents_dir.join("Resources");
                         let jar_path = resources_dir.join("plantuml.jar");
                         eprintln!("🔍 [PlantUML] macOSアプリバンドルのリソースパスを確認: {}", jar_path.display());
