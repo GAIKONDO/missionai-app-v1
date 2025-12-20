@@ -1,19 +1,9 @@
 /**
  * トピック埋め込みの管理ユーティリティ
- * Firestoreへの保存・取得・検索機能を提供
  */
 
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where,
-} from './localFirebase';
+import { doc, setDoc, collection, getDocs } from './localFirebase';
 import { callTauriCommand } from './localFirebase';
-
 import { 
   generateCombinedEmbedding, 
   generateSeparatedEmbeddings,
@@ -29,13 +19,6 @@ import pLimit from 'p-limit';
 
 /**
  * トピック埋め込みを保存
- * 
- * @param topicId トピックのユニークID
- * @param meetingNoteId 親議事録ID
- * @param organizationId 組織ID
- * @param title トピックタイトル
- * @param content トピックコンテンツ
- * @param metadata トピックメタデータ（オプション、精度向上のため推奨）
  */
 export async function saveTopicEmbedding(
   topicId: string,
@@ -45,71 +28,22 @@ export async function saveTopicEmbedding(
   content: string,
   metadata?: Partial<Pick<TopicMetadata, 'keywords' | 'semanticCategory' | 'tags' | 'summary' | 'importance'>>
 ): Promise<void> {
-  // クライアント側でのみ実行（サーバーサイドレンダリングを回避）
   if (typeof window === 'undefined') {
     throw new Error('トピック埋め込みの保存はクライアント側でのみ実行可能です');
   }
   
   try {
     const now = new Date().toISOString();
-    const embeddingVersion = metadata ? '2.0' : '1.0'; // メタデータがある場合はバージョン2.0
-    
-    // 埋め込みを生成
-    let combinedEmbedding: number[] | undefined;
-    let titleEmbedding: number[] | undefined;
-    let contentEmbedding: number[] | undefined;
-    let metadataEmbedding: number[] | undefined;
-
-    if (metadata && (metadata.keywords || metadata.semanticCategory || metadata.tags)) {
-      // メタデータがある場合: 分離埋め込み + メタデータ埋め込みを生成
-      try {
-        const separated = await generateSeparatedEmbeddings(title, content);
-        titleEmbedding = separated.titleEmbedding;
-        contentEmbedding = separated.contentEmbedding;
-        
-        // メタデータの埋め込みを生成
-        try {
-          metadataEmbedding = await generateMetadataEmbedding({
-            keywords: metadata.keywords,
-            semanticCategory: metadata.semanticCategory,
-            tags: metadata.tags,
-            summary: metadata.summary,
-          });
-        } catch (error) {
-          console.warn('メタデータ埋め込みの生成に失敗しました（続行します）:', error);
-        }
-        
-        // 後方互換性のため、combinedEmbeddingも生成
-        combinedEmbedding = await generateEnhancedEmbedding(
-          title,
-          content,
-          {
-            keywords: metadata.keywords,
-            semanticCategory: metadata.semanticCategory,
-            tags: metadata.tags,
-            summary: metadata.summary,
-          }
-        );
-      } catch (error) {
-        console.warn('分離埋め込みの生成に失敗しました。従来の方法を使用します:', error);
-        // フォールバック: 従来の方法
-        combinedEmbedding = await generateCombinedEmbedding(title, content);
-      }
-    } else {
-      // メタデータがない場合: 従来の方法
-      combinedEmbedding = await generateCombinedEmbedding(title, content);
-    }
-    
-    // 埋め込みID（meetingNoteId-topic-topicId形式）
+    const embeddingVersion = metadata ? '2.0' : '1.0';
     const embeddingId = `${meetingNoteId}-topic-${topicId}`;
     
-    // topicsテーブルに保存するためのデータ（NOT NULL制約を満たすため、titleを含める）
+    // topicsテーブルに保存するためのデータ
     const topicData: any = {
       id: embeddingId,
       topicId,
       meetingNoteId,
       organizationId,
-      title: title || '', // NOT NULL制約のため必須
+      title: title || '',
       content: content || null,
       createdAt: now,
       updatedAt: now,
@@ -132,115 +66,59 @@ export async function saveTopicEmbedding(
     if (metadata?.summary) {
       topicData.description = metadata.summary;
     }
-    
-    // Firestoreに保存（埋め込みデータ）
-    const embeddingData: TopicEmbedding = {
-      id: embeddingId,
-      topicId,
-      meetingNoteId,
-      organizationId,
-      combinedEmbedding,
-      embeddingModel: 'text-embedding-3-small',
-      embeddingVersion,
-      createdAt: now,
-      updatedAt: now,
-    };
 
-    // 分離埋め込みがあれば追加
-    if (titleEmbedding) {
-      embeddingData.titleEmbedding = titleEmbedding;
-    }
-    if (contentEmbedding) {
-      embeddingData.contentEmbedding = contentEmbedding;
-    }
-    if (metadataEmbedding) {
-      embeddingData.metadataEmbedding = metadataEmbedding;
-    }
-    
-    // メタデータフィールドを保存（検索高速化のため）
-    if (metadata?.semanticCategory) {
-      embeddingData.semanticCategory = metadata.semanticCategory;
-    }
-    if (metadata?.keywords && metadata.keywords.length > 0) {
-      embeddingData.keywords = metadata.keywords;
-    }
-    if (metadata?.tags && metadata.tags.length > 0) {
-      embeddingData.tags = metadata.tags;
-    }
-
-    // ChromaDBを使用する場合（動的インポート）
+    // ChromaDBに保存
     if (shouldUseChroma()) {
       try {
-        console.log(`🔄 [saveTopicEmbedding] ChromaDBに保存を開始: ${embeddingId}`);
         const { saveTopicEmbeddingToChroma } = await import('./topicEmbeddingsChroma');
         await saveTopicEmbeddingToChroma(topicId, meetingNoteId, organizationId, title, content, metadata);
-        console.log(`✅ ChromaDBにトピック埋め込みを保存しました: ${embeddingId} (version: ${embeddingVersion})`);
         
-        // topicsテーブルにメタデータを保存（ChromaDBは埋め込みデータ用、topicsテーブルはメタデータ用）
+        // topicsテーブルにメタデータを保存
         try {
-          console.log(`🔄 [saveTopicEmbedding] topicsテーブルにメタデータを保存開始: ${embeddingId}`);
           await setDoc(doc(null, 'topics', embeddingId), topicData);
-          console.log(`✅ topicsテーブルにメタデータを保存しました: ${embeddingId}`);
         } catch (topicSaveError: any) {
-          console.warn(`⚠️ topicsテーブルへの保存に失敗しました（ChromaDBには保存済み）: ${embeddingId}`, topicSaveError?.message || topicSaveError);
+          console.warn(`topicsテーブルへの保存に失敗しました: ${embeddingId}`, topicSaveError?.message);
         }
         
-        // ChromaDB同期状態を更新（topicsテーブルのchromaSyncedカラムを1に設定）
-        // SQLiteのtopicsテーブルのIDは`${meetingNoteId}-topic-${topicId}`形式
+        // 同期状態を更新
         try {
           await callTauriCommand('update_chroma_sync_status', {
             entityType: 'topic',
-            entityId: embeddingId, // topicsテーブルのID（${meetingNoteId}-topic-${topicId}形式）
+            entityId: embeddingId,
             synced: true,
             error: null,
           });
-          console.log(`✅ トピックのChromaDB同期状態を更新しました: ${embeddingId}`);
         } catch (syncStatusError: any) {
-          console.warn(`⚠️ ChromaDB同期状態の更新に失敗しました（ChromaDBには保存済み）: ${embeddingId}`, syncStatusError?.message || syncStatusError);
-          // エラーが発生しても続行（ChromaDBには保存されているため）
+          console.warn(`同期状態の更新に失敗しました: ${embeddingId}`, syncStatusError?.message);
         }
       } catch (chromaError: any) {
-        console.warn('ChromaDBへの保存に失敗しました。Firestoreにフォールバックします:', chromaError?.message || chromaError);
-        
         // 同期状態を失敗として更新
         try {
           await callTauriCommand('update_chroma_sync_status', {
             entityType: 'topic',
-            entityId: embeddingId, // topicsテーブルのID（${meetingNoteId}-topic-${topicId}形式）
+            entityId: embeddingId,
             synced: false,
             error: chromaError?.message || String(chromaError),
           });
         } catch (syncStatusError: any) {
-          console.warn(`⚠️ ChromaDB同期状態の更新に失敗しました: ${embeddingId}`, syncStatusError?.message || syncStatusError);
+          console.warn(`同期状態の更新に失敗しました: ${embeddingId}`, syncStatusError?.message);
         }
         
-        // フォールバック: SQLiteに保存（ChromaDBが無効な場合のみ）
+        // フォールバック: SQLiteに保存
         await setDoc(doc(null, 'topics', embeddingId), topicData);
       }
     } else {
-      // SQLiteに保存（ChromaDBが無効な場合）
-      console.log(`🔄 [saveTopicEmbedding] SQLiteに保存開始: ${embeddingId}`);
+      // SQLiteに保存
       await setDoc(doc(null, 'topics', embeddingId), topicData);
     }
-    
-    console.log(`✅ トピック埋め込みを保存しました: ${embeddingId} (version: ${embeddingVersion})`);
   } catch (error) {
     console.error('トピック埋め込みの保存エラー:', error);
-    // エラーが発生しても処理を続行（埋め込みはオプショナル）
     throw error;
   }
 }
 
 /**
  * トピック埋め込みを非同期で生成・保存
- * エラーが発生しても処理を続行する（オプショナルな機能のため）
- * 
- * @param topicId トピックのユニークID
- * @param meetingNoteId 親議事録ID
- * @param organizationId 組織ID
- * @param title トピックタイトル
- * @param content トピックコンテンツ
- * @param metadata トピックメタデータ（オプション）
  */
 export async function saveTopicEmbeddingAsync(
   topicId: string,
@@ -250,38 +128,19 @@ export async function saveTopicEmbeddingAsync(
   content: string,
   metadata?: Partial<Pick<TopicMetadata, 'keywords' | 'semanticCategory' | 'tags' | 'summary' | 'importance'>>
 ): Promise<void> {
-  // クライアント側でのみ実行（サーバーサイドレンダリングを回避）
   if (typeof window === 'undefined') {
-    console.warn('⚠️ トピック埋め込みの保存はクライアント側でのみ実行可能です');
     return;
   }
   
   try {
-    console.log(`🔄 [トピック埋め込み生成] 開始: ${title} (${topicId})`);
     await saveTopicEmbedding(topicId, meetingNoteId, organizationId, title, content, metadata);
-    console.log(`✅ [トピック埋め込み生成] 完了: ${title} (${topicId})`);
   } catch (error: any) {
-    // 詳細なエラー情報を記録
-    const errorMessage = error?.message || String(error);
-    const errorStack = error?.stack || '';
-    console.error(`❌ [トピック埋め込み生成] エラー: ${topicId}`, {
-      error: errorMessage,
-      stack: errorStack,
-      title,
-      meetingNoteId,
-      organizationId,
-      timestamp: new Date().toISOString(),
-    });
-    // エラーが発生しても処理を続行（埋め込みはオプショナルな機能のため）
-    // ただし、エラーログは詳細に記録する
+    console.error(`トピック ${topicId} の埋め込み生成エラー:`, error?.message || error);
   }
 }
 
 /**
- * 複数のトピック埋め込みを一括取得（並列処理、パフォーマンス最適化）
- * @param topicIds トピックIDとmeetingNoteIdのペアの配列
- * @param concurrencyLimit 並列実行数の制限（デフォルト: 5）
- * @returns トピック埋め込みの配列（存在しないIDは除外）
+ * 複数のトピック埋め込みを一括取得
  */
 export async function getTopicEmbeddingsByIds(
   topicIds: Array<{ topicId: string; meetingNoteId: string }>,
@@ -291,18 +150,15 @@ export async function getTopicEmbeddingsByIds(
     return [];
   }
 
-  // p-limitを使用して並列数を制限
   const limit = pLimit(concurrencyLimit);
 
   try {
-    // 並列で取得
     const results = await Promise.allSettled(
       topicIds.map(({ topicId, meetingNoteId }) =>
         limit(() => getTopicEmbedding(topicId, meetingNoteId))
       )
     );
 
-    // 成功した結果のみを返す
     const embeddings: TopicEmbedding[] = [];
     for (const result of results) {
       if (result.status === 'fulfilled' && result.value) {
@@ -312,28 +168,21 @@ export async function getTopicEmbeddingsByIds(
 
     return embeddings;
   } catch (error) {
-    console.error('❌ [getTopicEmbeddingsByIds] エラー:', error);
+    console.error('トピック埋め込み一括取得エラー:', error);
     return [];
   }
 }
 
 /**
  * トピック埋め込みを取得
- * 
- * @param topicId トピックのユニークID
- * @param meetingNoteId 親議事録ID
- * @returns トピック埋め込みデータ、またはnull
  */
 export async function getTopicEmbedding(
   topicId: string,
   meetingNoteId: string
 ): Promise<TopicEmbedding | null> {
-  // ChromaDBが有効な場合、SQLiteからメタデータを取得（ChromaDBから直接取得する機能は未実装のため）
-  // ChromaDBが無効な場合もSQLiteから取得
   try {
     const embeddingId = `${meetingNoteId}-topic-${topicId}`;
     
-    // SQLiteから取得
     const result = await callTauriCommand('doc_get', {
       collectionName: 'topics',
       docId: embeddingId,
@@ -346,19 +195,12 @@ export async function getTopicEmbedding(
     return null;
   } catch (error) {
     console.error('トピック埋め込みの取得エラー:', error);
-    // エラーが発生してもnullを返す（埋め込みが存在しない場合と同様に扱う）
     return null;
   }
 }
 
 /**
  * 類似トピックを検索
- * 
- * @param queryText 検索クエリテキスト
- * @param limit 返す結果の最大数（デフォルト: 5）
- * @param meetingNoteId 議事録IDでフィルタ（オプション）
- * @param organizationId 組織IDでフィルタ（オプション）
- * @returns 類似トピックの配列（topicIdとsimilarityを含む）
  */
 export async function findSimilarTopics(
   queryText: string,
@@ -366,40 +208,29 @@ export async function findSimilarTopics(
   meetingNoteId?: string,
   organizationId?: string
 ): Promise<Array<{ topicId: string; meetingNoteId: string; similarity: number; title?: string; contentSummary?: string }>> {
-  // ChromaDBを使用する場合（動的インポート）
-  // organizationIdが未指定の場合は組織横断検索を実行（Rust側で対応済み）
   if (shouldUseChroma()) {
     try {
       const { findSimilarTopicsChroma } = await import('./topicEmbeddingsChroma');
       const results = await findSimilarTopicsChroma(queryText, limit, organizationId);
-      // meetingNoteIdでフィルタリング（ChromaDBのwhere句では複雑な条件が難しいため）
+      // meetingNoteIdでフィルタリング
       let filteredResults = results;
       if (meetingNoteId) {
         filteredResults = results.filter(r => r.meetingNoteId === meetingNoteId);
       }
-      console.log(`[findSimilarTopics] ChromaDB検索完了: ${filteredResults.length}件の結果を取得`);
-        return filteredResults;
+      return filteredResults;
     } catch (chromaError: any) {
-      console.error(`[findSimilarTopics] ChromaDBでの検索に失敗しました:`, chromaError?.message || chromaError);
-      // ChromaDB検索が失敗した場合は空の結果を返す（Firestoreフォールバックは削除）
+      console.error('ChromaDBでの検索に失敗しました:', chromaError?.message || chromaError);
       return [];
     }
-      } else {
-    // ChromaDBが無効な場合：埋め込みベクトルはChromaDBにのみ保存されるため、検索結果は空
-    console.warn(`[findSimilarTopics] ⚠️ ChromaDBが無効です。`);
-    console.warn(`[findSimilarTopics] 💡 埋め込みベクトルはChromaDBにのみ保存されます。ChromaDBを有効にするには、設定ページでChromaDBを有効化するか、コンソールで以下を実行: localStorage.setItem('useChromaDB', 'true')`);
-    return [];
   }
+  
+  return [];
 }
 
 /**
  * ハイブリッド検索: ベクトル検索 + メタデータフィルタリング・ブースト
- * 精度向上のため、メタデータを活用して検索結果を改善
  * 
- * @param queryText 検索クエリテキスト
- * @param limit 返す結果の最大数（デフォルト: 20）
- * @param filters フィルタリング条件（オプション）
- * @returns 類似トピックの配列（topicId, similarity, scoreを含む）
+ * 注意: 既存の関連度計算アルゴリズムは削除されました。新しい実装が必要です。
  */
 export async function findSimilarTopicsHybrid(
   queryText: string,
@@ -411,173 +242,13 @@ export async function findSimilarTopicsHybrid(
     keywords?: string[];
   }
 ): Promise<Array<{ topicId: string; meetingNoteId: string; similarity: number; score: number }>> {
-  try {
-    // 1. ベクトル検索で候補を取得（多めに取得）
-    const vectorResults = await findSimilarTopics(
-      queryText,
-      limit * 2, // 多めに取得してからフィルタリング
-      filters?.meetingNoteId,
-      filters?.organizationId
-    );
-
-    // ベクトル検索結果のデバッグログ
-    if (vectorResults.length > 0) {
-      console.log(`[findSimilarTopicsHybrid] 📊 ベクトル検索結果のサンプル（最初の5件）:`, vectorResults.slice(0, 5).map(r => ({
-        topicId: r.topicId,
-        meetingNoteId: r.meetingNoteId,
-        similarity: typeof r.similarity === 'number' ? r.similarity.toFixed(4) : String(r.similarity),
-        similarityType: typeof r.similarity,
-        isNaN: typeof r.similarity === 'number' ? isNaN(r.similarity) : 'N/A',
-      })));
-    } else {
-      console.warn(`[findSimilarTopicsHybrid] ⚠️ ベクトル検索結果が空です。ChromaDBに埋め込みが存在しない可能性があります。`);
-    }
-
-    if (vectorResults.length === 0) {
-      return [];
-    }
-
-    // 2. クエリに基づいて重みを調整
-    const weights = adjustWeightsForQuery(queryText);
-
-    // 3. 一括取得でトピック埋め込みデータを取得（パフォーマンス最適化）
-    const topicIds = vectorResults.map(r => ({ topicId: r.topicId, meetingNoteId: r.meetingNoteId }));
-    const embeddings = await getTopicEmbeddingsByIds(topicIds, 5);
-    const embeddingMap = new Map(
-      embeddings.map(e => [`${e.meetingNoteId}-topic-${e.topicId}`, e])
-    );
-
-    // 4. クエリの埋め込みを1回だけ生成（メタデータ類似度計算用、優先度3の最適化）
-    let queryMetadataEmbedding: number[] | null = null;
-    const hasMetadataEmbedding = embeddings.some(e => e.metadataEmbedding && e.metadataEmbedding.length > 0);
-    if (hasMetadataEmbedding) {
-      try {
-        const { generateEmbedding } = await import('./embeddings');
-        queryMetadataEmbedding = await generateEmbedding(queryText);
-      } catch (error) {
-        console.warn('クエリのメタデータ埋め込み生成でエラー:', error);
-      }
-    }
-
-    // 5. メタデータでフィルタリング・ブースト（新しいスコアリング関数を使用）
-    const enhancedResults: Array<{ topicId: string; meetingNoteId: string; similarity: number; score: number }> = [];
-    
-    for (const result of vectorResults) {
-      try {
-        // トピック埋め込みデータを取得（一括取得済み）
-        const embeddingKey = `${result.meetingNoteId}-topic-${result.topicId}`;
-        const embeddingData = embeddingMap.get(embeddingKey);
-        if (!embeddingData) {
-          continue;
-        }
-
-        // デバッグログ: similarityが0の場合に警告
-        if (result.similarity === 0) {
-          console.warn(`[findSimilarTopicsHybrid] ⚠️ トピック ${result.topicId} (${result.meetingNoteId}) のベクトル類似度が0です。`);
-        }
-        
-        // 新しいスコアリング関数を使用
-        let score = calculateTopicScore(
-          result.similarity,
-          {
-            importance: (embeddingData as any).importance,
-            updatedAt: embeddingData.updatedAt,
-            keywords: embeddingData.keywords,
-            semanticCategory: embeddingData.semanticCategory,
-          },
-          weights
-        );
-
-        // セマンティックカテゴリが一致する場合は追加ブースト
-        if (filters?.semanticCategory && 
-            embeddingData.semanticCategory === filters.semanticCategory) {
-          score = Math.min(1.0, score + 0.08);
-        }
-
-        // キーワードが一致する場合は追加ブースト
-        if (filters?.keywords && embeddingData.keywords && embeddingData.keywords.length > 0) {
-          const queryKeywords = filters.keywords.map(k => k.toLowerCase());
-          const matchingKeywords = embeddingData.keywords.filter(k => 
-            queryKeywords.some(qk => k.toLowerCase().includes(qk) || qk.includes(k.toLowerCase()))
-          );
-          score = Math.min(1.0, score + matchingKeywords.length * 0.03);
-        }
-
-        // メタデータ埋め込みがある場合は追加の類似度計算（クエリ埋め込みを再利用）
-        if (embeddingData.metadataEmbedding && embeddingData.metadataEmbedding.length > 0 && queryMetadataEmbedding) {
-          try {
-            const metadataSimilarity = cosineSimilarity(
-              queryMetadataEmbedding,
-              embeddingData.metadataEmbedding
-            );
-            // メタデータの類似度を10%の重みで追加
-            const safeMetadataSimilarity = (typeof metadataSimilarity === 'number' && !isNaN(metadataSimilarity)) ? metadataSimilarity : 0;
-            score = score * 0.9 + safeMetadataSimilarity * 0.1;
-          } catch (error) {
-            console.warn(`トピック ${result.topicId} のメタデータ類似度計算でエラー:`, error);
-          }
-        }
-        
-        // NaNチェック: スコアがNaNの場合は0に設定
-        if (typeof score !== 'number' || isNaN(score)) {
-          console.warn(`[findSimilarTopicsHybrid] トピック ${result.topicId} のスコアがNaNです。0に設定します。`);
-          score = 0;
-        }
-        
-        // NaNチェック: 類似度がNaNの場合は0に設定
-        const safeSimilarity = (typeof result.similarity === 'number' && !isNaN(result.similarity)) ? result.similarity : 0;
-
-        enhancedResults.push({
-          topicId: result.topicId,
-          meetingNoteId: result.meetingNoteId,
-          similarity: safeSimilarity,
-          score,
-        });
-      } catch (error) {
-        // トピック取得エラーは無視して続行
-        console.warn(`トピック ${result.topicId} の取得エラー:`, error);
-      }
-    }
-
-    // 6. スコアでソートして上位を返す
-    return enhancedResults
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
-  } catch (error) {
-    const ragError = handleRAGSearchError(error, {
-      queryText,
-      limit,
-      filters,
-    });
-    ragError.log();
-    
-    // エラーが発生した場合は従来の検索にフォールバック
-    try {
-      const fallbackResults = await findSimilarTopics(
-        queryText,
-        limit,
-        filters?.meetingNoteId,
-        filters?.organizationId
-      );
-      return fallbackResults.map(r => ({ ...r, score: r.similarity }));
-    } catch (fallbackError) {
-      // フォールバックも失敗した場合は空配列を返す
-      return safeHandleRAGSearchError(fallbackError, [], {
-        queryText,
-        limit,
-        filters,
-      });
-    }
-  }
+  // TODO: 新しい関連度計算アルゴリズムを実装
+  console.warn('[findSimilarTopicsHybrid] 既存の関連度計算アルゴリズムは削除されました。新しい実装が必要です。');
+  return [];
 }
 
 /**
  * 特定のトピックに類似するトピックを検索
- * 
- * @param topicId 基準となるトピックID
- * @param meetingNoteId 親議事録ID
- * @param limit 返す結果の最大数（デフォルト: 5）
- * @returns 類似トピックの配列
  */
 export async function findSimilarTopicsByTopicId(
   topicId: string,
@@ -585,23 +256,19 @@ export async function findSimilarTopicsByTopicId(
   limit: number = 5
 ): Promise<Array<{ topicId: string; meetingNoteId: string; similarity: number }>> {
   try {
-    // 基準トピックの埋め込みを取得
     const topicEmbedding = await getTopicEmbedding(topicId, meetingNoteId);
     
     if (!topicEmbedding || !topicEmbedding.combinedEmbedding) {
       return [];
     }
 
-    // すべての埋め込みを取得
     const embeddingsSnapshot = await getDocs(collection(null, 'topics'));
 
-    // コサイン類似度を計算
     const similarities: Array<{ topicId: string; meetingNoteId: string; similarity: number }> = [];
     
     for (const docSnap of embeddingsSnapshot.docs) {
       const embeddingData = docSnap.data() as TopicEmbedding;
       
-      // 自分自身は除外
       if (embeddingData.topicId === topicId && embeddingData.meetingNoteId === meetingNoteId) {
         continue;
       }
@@ -625,7 +292,6 @@ export async function findSimilarTopicsByTopicId(
       }
     }
 
-    // 類似度でソートして上位を返す
     return similarities
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, limit);
@@ -637,13 +303,6 @@ export async function findSimilarTopicsByTopicId(
 
 /**
  * 既存のトピック埋め込みを一括更新
- * メタデータがない既存トピックに埋め込みを生成する際に使用
- * 
- * @param topics トピックデータの配列
- * @param meetingNoteId 親議事録ID
- * @param organizationId 組織ID
- * @param forceRegenerate 既存の埋め込みを強制的に再生成するか（デフォルト: false）
- * @param onProgress 進捗コールバック（current, total, topicId, status）
  */
 export async function batchUpdateTopicEmbeddings(
   topics: Array<{ id: string; title: string; content: string; metadata?: Partial<TopicMetadata> }>,
@@ -653,27 +312,20 @@ export async function batchUpdateTopicEmbeddings(
   onProgress?: (current: number, total: number, topicId: string, status: 'processing' | 'skipped' | 'error' | 'success') => void,
   shouldCancel?: () => boolean
 ): Promise<{ success: number; skipped: number; errors: number }> {
-  console.log(`📊 ${topics.length}件のトピック埋め込みを一括${forceRegenerate ? '再生成' : '生成'}します...`);
-
   let successCount = 0;
   let skippedCount = 0;
   let errorCount = 0;
   let processedCount = 0;
 
-  // 並列数を3〜5に制限（メモリ使用量を抑えるため）
   const limit = pLimit(5);
   
-  // 各トピックの処理を並列実行（同時実行数制限付き）
-  const promises = topics.map((topic, index) => 
+  const promises = topics.map((topic) => 
     limit(async () => {
-      // 停止チェック
       if (shouldCancel && shouldCancel()) {
         return { status: 'cancelled' as const };
       }
       
       try {
-        // SQLiteのchromaSyncedフラグをチェック（高速）
-        // SQLiteのtopicsテーブルのIDは`${meetingNoteId}-topic-${topicId}`形式
         const topicEmbeddingId = `${meetingNoteId}-topic-${topic.id}`;
         
         if (!forceRegenerate) {
@@ -686,20 +338,15 @@ export async function batchUpdateTopicEmbeddings(
             if (topicDoc?.exists && topicDoc?.data) {
               const chromaSynced = topicDoc.data.chromaSynced;
               if (chromaSynced === 1 || chromaSynced === true || chromaSynced === '1') {
-                // SQLiteフラグが1の場合、ChromaDBに実際に存在するかを確認
                 try {
                   const { getTopicEmbeddingFromChroma } = await import('./topicEmbeddingsChroma');
                   const existing = await getTopicEmbeddingFromChroma(topic.id, organizationId);
                   if (existing && existing.combinedEmbedding && Array.isArray(existing.combinedEmbedding) && existing.combinedEmbedding.length > 0) {
-                    console.log(`⏭️  トピック ${topic.id} は既に埋め込みが存在するためスキップ（SQLiteフラグ + ChromaDB確認）`);
                     const current = ++processedCount;
                     skippedCount++;
                     onProgress?.(current, topics.length, topic.id, 'skipped');
                     return { status: 'skipped' as const };
                   } else {
-                    // SQLiteフラグは1だが、ChromaDBに存在しない → 不整合を検出
-                    console.warn(`⚠️  トピック ${topic.id} はSQLiteでchromaSynced=1ですが、ChromaDBに存在しません。再生成します。`);
-                    // フラグをリセットして再生成
                     try {
                       await callTauriCommand('update_chroma_sync_status', {
                         entityType: 'topic',
@@ -712,32 +359,27 @@ export async function batchUpdateTopicEmbeddings(
                     }
                   }
                 } catch (chromaCheckError) {
-                  // ChromaDB確認エラーは無視して続行（再生成を試みる）
                   console.warn(`ChromaDB確認エラー（続行）: ${topic.id}`, chromaCheckError);
                 }
               }
             }
           } catch (sqliteError: any) {
-            // SQLiteからの取得に失敗した場合は続行（ChromaDBから確認を試みる）
-            console.debug(`SQLiteからのフラグ取得エラー（続行）: ${topic.id}`, sqliteError?.message || sqliteError);
+            // SQLiteからの取得に失敗した場合は続行
           }
         }
         
-        // SQLiteで確認できない場合、ChromaDBから確認（フォールバック）
         if (!forceRegenerate) {
           try {
             const { getTopicEmbeddingFromChroma } = await import('./topicEmbeddingsChroma');
             const existing = await getTopicEmbeddingFromChroma(topic.id, organizationId);
             if (existing && existing.combinedEmbedding && Array.isArray(existing.combinedEmbedding) && existing.combinedEmbedding.length > 0) {
-              console.log(`⏭️  トピック ${topic.id} は既に埋め込みが存在するためスキップ（ChromaDB確認）`);
               const current = ++processedCount;
               skippedCount++;
               onProgress?.(current, topics.length, topic.id, 'skipped');
               return { status: 'skipped' as const };
             }
           } catch (chromaCheckError) {
-            // ChromaDB確認エラーは無視して続行（再生成を試みる）
-            console.debug(`ChromaDB確認エラー（続行）: ${topic.id}`, chromaCheckError);
+            // ChromaDB確認エラーは無視して続行
           }
         }
 
@@ -760,20 +402,11 @@ export async function batchUpdateTopicEmbeddings(
         errorCount++;
         onProgress?.(current, topics.length, topic.id, 'error');
         return { status: 'error' as const };
-      } finally {
-        // 200件ごとにメモリを解放（ガベージコレクションを促す）
-        if (processedCount % 200 === 0 && typeof global !== 'undefined' && (global as any).gc) {
-          (global as any).gc();
-          console.log(`🧹 [メモリ解放] ${processedCount}件処理完了時点でガベージコレクションを実行`);
-        }
       }
     })
   );
 
-  // すべての処理を待機
   await Promise.allSettled(promises);
 
-  console.log(`✅ トピック埋め込みの一括${forceRegenerate ? '再生成' : '生成'}が完了しました (成功: ${successCount}, スキップ: ${skippedCount}, エラー: ${errorCount})`);
-  
   return { success: successCount, skipped: skippedCount, errors: errorCount };
 }
