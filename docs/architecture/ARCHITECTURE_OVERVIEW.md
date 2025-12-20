@@ -450,8 +450,8 @@ npm run tauri:build
 
 ### アーキテクチャ関連
 - [ポート・サーバー設計](./port-and-server-design.md)
-- [ポート設計の懸念点](./port-design-concerns.md)
-- [ポート設計レビュー](./port-design-review.md)
+- [事業会社データベース設計比較](./COMPANY_DATABASE_DESIGN_COMPARISON.md)
+- [テーマ順序のリスクと懸念点](./THEME_ORDER_RISKS_AND_CONCERNS.md)
 
 ### データベース関連
 - [データベース設計](../database/database-design.md)
@@ -484,6 +484,9 @@ MissionAIは、以下の特徴を持つモダンなデスクトップアプリ�
 6. **開発者フレンドリー**: TypeScript、構造化ログ、エラーハンドリング
 
 このアーキテクチャにより、デスクトップアプリとして動作しながら、Web技術の利点を活かし、AI機能を統合した事業計画策定・管理システムを実現しています。
+
+
+
 
 
 

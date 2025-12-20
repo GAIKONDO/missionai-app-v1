@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Theme, FocusInitiative, OrgNodeData } from '@/lib/orgApi';
-import type { Company, CompanyFocusInitiative } from '@/lib/companiesApi';
+// import type { Company, CompanyFocusInitiative } from '@/lib/companiesApi'; // Companiesテーブル削除のためコメントアウト
+type CompanyFocusInitiative = any; // Companiesテーブル削除のため、一時的な型定義
 
 // ReactMarkdown用の共通コンポーネント設定（カード内の説明文用 - 一律小さな文字）
 const markdownComponents = {

@@ -4,9 +4,9 @@ import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { getMeetingNoteById, saveMeetingNote, getOrgTreeFromDb, generateUniqueId } from '@/lib/orgApi';
-import { saveCompanyMeetingNote } from '@/lib/companiesApi';
+// import { saveCompanyMeetingNote } from '@/lib/companiesApi';
 import type { MeetingNote, OrgNodeData } from '@/lib/orgApi';
-import type { CompanyMeetingNote } from '@/lib/companiesApi';
+// import type { CompanyMeetingNote } from '@/lib/companiesApi';
 import type { Topic, TopicSemanticCategory, TopicImportance } from '@/types/topicMetadata';
 import { saveTopicEmbeddingAsync, findSimilarTopics } from '@/lib/topicEmbeddings';
 import { generateTopicMetadata, extractEntities, extractRelations } from '@/lib/topicMetadataGeneration';
@@ -17,7 +17,7 @@ import { marked } from 'marked';
 import type { Entity, EntityType } from '@/types/entity';
 import type { Relation, RelationType } from '@/types/relation';
 import { getRelationsByTopicId, createRelation, deleteRelation } from '@/lib/relationApi';
-import { getEntityById, createEntity, getEntitiesByOrganizationId, getEntitiesByCompanyId, deleteEntity } from '@/lib/entityApi';
+import { getEntityById, createEntity, getEntitiesByOrganizationId, deleteEntity } from '@/lib/entityApi';
 import { callTauriCommand } from '@/lib/localFirebase';
 import { deleteTopicFromChroma } from '@/lib/chromaSync';
 
@@ -111,7 +111,6 @@ function MeetingNoteDetailPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const organizationId = searchParams?.get('id') as string;
-  const companyId = searchParams?.get('companyId') as string;
   const meetingId = searchParams?.get('meetingId') as string;
   
   const [meetingNote, setMeetingNote] = useState<MeetingNote | null>(null);
@@ -306,7 +305,7 @@ function MeetingNoteDetailPageContent() {
   // データ読み込み
   useEffect(() => {
     const loadData = async () => {
-      if ((!organizationId && !companyId) || !meetingId) {
+      if (!organizationId || !meetingId) {
         setError('組織IDまたは事業会社ID、または議事録IDが指定されていません');
         setLoading(false);
         return;
@@ -450,7 +449,7 @@ function MeetingNoteDetailPageContent() {
             setOrgData(foundOrg);
           }
         } else {
-          // companyIdのみの場合は組織データをnullに設定
+          // 組織データを設定
           setOrgData(null);
         }
         
@@ -464,7 +463,7 @@ function MeetingNoteDetailPageContent() {
     };
 
     loadData();
-  }, [organizationId, companyId, meetingId]);
+  }, [organizationId, meetingId]);
 
   // ページを離れる前の確認
   useEffect(() => {
@@ -500,7 +499,7 @@ function MeetingNoteDetailPageContent() {
 
   // トピック編集モーダルを開いたときにエンティティとリレーションを読み込む
   useEffect(() => {
-    if (!showTopicModal || !editingTopicId || (!organizationId && !companyId)) {
+    if (!showTopicModal || !editingTopicId || !organizationId) {
       return;
     }
 
@@ -510,9 +509,7 @@ function MeetingNoteDetailPageContent() {
         setIsLoadingRelations(true);
 
         // エンティティを読み込み
-        const entities = companyId 
-          ? await getEntitiesByCompanyId(companyId)
-          : await getEntitiesByOrganizationId(organizationId);
+        const entities = await getEntitiesByOrganizationId(organizationId);
         // トピックに関連するエンティティをフィルタリング
         const topicEmbeddingId = `${meetingId}-topic-${editingTopicId}`;
         const topicEntities = entities.filter(e => 
@@ -557,7 +554,7 @@ function MeetingNoteDetailPageContent() {
     };
 
     loadKnowledgeGraph();
-  }, [showTopicModal, editingTopicId, organizationId, companyId, meetingId]);
+  }, [showTopicModal, editingTopicId, organizationId, meetingId]);
 
 
   // 手動保存
@@ -570,19 +567,11 @@ function MeetingNoteDetailPageContent() {
       // 現在のコンテンツをJSON文字列に変換
       const contentJson = JSON.stringify(monthContents, null, 2);
       
-      // データを保存（companyIdが存在する場合は事業会社用の関数を使用）
-      if (companyId) {
-        await saveCompanyMeetingNote({
-          ...meetingNote as Partial<CompanyMeetingNote>,
-          companyId,
-          content: contentJson,
-        });
-      } else {
-        await saveMeetingNote({
-          ...meetingNote,
-          content: contentJson,
-        });
-      }
+      // データを保存（事業会社の管理はorganizationsテーブルのtypeカラムで行うため、通常のsaveMeetingNoteを使用）
+      await saveMeetingNote({
+        ...meetingNote,
+        content: contentJson,
+      });
       
       devLog('✅ [handleManualSave] 保存成功');
       
@@ -594,7 +583,7 @@ function MeetingNoteDetailPageContent() {
       alert(`保存に失敗しました: ${error?.message || '不明なエラー'}`);
       setSavingStatus('idle');
     }
-  }, [meetingNote, monthContents, companyId]);
+  }, [meetingNote, monthContents]);
 
   // JSONダウンロード
   const handleDownloadJson = useCallback(async () => {
@@ -1669,18 +1658,11 @@ ${formatInstruction}
     if (meetingNote && updatedContents) {
       try {
         const contentJson = JSON.stringify(updatedContents, null, 2);
-        if (companyId) {
-          await saveCompanyMeetingNote({
-            ...meetingNote as Partial<CompanyMeetingNote>,
-            companyId,
-            content: contentJson,
-          });
-        } else {
-          await saveMeetingNote({
-            ...meetingNote,
-            content: contentJson,
-          });
-        }
+        // 事業会社の管理はorganizationsテーブルのtypeカラムで行うため、通常のsaveMeetingNoteを使用
+        await saveMeetingNote({
+          ...meetingNote,
+          content: contentJson,
+        });
         devLog('✅ [handleSaveEdit] 保存成功');
         setHasUnsavedChanges(false); // 保存完了後、未保存フラグをリセット
         setSavingStatus('saved'); // 保存完了ステータスを設定
@@ -1770,18 +1752,11 @@ ${formatInstruction}
       try {
         devLog('💾 [confirmDeleteItem] 保存開始...');
         const contentJson = JSON.stringify(updatedContents, null, 2);
-        if (companyId) {
-          await saveCompanyMeetingNote({
-            ...meetingNote as Partial<CompanyMeetingNote>,
-            companyId,
-            content: contentJson,
-          });
-        } else {
-          await saveMeetingNote({
-            ...meetingNote,
-            content: contentJson,
-          });
-        }
+        // 事業会社の管理はorganizationsテーブルのtypeカラムで行うため、通常のsaveMeetingNoteを使用
+        await saveMeetingNote({
+          ...meetingNote,
+          content: contentJson,
+        });
         devLog('✅ [confirmDeleteItem] 自動保存成功');
         setHasUnsavedChanges(false); // 保存完了後、未保存フラグをリセット
       } catch (error: any) {
@@ -1925,18 +1900,11 @@ ${formatInstruction}
         
         // 4. 議事録を保存（最後に実行）
         const contentJson = JSON.stringify(updated, null, 2);
-        if (companyId) {
-          await retryDbOperation(() => saveCompanyMeetingNote({
-            ...meetingNote as Partial<CompanyMeetingNote>,
-            companyId,
-            content: contentJson,
-          }));
-        } else {
-          await retryDbOperation(() => saveMeetingNote({
-            ...meetingNote,
-            content: contentJson,
-          }));
-        }
+        // 事業会社の管理はorganizationsテーブルのtypeカラムで行うため、通常のsaveMeetingNoteを使用
+        await retryDbOperation(() => saveMeetingNote({
+          ...meetingNote,
+          content: contentJson,
+        }));
         
         devLog('✅ [confirmDeleteTopic] 自動保存成功');
         setHasUnsavedChanges(false);
@@ -2012,18 +1980,11 @@ ${formatInstruction}
     if (meetingNote && updatedContents!) {
       try {
         const contentJson = JSON.stringify(updatedContents!, null, 2);
-        if (companyId) {
-          await saveCompanyMeetingNote({
-            ...meetingNote as Partial<CompanyMeetingNote>,
-            companyId,
-            content: contentJson,
-          });
-        } else {
-          await saveMeetingNote({
-            ...meetingNote,
-            content: contentJson,
-          });
-        }
+        // 事業会社の管理はorganizationsテーブルのtypeカラムで行うため、通常のsaveMeetingNoteを使用
+        await saveMeetingNote({
+          ...meetingNote,
+          content: contentJson,
+        });
         devLog('✅ [handleAddItem] 自動保存成功');
         setHasUnsavedChanges(false); // 保存完了後、未保存フラグをリセット
       } catch (error: any) {
@@ -2066,11 +2027,7 @@ ${formatInstruction}
                   return;
                 }
               }
-              if (companyId) {
-                router.push(`/companies/detail?id=${companyId}&tab=meetingNotes`);
-              } else {
-                router.push(`/organization/detail?id=${organizationId}&tab=meetingNotes`);
-              }
+              router.push(`/organization/detail?id=${organizationId}&tab=meetingNotes`);
             }}
             style={{
               marginTop: '16px',
@@ -2083,7 +2040,7 @@ ${formatInstruction}
               fontSize: '14px',
             }}
           >
-            {companyId ? '事業会社ページに戻る' : '組織ページに戻る'}
+            組織ページに戻る
           </button>
         </div>
       </Layout>
@@ -2304,11 +2261,7 @@ ${formatInstruction}
                   return;
                 }
               }
-              if (companyId) {
-                router.push(`/companies/detail?id=${companyId}&tab=meetingNotes`);
-              } else {
-                router.push(`/organization/detail?id=${organizationId}&tab=meetingNotes`);
-              }
+              router.push(`/organization/detail?id=${organizationId}&tab=meetingNotes`);
             }}
             style={{
               display: 'flex',
@@ -5034,9 +4987,7 @@ ${formatInstruction}
                       setPendingEntities([]);
                     } else {
                       // トピックに関連するエンティティを再読み込み
-                      const entities = companyId 
-                        ? await getEntitiesByCompanyId(companyId)
-                        : await getEntitiesByOrganizationId(organizationId);
+                      const entities = await getEntitiesByOrganizationId(organizationId);
                       const topicEmbeddingId = `${meetingId}-topic-${editingTopicId}`;
                       const filteredEntities = entities.filter(e => 
                         e.metadata && typeof e.metadata === 'object' && 'topicId' in e.metadata && e.metadata.topicId === editingTopicId
@@ -6425,7 +6376,7 @@ ${formatInstruction}
                           // Phase 2: エンティティとリレーションを保存
                           // 埋め込みはChromaDB側で一元管理されているため、Topics生成時には実行しない
                           // クライアント側でのみ実行（サーバーサイドレンダリングを回避）
-                          if (typeof window !== 'undefined' && (organizationId || companyId) && meetingId) {
+                          if (typeof window !== 'undefined' && organizationId && meetingId) {
                             const savedTopic = editingTopicId 
                               ? updatedItems[itemIndex].topics?.find(t => t.id === editingTopicId)
                               : updatedItems[itemIndex].topics?.[updatedItems[itemIndex].topics.length - 1];
@@ -6450,9 +6401,7 @@ ${formatInstruction}
                                     } else {
                                       // レコードが存在しない場合は作成
                                       const now = new Date().toISOString();
-                                      // CHECK制約: organizationIdとcompanyIdのどちらか一方のみが設定されている必要がある
-                                      const finalOrganizationId = companyId ? null : (organizationId || null);
-                                      const finalCompanyId = companyId || null;
+                                      const finalOrganizationId = organizationId || null;
                                       await callTauriCommand('doc_set', {
                                         collectionName: 'topics',
                                         docId: topicEmbeddingId,
@@ -6461,7 +6410,6 @@ ${formatInstruction}
                                           topicId: finalTopicId,
                                           meetingNoteId: meetingId,
                                           organizationId: finalOrganizationId,
-                                          companyId: finalCompanyId,
                                           title: savedTopic.title || '',
                                           content: savedTopic.content || '',
                                           createdAt: now,
@@ -6472,9 +6420,7 @@ ${formatInstruction}
                                   } catch (error: any) {
                                     // エラーの場合はレコードを作成
                                     const now = new Date().toISOString();
-                                    // CHECK制約: organizationIdとcompanyIdのどちらか一方のみが設定されている必要がある
-                                    const finalOrganizationId = companyId ? null : (organizationId || null);
-                                    const finalCompanyId = companyId || null;
+                                    const finalOrganizationId = organizationId || null;
                                     await callTauriCommand('doc_set', {
                                       collectionName: 'topics',
                                       docId: topicEmbeddingId,
@@ -6483,7 +6429,6 @@ ${formatInstruction}
                                         topicId: finalTopicId,
                                         meetingNoteId: meetingId,
                                         organizationId: finalOrganizationId,
-                                        companyId: finalCompanyId,
                                         title: savedTopic.title || '',
                                         content: savedTopic.content || '',
                                         createdAt: now,
@@ -6514,9 +6459,7 @@ ${formatInstruction}
                                     
                                     // 2. 既存のエンティティを削除（このトピックに関連するもののみ）
                                     try {
-                                      const allEntities = companyId 
-                                        ? await getEntitiesByCompanyId(companyId)
-                                        : await getEntitiesByOrganizationId(organizationId);
+                                      const allEntities = await getEntitiesByOrganizationId(organizationId);
                                       const topicRelatedEntities = allEntities.filter(e => 
                                         e.metadata && typeof e.metadata === 'object' && 'topicId' in e.metadata && e.metadata.topicId === finalTopicId
                                       );
@@ -6551,7 +6494,6 @@ ${formatInstruction}
                                             topicId: finalTopicId,
                                           },
                                           organizationId: organizationId || undefined,
-                                          companyId: companyId || undefined,
                                         };
                                         // idが存在する場合は追加（createEntity関数内で処理される）
                                         if (entity.id) {
@@ -6607,7 +6549,6 @@ ${formatInstruction}
                                           targetEntityId: mappedTargetEntityId,
                                           topicId: topicEmbeddingRecordId,
                                           organizationId: organizationId || undefined,
-                                          companyId: companyId || undefined,
                                         });
                                         devLog(`✅ リレーションを作成しました: ${relation.relationType} (${mappedSourceEntityId} -> ${mappedTargetEntityId})`);
                                       }
@@ -7813,7 +7754,6 @@ ${formatInstruction}
                         name,
                         type,
                         organizationId: organizationId || undefined,
-                        companyId: companyId || undefined,
                         metadata: {
                           topicId: editingTopicId,
                         },

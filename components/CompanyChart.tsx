@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useState, useEffect } from 'react';
-import type { Company } from '@/lib/companiesApi';
+// import type { Company } from '@/lib/companiesApi'; // Companiesテーブル削除のためコメントアウト
+type Company = any; // Companiesテーブル削除のため、一時的な型定義
 
 export interface CompanyNodeData {
   id: string;

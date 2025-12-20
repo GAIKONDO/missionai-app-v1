@@ -8,10 +8,11 @@
 
 ポート設計、サーバー構成、システム全体のアーキテクチャに関するドキュメント。
 
+- `ARCHITECTURE_OVERVIEW.md` - アーキテクチャ概要（入門者向け）
 - `port-and-server-design.md` - ポート設計とサーバー構成の設計書（**最重要**）
-- `port-design-review.md` - ポート設計書のレビューコメント
-- `port-design-concerns.md` - ポート設計の懸念点と解決策
-- `port-and-server-design.pdf` - ポート設計書のPDF版
+- `COMPANY_DATABASE_DESIGN_COMPARISON.md` - 事業会社データベース設計の比較
+- `THEME_ORDER_RISKS_AND_CONCERNS.md` - テーマ順序実装のリスクと懸念点
+- `PLANTUML_OFFLINE_IMPLEMENTATION.md` - PlantUMLのオフライン実装計画
 
 ### 💾 database/ - データベース設計
 

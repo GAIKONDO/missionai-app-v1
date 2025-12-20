@@ -1,15 +1,28 @@
 /**
  * 事業会社データを階層構造に変換
+ * 
+ * ⚠️ Companiesテーブル削除のため、この関数は無効化されています
  */
 
-import type { Company } from './companiesApi';
+// import type { Company } from './companiesApi'; // Companiesテーブル削除のためコメントアウト
 import type { CompanyNodeData } from '@/components/CompanyChart';
 
 /**
  * 事業会社データを階層構造に変換
  * 階層: 主管カンパニー -> 主管部門 -> 主管部 -> 事業会社
+ * 
+ * ⚠️ Companiesテーブル削除のため、この関数は空の階層を返します
  */
-export function buildCompanyHierarchy(companies: Company[]): CompanyNodeData {
+export function buildCompanyHierarchy(companies: any[]): CompanyNodeData {
+  // Companiesテーブル削除のため、空の階層を返す
+  return {
+    id: 'root',
+    name: '統合会社',
+    title: '事業会社一覧',
+    children: [],
+  };
+  
+  /* 以下は無効化されたコード
   // 階層構造を構築
   const hierarchy: {
     [companyKey: string]: {
@@ -87,4 +100,5 @@ export function buildCompanyHierarchy(companies: Company[]): CompanyNodeData {
   });
 
   return root;
+  */
 }

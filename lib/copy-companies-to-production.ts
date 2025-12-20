@@ -1,15 +1,23 @@
 /**
  * 開発環境の事業会社データを本番環境のデータベースにコピーするスクリプト
+ * 
+ * ⚠️ Companiesテーブル削除のため、このスクリプトは無効化されています
  */
 
 import { callTauriCommand } from './localFirebase';
-import { getAllCompanies, createCompany } from './companiesApi';
-import type { Company } from './companiesApi';
+// import { getAllCompanies, createCompany } from './companiesApi'; // Companiesテーブル削除のためコメントアウト
+// import type { Company } from './companiesApi'; // Companiesテーブル削除のためコメントアウト
 
 /**
  * 開発環境のデータベースから事業会社データを取得して本番環境にコピー
+ * 
+ * ⚠️ Companiesテーブル削除のため、この関数は無効化されています
  */
 export async function copyCompaniesToProduction() {
+  console.warn('⚠️ Companiesテーブルが削除されたため、このスクリプトは使用できません');
+  return;
+  
+  /* 以下は無効化されたコード
   try {
     console.log('事業会社データを本番環境にコピーします...\n');
 

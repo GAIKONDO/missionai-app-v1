@@ -13,17 +13,6 @@ use crate::database::{
     get_organizations_by_parent_id, get_organization_tree as db_get_organization_tree, 
     search_organizations_by_name,
     get_members_by_organization_id, add_member, update_member, delete_member,
-    get_company_by_id, create_company as db_create_company, 
-    update_company as db_update_company, delete_company as db_delete_company,
-    get_company_by_code as db_get_company_by_code, 
-    get_companies_by_organization_id, get_all_companies,
-    create_organization_company_display as db_create_organization_company_display,
-    get_companies_by_organization_display as db_get_companies_by_organization_display,
-    get_organizations_by_company_display as db_get_organizations_by_company_display,
-    get_all_organization_company_displays as db_get_all_organization_company_displays,
-    update_organization_company_display_order as db_update_organization_company_display_order,
-    delete_organization_company_display as db_delete_organization_company_display,
-    delete_organization_company_display_by_ids as db_delete_organization_company_display_by_ids,
     get_all_themes, get_theme_by_id, save_theme as db_save_theme, create_theme as db_create_theme, delete_theme as db_delete_theme,
     Theme as DbTheme,
     get_doc, set_doc, update_doc, delete_doc, get_collection,
@@ -280,10 +269,16 @@ pub async fn delete_organization_member(
     }
 }
 
-// 事業会社関連ハンドラー
+// 事業会社関連ハンドラー（Companiesテーブル削除のため無効化）
 pub async fn get_companies(
-    Query(params): Query<HashMap<String, String>>,
+    Query(_params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    // Companiesテーブル削除のため、エラーを返す
+    Err((
+        StatusCode::GONE,
+        Json(json!({ "error": "Companiesテーブルは削除されました。このAPIは使用できません。" }))
+    ))
+    /* 以下は無効化されたコード
     match get_all_companies() {
         Ok(companies) => {
             let companies_json: Vec<Value> = companies.into_iter()
@@ -296,52 +291,48 @@ pub async fn get_companies(
             Json(json!({ "error": format!("事業会社の取得に失敗しました: {}", e) }))
         ))
     }
+    */
 }
 
 pub async fn get_company(
-    Path(id): Path<String>,
+    Path(_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    match get_company_by_id(&id) {
-        Ok(company) => Ok(Json(serde_json::to_value(company).unwrap())),
-        Err(e) => Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": format!("事業会社の取得に失敗しました: {}", e) }))
-        ))
-    }
+    // Companiesテーブル削除のため、エラーを返す
+    Err((
+        StatusCode::GONE,
+        Json(json!({ "error": "Companiesテーブルは削除されました。このAPIは使用できません。" }))
+    ))
 }
 
 pub async fn get_company_by_code(
-    Path(code): Path<String>,
+    Path(_code): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    match db_get_company_by_code(&code) {
-        Ok(company) => Ok(Json(serde_json::to_value(company).unwrap())),
-        Err(e) => Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": format!("事業会社の取得に失敗しました: {}", e) }))
-        ))
-    }
+    // Companiesテーブル削除のため、エラーを返す
+    Err((
+        StatusCode::GONE,
+        Json(json!({ "error": "Companiesテーブルは削除されました。このAPIは使用できません。" }))
+    ))
 }
 
 pub async fn get_companies_by_organization(
-    Path(org_id): Path<String>,
+    Path(_org_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    match get_companies_by_organization_id(&org_id) {
-        Ok(companies) => {
-            let companies_json: Vec<Value> = companies.into_iter()
-                .map(|c| serde_json::to_value(c).unwrap())
-                .collect();
-            Ok(Json(json!(companies_json)))
-        }
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("事業会社の取得に失敗しました: {}", e) }))
-        ))
-    }
+    // Companiesテーブル削除のため、エラーを返す
+    Err((
+        StatusCode::GONE,
+        Json(json!({ "error": "Companiesテーブルは削除されました。このAPIは使用できません。" }))
+    ))
 }
 
 pub async fn create_company(
-    AxumJson(payload): AxumJson<HashMap<String, Value>>,
+    AxumJson(_payload): AxumJson<HashMap<String, Value>>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    // Companiesテーブル削除のため、エラーを返す
+    Err((
+        StatusCode::GONE,
+        Json(json!({ "error": "Companiesテーブルは削除されました。このAPIは使用できません。" }))
+    ))
+    /* 以下は無効化されたコード
     let code = payload.get("code")
         .and_then(|v| v.as_str().map(|s| s.to_string()))
         .ok_or_else(|| (
@@ -384,12 +375,19 @@ pub async fn create_company(
             Json(json!({ "error": format!("事業会社の作成に失敗しました: {}", e) }))
         ))
     }
+    */
 }
 
 pub async fn update_company(
-    Path(id): Path<String>,
-    AxumJson(payload): AxumJson<HashMap<String, Value>>,
+    Path(_id): Path<String>,
+    AxumJson(_payload): AxumJson<HashMap<String, Value>>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    // Companiesテーブル削除のため、エラーを返す
+    Err((
+        StatusCode::GONE,
+        Json(json!({ "error": "Companiesテーブルは削除されました。このAPIは使用できません。" }))
+    ))
+    /* 以下は無効化されたコード
     let code = payload.get("code").and_then(|v| v.as_str().map(|s| s.to_string()));
     let name = payload.get("name").and_then(|v| v.as_str().map(|s| s.to_string()));
     let name_short = payload.get("name_short").and_then(|v| v.as_str().map(|s| s.to_string()));
@@ -408,18 +406,17 @@ pub async fn update_company(
             Json(json!({ "error": format!("事業会社の更新に失敗しました: {}", e) }))
         ))
     }
+    */
 }
 
 pub async fn delete_company(
-    Path(id): Path<String>,
+    Path(_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    match db_delete_company(&id) {
-        Ok(_) => Ok(Json(json!({ "message": "事業会社を削除しました" }))),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("事業会社の削除に失敗しました: {}", e) }))
-        ))
-    }
+    // Companiesテーブル削除のため、エラーを返す
+    Err((
+        StatusCode::GONE,
+        Json(json!({ "error": "Companiesテーブルは削除されました。このAPIは使用できません。" }))
+    ))
 }
 
 // リレーション関連ハンドラー
@@ -753,123 +750,72 @@ pub async fn delete_entity(
 // 組織と事業会社の表示関係ハンドラー
 
 pub async fn create_organization_company_display(
-    AxumJson(payload): AxumJson<HashMap<String, Value>>,
+    AxumJson(_payload): AxumJson<HashMap<String, Value>>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let organization_id = payload.get("organizationId")
-        .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .ok_or_else(|| (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "organizationId is required" }))
-        ))?;
-    let company_id = payload.get("companyId")
-        .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .ok_or_else(|| (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "companyId is required" }))
-        ))?;
-    let display_order = payload.get("displayOrder")
-        .and_then(|v| v.as_i64().map(|i| i as i32));
-
-    match db_create_organization_company_display(&organization_id, &company_id, display_order) {
-        Ok(display) => Ok(Json(serde_json::to_value(display).unwrap())),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("表示関係の作成に失敗しました: {}", e) }))
-        ))
-    }
+    // organizationCompanyDisplayテーブル削除のため、エラーを返す
+    Err((
+        StatusCode::GONE,
+        Json(json!({ "error": "organizationCompanyDisplayテーブルは削除されました。このAPIは使用できません。" }))
+    ))
 }
 
 pub async fn get_all_organization_company_displays() -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    match db_get_all_organization_company_displays() {
-        Ok(displays) => {
-            let displays_json: Vec<Value> = displays.into_iter()
-                .map(|d| serde_json::to_value(d).unwrap())
-                .collect();
-            Ok(Json(json!(displays_json)))
-        }
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("表示関係の取得に失敗しました: {}", e) }))
-        ))
-    }
+    // organizationCompanyDisplayテーブル削除のため、エラーを返す
+    Err((
+        StatusCode::GONE,
+        Json(json!({ "error": "organizationCompanyDisplayテーブルは削除されました。このAPIは使用できません。" }))
+    ))
 }
 
 pub async fn get_companies_by_organization_display(
-    Path(org_id): Path<String>,
+    Path(_org_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    match db_get_companies_by_organization_display(&org_id) {
-        Ok(displays) => {
-            let displays_json: Vec<Value> = displays.into_iter()
-                .map(|d| serde_json::to_value(d).unwrap())
-                .collect();
-            Ok(Json(json!(displays_json)))
-        }
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("事業会社の取得に失敗しました: {}", e) }))
-        ))
-    }
+    // organizationCompanyDisplayテーブル削除のため、エラーを返す
+    Err((
+        StatusCode::GONE,
+        Json(json!({ "error": "organizationCompanyDisplayテーブルは削除されました。このAPIは使用できません。" }))
+    ))
 }
 
 pub async fn get_organizations_by_company_display(
-    Path(company_id): Path<String>,
+    Path(_company_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    match db_get_organizations_by_company_display(&company_id) {
-        Ok(displays) => {
-            let displays_json: Vec<Value> = displays.into_iter()
-                .map(|d| serde_json::to_value(d).unwrap())
-                .collect();
-            Ok(Json(json!(displays_json)))
-        }
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("組織の取得に失敗しました: {}", e) }))
-        ))
-    }
+    // organizationCompanyDisplayテーブル削除のため、エラーを返す
+    Err((
+        StatusCode::GONE,
+        Json(json!({ "error": "organizationCompanyDisplayテーブルは削除されました。このAPIは使用できません。" }))
+    ))
 }
 
 pub async fn update_organization_company_display_order(
-    Path(id): Path<String>,
-    AxumJson(payload): AxumJson<HashMap<String, Value>>,
+    Path(_id): Path<String>,
+    AxumJson(_payload): AxumJson<HashMap<String, Value>>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let display_order = payload.get("displayOrder")
-        .and_then(|v| v.as_i64().map(|i| i as i32))
-        .ok_or_else(|| (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "displayOrder is required" }))
-        ))?;
-
-    match db_update_organization_company_display_order(&id, display_order) {
-        Ok(_) => Ok(Json(json!({ "message": "表示順序を更新しました" }))),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("表示順序の更新に失敗しました: {}", e) }))
-        ))
-    }
+    // organizationCompanyDisplayテーブル削除のため、エラーを返す
+    Err((
+        StatusCode::GONE,
+        Json(json!({ "error": "organizationCompanyDisplayテーブルは削除されました。このAPIは使用できません。" }))
+    ))
 }
 
 pub async fn delete_organization_company_display(
-    Path(id): Path<String>,
+    Path(_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    match db_delete_organization_company_display(&id) {
-        Ok(_) => Ok(Json(json!({ "message": "表示関係を削除しました" }))),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("表示関係の削除に失敗しました: {}", e) }))
-        ))
-    }
+    // organizationCompanyDisplayテーブル削除のため、エラーを返す
+    Err((
+        StatusCode::GONE,
+        Json(json!({ "error": "organizationCompanyDisplayテーブルは削除されました。このAPIは使用できません。" }))
+    ))
 }
 
 pub async fn delete_organization_company_display_by_ids(
-    Path((org_id, company_id)): Path<(String, String)>,
+    Path((_org_id, _company_id)): Path<(String, String)>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    match db_delete_organization_company_display_by_ids(&org_id, &company_id) {
-        Ok(_) => Ok(Json(json!({ "message": "表示関係を削除しました" }))),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("表示関係の削除に失敗しました: {}", e) }))
-        ))
-    }
+    // organizationCompanyDisplayテーブル削除のため、エラーを返す
+    Err((
+        StatusCode::GONE,
+        Json(json!({ "error": "organizationCompanyDisplayテーブルは削除されました。このAPIは使用できません。" }))
+    ))
 }
 
 // テーマ関連ハンドラー

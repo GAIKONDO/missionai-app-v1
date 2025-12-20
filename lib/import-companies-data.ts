@@ -1,8 +1,10 @@
 /**
  * 事業会社のサンプルデータをインポートするスクリプト
+ * 
+ * ⚠️ Companiesテーブル削除のため、このスクリプトは無効化されています
  */
 
-import { createCompany } from './companiesApi';
+// import { createCompany } from './companiesApi'; // Companiesテーブル削除のためコメントアウト
 import { callTauriCommand } from './localFirebase';
 
 // 提供されたデータをパース
@@ -202,6 +204,10 @@ function findDepartmentIdByName(
  * 事業会社データをインポート
  */
 export async function importCompaniesData() {
+  console.warn('⚠️ Companiesテーブルが削除されたため、このインポートスクリプトは使用できません');
+  return { created: 0, skipped: 0, errors: 0 };
+  
+  /* 以下は無効化されたコード
   try {
     console.log('=== 事業会社データのインポートを開始します ===\n');
 
@@ -287,6 +293,7 @@ export async function importCompaniesData() {
     console.error('❌ 事業会社データのインポートに失敗しました:', error);
     throw error;
   }
+  */
 }
 
 // ブラウザ環境で実行する場合

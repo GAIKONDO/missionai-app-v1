@@ -13,7 +13,7 @@ interface FinderViewProps {
   setEditingOrgId: (id: string | null) => void;
   setEditingOrgName: (name: string) => void;
   onEditSave: (orgId: string, newName: string) => Promise<void>;
-  onCreateOrg: (parentId: string | null) => Promise<void>;
+  onCreateOrg: (parentId: string | null, type?: string) => Promise<void>;
   onDeleteOrg: (orgId: string, orgName: string) => Promise<void>;
   onReorderOrg: (orgId: string, newPosition: number, parentId: string | null) => Promise<void>;
   onMoveOrg: (orgId: string, newParentId: string | null) => Promise<void>;

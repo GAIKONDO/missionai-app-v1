@@ -392,7 +392,7 @@ function convertToOrgNodeData(dbOrg: any): OrgNodeData {
     level: org.level !== undefined ? org.level : (org.levelName ? parseInt(org.levelName.replace('階層レベル ', '')) || 0 : 0),
     levelName: org.levelName || undefined,
     position: org.position !== undefined ? org.position : 0,
-    type: org.org_type || org.type || 'organization', // type情報を追加
+    type: org.org_type || org.type || dbOrg.org_type || dbOrg.type || 'organization', // type情報を追加（Rust側ではorg_typeとして返される）
     members: sortedMembers.length > 0 ? sortedMembers : undefined,
     children: children.length > 0 ? children : undefined,
   };
@@ -548,48 +548,26 @@ export async function deleteOrg(id: string): Promise<void> {
     await callTauriCommand('delete_org', { id });
     console.log('✅ [deleteOrg] Tauriコマンド経由の削除が成功しました');
     
-    // 削除後に、該当する組織が実際に削除されたか確認
+    // 削除処理は同期的に実行されるため、ポーリングは不要
+    // 念のため、削除が完了したことを確認（1回だけ）
     try {
-      // 削除処理が完了するまでポーリングで確認（最大5秒間、500ms間隔）
-      const maxAttempts = 10;
-      const pollInterval = 500;
-      let attempts = 0;
-      let orgStillExists = true;
+      await new Promise(resolve => setTimeout(resolve, 100)); // 100ms待機してから確認
       
-      while (orgStillExists && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-        attempts++;
-        
-        try {
-          const allOrgs = await callTauriCommand('collection_get', {
-            collectionName: 'organizations',
-          }) as any[];
-          
-          orgStillExists = allOrgs?.some((org: any) => {
-            const orgId = org.id || org.data?.id;
-            return orgId === id;
-          }) || false;
-          
-          console.log(`🔍 [deleteOrg] 削除確認 (試行 ${attempts}/${maxAttempts}):`, {
-            id,
-            orgStillExists,
-            totalOrgs: allOrgs?.length || 0,
-          });
-          
-          if (!orgStillExists) {
-            console.log('✅ [deleteOrg] 削除が確認されました。組織はデータベースから削除されています。');
-            break;
-          }
-        } catch (pollError: any) {
-          console.warn(`⚠️ [deleteOrg] ポーリング確認でエラー (試行 ${attempts}):`, pollError);
-          // ポーリングエラーが発生しても続行
-        }
-      }
+      const allOrgs = await callTauriCommand('collection_get', {
+        collectionName: 'organizations',
+      }) as any[];
+      
+      const orgStillExists = allOrgs?.some((org: any) => {
+        const orgId = org.id || org.data?.id;
+        return orgId === id;
+      }) || false;
       
       if (orgStillExists) {
-        console.warn('⚠️ [deleteOrg] 削除確認のタイムアウト: 組織がまだ存在している可能性がありますが、削除処理は進行中です。');
+        console.warn('⚠️ [deleteOrg] 削除後も組織が存在しています。データベースの更新が反映されていない可能性があります。');
+        // エラーを投げない（削除処理自体は成功している可能性があるため）
+      } else {
+        console.log('✅ [deleteOrg] 削除が確認されました。組織はデータベースから削除されています。');
       }
-      
     } catch (verifyError: any) {
       // 削除後の確認で予期しないエラーが発生した場合でも、削除処理自体は成功している可能性がある
       console.warn('⚠️ [deleteOrg] 削除後の確認でエラーが発生しました（削除処理自体は成功している可能性があります）:', verifyError);

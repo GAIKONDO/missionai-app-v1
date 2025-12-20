@@ -8,6 +8,7 @@ use crate::database::{
     import_members_from_csv,
     update_theme_positions,
     get_all_themes,
+    delete_organization,
 };
 use crate::db::{WriteJob, WriteQueueState};
 use serde_json::json;
@@ -224,20 +225,23 @@ pub fn get_org_tree(root_id: Option<String>) -> Result<Vec<serde_json::Value>, S
 }
 
 #[tauri::command]
-pub async fn delete_org(
-    state: State<'_, WriteQueueState>,
+pub fn delete_org(
     id: String,
 ) -> Result<(), String> {
     println!("🗑️ [delete_org] Tauriコマンド呼び出し: id={}", id);
     
-    // 書き込みキューに送信
-    state.tx.send(WriteJob::DeleteOrganization {
-        organization_id: id.clone(),
-    }).await
-    .map_err(|e| format!("書き込みキューへの送信に失敗しました: {}", e))?;
-    
-    println!("✅ [delete_org] 削除ジョブをキューに追加: id={}", id);
+    // 削除処理を同期的に実行（書き込みキューを使わない）
+    // 削除処理は重要な操作なので、完了を確認する必要がある
+    match delete_organization(&id) {
+        Ok(_) => {
+            println!("✅ [delete_org] 削除成功: id={}", id);
             Ok(())
+        }
+        Err(e) => {
+            println!("❌ [delete_org] 削除失敗: id={}, error={}", id, e);
+            Err(format!("組織の削除に失敗しました: {}", e))
+        }
+    }
 }
 
 #[tauri::command]

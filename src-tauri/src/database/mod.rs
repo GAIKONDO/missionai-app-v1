@@ -5,8 +5,6 @@ mod backup;
 mod export;
 mod container;
 mod organization;
-mod companies;
-mod organization_company_display;
 mod vector_search;
 mod design_doc;
 mod themes;
@@ -61,21 +59,6 @@ pub use organization::{
     DuplicateOrgInfo, OrgDetailInfo,
     Organization, OrganizationMember, OrganizationWithMembers,
     import_members_from_csv,
-};
-pub use companies::{
-    create_company, update_company, get_company_by_id, get_company_by_code,
-    get_companies_by_organization_id, get_all_companies, delete_company,
-    export_companies_to_csv,
-    Company,
-};
-pub use organization_company_display::{
-    create_organization_company_display, get_companies_by_organization_display,
-    get_organizations_by_company_display, get_all_organization_company_displays,
-    update_organization_company_display_order, delete_organization_company_display,
-    delete_organization_company_display_by_ids,
-    delete_all_organization_company_displays_by_organization,
-    delete_all_organization_company_displays_by_company,
-    OrganizationCompanyDisplay,
 };
 pub use design_doc::{
     create_design_doc_section, update_design_doc_section, get_design_doc_section_by_id,
@@ -181,11 +164,29 @@ impl Database {
                 approved INTEGER DEFAULT 0,
                 approvedBy TEXT,
                 approvedAt TEXT,
+                role TEXT DEFAULT 'user',
                 createdAt TEXT NOT NULL,
                 updatedAt TEXT NOT NULL
             )",
             [],
         )?;
+
+        // usersテーブルにroleカラムを追加（既存テーブル用マイグレーション）
+        let _ = (|| -> rusqlite::Result<()> {
+            let role_exists = conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='role'",
+                [],
+                |row| Ok(row.get::<_, i32>(0)? > 0),
+            ).unwrap_or(false);
+
+            if !role_exists {
+                init_log!("📝 usersテーブルにroleカラムを追加します");
+                conn.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'", [])?;
+                init_log!("✅ roleカラムを追加しました");
+            }
+
+            Ok(())
+        })();
 
         // ページコンテナテーブル（新規追加）
         conn.execute(
@@ -201,16 +202,6 @@ impl Database {
                 createdAt TEXT NOT NULL,
                 updatedAt TEXT NOT NULL,
                 FOREIGN KEY (userId) REFERENCES users(id)
-            )",
-            [],
-        )?;
-
-        // 管理者テーブル
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS admins (
-                id TEXT PRIMARY KEY,
-                email TEXT UNIQUE NOT NULL,
-                createdAt TEXT NOT NULL
             )",
             [],
         )?;
@@ -387,7 +378,6 @@ impl Database {
                 createdAt TEXT,
                 updatedAt TEXT,
                 FOREIGN KEY (organizationId) REFERENCES organizations(id),
-                FOREIGN KEY (companyId) REFERENCES companies(id),
                 CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
                        (organizationId IS NULL AND companyId IS NOT NULL))
             )",
@@ -437,7 +427,6 @@ impl Database {
                 createdAt TEXT,
                 updatedAt TEXT,
                 FOREIGN KEY (organizationId) REFERENCES organizations(id),
-                FOREIGN KEY (companyId) REFERENCES companies(id),
                 CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
                        (organizationId IS NULL AND companyId IS NOT NULL))
             )",
@@ -511,7 +500,6 @@ impl Database {
                                         createdAt TEXT,
                                         updatedAt TEXT,
                                         FOREIGN KEY (organizationId) REFERENCES organizations(id),
-                                        FOREIGN KEY (companyId) REFERENCES companies(id),
                                         CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
                                                (organizationId IS NULL AND companyId IS NOT NULL))
                                     )",
@@ -675,7 +663,6 @@ impl Database {
                             createdAt TEXT,
                             updatedAt TEXT,
                             FOREIGN KEY (organizationId) REFERENCES organizations(id),
-                            FOREIGN KEY (companyId) REFERENCES companies(id),
                             CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
                                    (organizationId IS NULL AND companyId IS NOT NULL))
                         )",
@@ -750,8 +737,7 @@ impl Database {
                 capitalStructure TEXT,
                 capitalStructureDiagram TEXT,
                 createdAt TEXT,
-                updatedAt TEXT,
-                FOREIGN KEY (companyId) REFERENCES companies(id)
+                updatedAt TEXT
             )",
             [],
         )?;
@@ -868,7 +854,6 @@ impl Database {
                 createdAt TEXT NOT NULL,
                 updatedAt TEXT NOT NULL,
                 FOREIGN KEY (organizationId) REFERENCES organizations(id),
-                FOREIGN KEY (companyId) REFERENCES companies(id),
                 CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
                        (organizationId IS NULL AND companyId IS NOT NULL))
             )",
@@ -899,7 +884,6 @@ impl Database {
                 FOREIGN KEY (sourceEntityId) REFERENCES entities(id),
                 FOREIGN KEY (targetEntityId) REFERENCES entities(id),
                 FOREIGN KEY (organizationId) REFERENCES organizations(id),
-                FOREIGN KEY (companyId) REFERENCES companies(id),
                 CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
                        (organizationId IS NULL AND companyId IS NOT NULL))
             )",
@@ -962,7 +946,6 @@ impl Database {
                             createdAt TEXT NOT NULL,
                             updatedAt TEXT NOT NULL,
                             FOREIGN KEY (organizationId) REFERENCES organizations(id),
-                            FOREIGN KEY (companyId) REFERENCES companies(id),
                             CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
                                    (organizationId IS NULL AND companyId IS NOT NULL))
                         )",
@@ -1072,7 +1055,6 @@ impl Database {
                             FOREIGN KEY (sourceEntityId) REFERENCES entities(id),
                             FOREIGN KEY (targetEntityId) REFERENCES entities(id),
                             FOREIGN KEY (organizationId) REFERENCES organizations(id),
-                            FOREIGN KEY (companyId) REFERENCES companies(id),
                             CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
                                    (organizationId IS NULL AND companyId IS NOT NULL))
                         )",
@@ -1146,7 +1128,6 @@ impl Database {
                 updatedAt TEXT NOT NULL,
                 FOREIGN KEY (meetingNoteId) REFERENCES meetingNotes(id),
                 FOREIGN KEY (organizationId) REFERENCES organizations(id),
-                FOREIGN KEY (companyId) REFERENCES companies(id),
                 CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
                        (organizationId IS NULL AND companyId IS NOT NULL))
             )",
@@ -1214,7 +1195,6 @@ impl Database {
                             updatedAt TEXT NOT NULL,
                             FOREIGN KEY (meetingNoteId) REFERENCES meetingNotes(id),
                             FOREIGN KEY (organizationId) REFERENCES organizations(id),
-                            FOREIGN KEY (companyId) REFERENCES companies(id),
                             CHECK ((organizationId IS NOT NULL AND companyId IS NULL) OR 
                                    (organizationId IS NULL AND companyId IS NOT NULL))
                         )",
@@ -1259,44 +1239,8 @@ impl Database {
             init_log_always!("❌ topicsテーブルのマイグレーション中にエラーが発生しました: {}", e);
         }
 
-        // 事業会社テーブル（新規追加）
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS companies (
-                id TEXT PRIMARY KEY,
-                code TEXT NOT NULL UNIQUE,
-                name TEXT NOT NULL,
-                nameShort TEXT,
-                category TEXT NOT NULL,
-                organizationId TEXT NOT NULL,
-                company TEXT,
-                division TEXT,
-                department TEXT,
-                region TEXT NOT NULL,
-                position INTEGER DEFAULT 0,
-                createdAt TEXT NOT NULL,
-                updatedAt TEXT NOT NULL,
-                FOREIGN KEY (organizationId) REFERENCES organizations(id)
-            )",
-            [],
-        )?;
-
-        // 組織と事業会社の表示関係テーブル（多対多の関係を管理）
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS organizationCompanyDisplay (
-                id TEXT PRIMARY KEY,
-                organizationId TEXT NOT NULL,
-                companyId TEXT NOT NULL,
-                displayOrder INTEGER DEFAULT 0,
-                createdAt TEXT NOT NULL,
-                updatedAt TEXT NOT NULL,
-                FOREIGN KEY (organizationId) REFERENCES organizations(id) ON DELETE CASCADE,
-                FOREIGN KEY (companyId) REFERENCES companies(id) ON DELETE CASCADE,
-                UNIQUE(organizationId, companyId)
-            )",
-            [],
-        )?;
-
         // 注意: entityEmbeddings、relationEmbeddingsテーブルは廃止されました（ChromaDBに統一）
+        // 注意: companiesテーブルとorganizationCompanyDisplayテーブルは削除されました（organizationsテーブルに統合済み）
 
         // インデックスを作成
         conn.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)", [])?;
@@ -1341,12 +1285,7 @@ impl Database {
         conn.execute("CREATE INDEX IF NOT EXISTS idx_meetingNotes_chromaSynced ON meetingNotes(chromaSynced)", [])?;
         // 複合インデックス: organizationId + chromaSynced（RAG検索のパフォーマンス向上）
         conn.execute("CREATE INDEX IF NOT EXISTS idx_meetingNotes_org_chroma ON meetingNotes(organizationId, chromaSynced)", [])?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_code ON companies(code)", [])?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_organizationId ON companies(organizationId)", [])?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_category ON companies(category)", [])?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_region ON companies(region)", [])?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_organizationCompanyDisplay_organizationId ON organizationCompanyDisplay(organizationId)", [])?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_organizationCompanyDisplay_companyId ON organizationCompanyDisplay(companyId)", [])?;
+        // 注意: companiesテーブルとorganizationCompanyDisplayテーブルは削除されました（organizationsテーブルに統合済み）
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pageContainers_userId ON pageContainers(userId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_organizations_parentId ON organizations(parentId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_organizations_level ON organizations(level)", [])?;

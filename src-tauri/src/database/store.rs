@@ -8,7 +8,6 @@ use uuid::Uuid;
 const ALLOWED_TABLES: &[&str] = &[
     "users",
     "pageContainers",
-    "admins",
     "approvalRequests",
     "aiSettings",
     "backupHistory",
@@ -21,9 +20,10 @@ const ALLOWED_TABLES: &[&str] = &[
     "topics", // topicEmbeddingsから統合
     "entities",
     "relations", // topicRelationsからリネーム
-    "companies",
     "companyContents", // 事業会社コンテンツテーブル
     "themeHierarchyConfigs", // A2C100用のテーマ階層設定テーブル
+    "designDocSections", // システム設計ドキュメントセクション
+    "designDocSectionRelations", // システム設計ドキュメントセクション関係
 ];
 
 // テーブル名の検証関数

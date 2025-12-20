@@ -48,7 +48,7 @@ export default function RAGSearchPage() {
   const [searchResults, setSearchResults] = useState<KnowledgeGraphSearchResult[]>([]);
   const [selectedResult, setSelectedResult] = useState<KnowledgeGraphSearchResult | null>(null);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string>('');
-  const [organizations, setOrganizations] = useState<Array<{ id: string; name: string; title?: string }>>([]);
+  const [organizations, setOrganizations] = useState<Array<{ id: string; name: string; title?: string; type?: string }>>([]);
   const [entityTypeFilter, setEntityTypeFilter] = useState<string>('all');
   const [relationTypeFilter, setRelationTypeFilter] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
@@ -197,91 +197,10 @@ export default function RAGSearchPage() {
         
         return { useChroma, allEntities, stats };
       };
-      // 埋め込みなしのcompanyIdを持つエンティティを確認・削除
-      (window as any).checkAndDeleteUnsyncedCompanyEntities = async () => {
-        try {
-          const { callTauriCommand } = await import('@/lib/localFirebase');
-          
-          // すべてのエンティティを取得
-          const allEntityDocs = await callTauriCommand('query_get', {
-            collectionName: 'entities',
-            conditions: {},
-          }) as Array<{ id: string; data: any }>;
-          
-          // companyIdを持ち、chromaSyncedが0またはnullのエンティティをフィルタリング
-          const unsyncedCompanyEntities = allEntityDocs.filter(doc => {
-            const entityData = doc.data || doc;
-            const companyId = entityData.companyId;
-            const chromaSyncedValue = entityData.chromaSynced;
-            const hasCompanyId = companyId !== null && companyId !== undefined && companyId !== '' && companyId !== 'null';
-            const isUnsynced = chromaSyncedValue === 0 || chromaSyncedValue === null || chromaSyncedValue === undefined;
-            return hasCompanyId && isUnsynced;
-          });
-          
-          console.log(`📊 埋め込みなしのcompanyIdを持つエンティティ: ${unsyncedCompanyEntities.length}件`);
-          
-          if (unsyncedCompanyEntities.length > 0) {
-            console.log('📋 サンプル（最初の10件）:');
-            unsyncedCompanyEntities.slice(0, 10).forEach((doc, index) => {
-              const entityData = doc.data || doc;
-              console.log(`${index + 1}. ID: ${doc.id || entityData.id}, 名前: ${entityData.name}, companyId: ${entityData.companyId}, chromaSynced: ${entityData.chromaSynced}, createdAt: ${entityData.createdAt}`);
-            });
-            
-            // 削除確認
-            const shouldDelete = confirm(`${unsyncedCompanyEntities.length}件の埋め込みなしのcompanyIdを持つエンティティを削除しますか？`);
-            if (shouldDelete) {
-              console.log('🗑️ 削除を開始します...');
-              let successCount = 0;
-              let errorCount = 0;
-              
-              for (const doc of unsyncedCompanyEntities) {
-                const entityId = doc.id || doc.data?.id;
-                try {
-                  // エンティティを削除
-                  await callTauriCommand('doc_delete', {
-                    collectionName: 'entities',
-                    docId: entityId,
-                  });
-                  successCount++;
-                  if (successCount % 10 === 0) {
-                    console.log(`✅ 削除中: ${successCount}/${unsyncedCompanyEntities.length}件完了`);
-                  }
-                } catch (error: any) {
-                  errorCount++;
-                  console.error(`❌ 削除エラー: ${entityId}`, error);
-                }
-              }
-              
-              console.log(`✅ 削除完了: 成功=${successCount}件, エラー=${errorCount}件`);
-              alert(`削除完了: 成功=${successCount}件, エラー=${errorCount}件`);
-            } else {
-              console.log('❌ 削除をキャンセルしました');
-            }
-          } else {
-            console.log('✅ 埋め込みなしのcompanyIdを持つエンティティは見つかりませんでした');
-          }
-          
-          return {
-            count: unsyncedCompanyEntities.length,
-            entities: unsyncedCompanyEntities.map(doc => ({
-              id: doc.id || doc.data?.id,
-              name: (doc.data || doc).name,
-              companyId: (doc.data || doc).companyId,
-              chromaSynced: (doc.data || doc).chromaSynced,
-              createdAt: (doc.data || doc).createdAt,
-            })),
-          };
-        } catch (error: any) {
-          console.error('❌ エラー:', error);
-          throw error;
-        }
-      };
-      
       devLog('✅ 埋め込みベクトル確認関数が利用可能になりました:');
       devLog('  - window.checkEmbeddings(organizationId?) - 統計情報を取得');
       devLog('  - window.printEmbeddingStats(organizationId?) - 統計情報をコンソールに表示');
       devLog('  - window.diagnoseRAGSearch() - RAG検索の診断を実行');
-      devLog('  - window.checkAndDeleteUnsyncedCompanyEntities() - 埋め込みなしのcompanyIdを持つエンティティを確認・削除');
     }
   }, []);
 
@@ -292,7 +211,12 @@ export default function RAGSearchPage() {
         const orgTree = await getOrgTreeFromDb();
         if (orgTree) {
           const allOrgs = getAllOrganizationsFromTree(orgTree);
-          setOrganizations(allOrgs);
+          setOrganizations(allOrgs.map(org => ({
+            id: org.id,
+            name: org.name || org.title || org.id,
+            title: org.title,
+            type: (org as any).type || 'organization',
+          })));
         }
       } catch (error) {
         console.error('組織データの読み込みエラー:', error);
@@ -1136,7 +1060,9 @@ export default function RAGSearchPage() {
                   >
                     <option value="">すべての組織</option>
                     {organizations.map(org => (
-                      <option key={org.id} value={org.id}>{org.name}</option>
+                      <option key={org.id} value={org.id}>
+                        {org.name} {org.type === 'company' ? '(事業会社)' : org.type === 'person' ? '(個人)' : ''}
+                      </option>
                     ))}
                   </select>
                 </div>

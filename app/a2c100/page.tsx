@@ -6,11 +6,7 @@ import ThemeHierarchyEditor from '@/components/ThemeHierarchyEditor';
 import ThemeHierarchyChart from '@/components/ThemeHierarchyChart';
 import InitiativeList from '@/components/InitiativeList';
 import { getThemes, getFocusInitiatives, getOrgTreeFromDb, getAllOrganizationsFromTree, type Theme, type FocusInitiative } from '@/lib/orgApi';
-// import { getAllCompanies, getCompanyFocusInitiatives, type Company, type CompanyFocusInitiative } from '@/lib/companiesApi'; // 削除（事業会社ページ削除のため）
 import { loadHierarchyConfig, getDefaultHierarchyConfig, type ThemeHierarchyConfig } from '@/lib/themeHierarchy';
-
-// データ表示モードの型定義
-type DataViewMode = 'organization' | 'company';
 
 // 開発環境でのみログを有効化するヘルパー関数（パフォーマンス最適化）
 const isDev = process.env.NODE_ENV === 'development';
@@ -35,13 +31,7 @@ export default function A2C100Page() {
   const [windowSize, setWindowSize] = useState({ width: 0, height: 0 });
   const [showHierarchyEditor, setShowHierarchyEditor] = useState(false);
   const [orgTree, setOrgTree] = useState<any>(null);
-  const [dataViewMode, setDataViewMode] = useState<DataViewMode>('organization');
-  
-  // 事業会社関連の状態
-  // const [companies, setCompanies] = useState<Company[]>([]); // 削除（事業会社ページ削除のため）
-  // const [companyInitiatives, setCompanyInitiatives] = useState<CompanyFocusInitiative[]>([]); // 削除（事業会社ページ削除のため）
-  const [companies, setCompanies] = useState<any[]>([]); // 一時的にany[]に変更
-  const [companyInitiatives, setCompanyInitiatives] = useState<any[]>([]); // 一時的にany[]に変更
+  const [selectedTypeFilter, setSelectedTypeFilter] = useState<'all' | 'organization' | 'company' | 'person'>('all');
 
   // ウィンドウサイズを監視
   useEffect(() => {
@@ -85,59 +75,28 @@ export default function A2C100Page() {
 
         setOrgTree(orgTreeData);
 
-        // データ表示モードに応じてデータを取得
-        if (dataViewMode === 'organization') {
-          // 組織モード: 組織の注力施策を取得
-          const allOrgs = getAllOrganizationsFromTree(orgTreeData);
-          devLog('📖 [A2C100] 全組織数:', allOrgs.length);
+        // すべての組織の注力施策を取得（typeで区別）
+        const allOrgs = getAllOrganizationsFromTree(orgTreeData);
+        devLog('📖 [A2C100] 全組織数:', allOrgs.length);
 
-          // 並列で各組織の施策を取得
-          const initiativePromises = allOrgs.map(org => getFocusInitiatives(org.id));
-          const initiativeResults = await Promise.allSettled(initiativePromises);
+        // 並列で各組織の施策を取得
+        const initiativePromises = allOrgs.map(org => getFocusInitiatives(org.id));
+        const initiativeResults = await Promise.allSettled(initiativePromises);
 
-          const allInitiatives: FocusInitiative[] = [];
-          initiativeResults.forEach((result, index) => {
-            if (result.status === 'fulfilled') {
-              allInitiatives.push(...result.value);
-            } else {
-              devWarn(`⚠️ [A2C100] 組織「${allOrgs[index].name}」の施策取得エラー:`, result.reason);
-            }
-          });
+        const allInitiatives: FocusInitiative[] = [];
+        initiativeResults.forEach((result, index) => {
+          if (result.status === 'fulfilled') {
+            allInitiatives.push(...result.value);
+          } else {
+            devWarn(`⚠️ [A2C100] 組織「${allOrgs[index].name}」の施策取得エラー:`, result.reason);
+          }
+        });
 
-          setInitiatives(allInitiatives);
-          devLog('✅ [A2C100] 組織モード データ読み込み完了:', {
-            themes: loadedThemes.length,
-            initiatives: allInitiatives.length,
-          });
-        } else {
-          // 事業会社モード: 事業会社の注力施策を取得
-          // 事業会社機能は削除（事業会社ページ削除のため）
-          // const allCompanies = await getAllCompanies();
-          // setCompanies(allCompanies);
-          setCompanies([]); // 空配列に設定
-
-          // 各事業会社の注力施策を取得
-          // const initiativePromises = allCompanies.map(company =>
-          //   getCompanyFocusInitiatives(company.id)
-          // );
-          // const initiativeResults = await Promise.allSettled(initiativePromises);
-
-          // const allCompanyInitiatives: CompanyFocusInitiative[] = [];
-          // initiativeResults.forEach((result, index) => {
-          //   if (result.status === 'fulfilled') {
-          //     allCompanyInitiatives.push(...result.value);
-          //   } else {
-          //     devWarn(`⚠️ [A2C100] 事業会社「${allCompanies[index].name}」の施策取得エラー:`, result.reason);
-          //   }
-          // });
-
-          setCompanyInitiatives([]); // 空配列に設定
-          devLog('✅ [A2C100] 事業会社モード データ読み込み完了:', {
-            themes: loadedThemes.length,
-            companies: 0, // allCompanies.length, // 削除（事業会社ページ削除のため）
-            companyInitiatives: 0, // allCompanyInitiatives.length, // 削除（事業会社ページ削除のため）
-          });
-        }
+        setInitiatives(allInitiatives);
+        devLog('✅ [A2C100] データ読み込み完了:', {
+          themes: loadedThemes.length,
+          initiatives: allInitiatives.length,
+        });
       } catch (err: any) {
         console.error('データの読み込みに失敗しました:', err);
         setError(err.message || 'データの読み込みに失敗しました');
@@ -147,7 +106,7 @@ export default function A2C100Page() {
     };
 
     loadData();
-  }, [dataViewMode]);
+  }, []);
 
   // 階層設定の変更ハンドラー
   const handleConfigChange = useCallback((newConfig: ThemeHierarchyConfig) => {
@@ -214,10 +173,10 @@ export default function A2C100Page() {
             </button>
           </div>
           <p style={{ marginBottom: '12px', fontSize: '14px', color: 'var(--color-text-light)' }}>
-            テーマを階層構造で表示し、各テーマに紐づく注力施策を確認できます
+            テーマを階層構造で表示し、各テーマに紐づく注力施策を確認できます（typeで組織と事業会社を区別）
           </p>
           
-          {/* データ表示モード切り替え（組織/事業会社） */}
+          {/* タイプフィルター（組織/事業会社/個人） */}
           <div style={{ marginTop: '12px' }}>
             <div style={{
               display: 'flex',
@@ -226,63 +185,75 @@ export default function A2C100Page() {
             }}>
               <button
                 type="button"
-                onClick={() => setDataViewMode('organization')}
+                onClick={() => setSelectedTypeFilter('all')}
                 style={{
                   padding: '10px 20px',
                   fontSize: '14px',
-                  fontWeight: dataViewMode === 'organization' ? '600' : '400',
-                  color: dataViewMode === 'organization' ? '#4262FF' : '#1A1A1A',
-                  backgroundColor: dataViewMode === 'organization' ? '#F0F4FF' : '#FFFFFF',
-                  border: dataViewMode === 'organization' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
+                  fontWeight: selectedTypeFilter === 'all' ? '600' : '400',
+                  color: selectedTypeFilter === 'all' ? '#4262FF' : '#1A1A1A',
+                  backgroundColor: selectedTypeFilter === 'all' ? '#F0F4FF' : '#FFFFFF',
+                  border: selectedTypeFilter === 'all' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
                   borderRadius: '8px',
                   cursor: 'pointer',
                   transition: 'all 150ms',
                   fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                 }}
-                onMouseEnter={(e) => {
-                  if (dataViewMode !== 'organization') {
-                    e.currentTarget.style.borderColor = '#C4C4C4';
-                    e.currentTarget.style.backgroundColor = '#FAFAFA';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (dataViewMode !== 'organization') {
-                    e.currentTarget.style.borderColor = '#E0E0E0';
-                    e.currentTarget.style.backgroundColor = '#FFFFFF';
-                  }
+              >
+                すべて
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedTypeFilter('organization')}
+                style={{
+                  padding: '10px 20px',
+                  fontSize: '14px',
+                  fontWeight: selectedTypeFilter === 'organization' ? '600' : '400',
+                  color: selectedTypeFilter === 'organization' ? '#4262FF' : '#1A1A1A',
+                  backgroundColor: selectedTypeFilter === 'organization' ? '#F0F4FF' : '#FFFFFF',
+                  border: selectedTypeFilter === 'organization' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  transition: 'all 150ms',
+                  fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                 }}
               >
                 組織
               </button>
               <button
                 type="button"
-                onClick={() => setDataViewMode('company')}
+                onClick={() => setSelectedTypeFilter('company')}
                 style={{
                   padding: '10px 20px',
                   fontSize: '14px',
-                  fontWeight: dataViewMode === 'company' ? '600' : '400',
-                  color: dataViewMode === 'company' ? '#4262FF' : '#1A1A1A',
-                  backgroundColor: dataViewMode === 'company' ? '#F0F4FF' : '#FFFFFF',
-                  border: dataViewMode === 'company' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
+                  fontWeight: selectedTypeFilter === 'company' ? '600' : '400',
+                  color: selectedTypeFilter === 'company' ? '#4262FF' : '#1A1A1A',
+                  backgroundColor: selectedTypeFilter === 'company' ? '#F0F4FF' : '#FFFFFF',
+                  border: selectedTypeFilter === 'company' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
                   borderRadius: '8px',
                   cursor: 'pointer',
                   transition: 'all 150ms',
                   fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                 }}
-                onMouseEnter={(e) => {
-                  if (dataViewMode !== 'company') {
-                    e.currentTarget.style.borderColor = '#C4C4C4';
-                    e.currentTarget.style.backgroundColor = '#FAFAFA';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (dataViewMode !== 'company') {
-                    e.currentTarget.style.borderColor = '#E0E0E0';
-                    e.currentTarget.style.backgroundColor = '#FFFFFF';
-                  }
-                }}
               >
                 事業会社
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedTypeFilter('person')}
+                style={{
+                  padding: '10px 20px',
+                  fontSize: '14px',
+                  fontWeight: selectedTypeFilter === 'person' ? '600' : '400',
+                  color: selectedTypeFilter === 'person' ? '#4262FF' : '#1A1A1A',
+                  backgroundColor: selectedTypeFilter === 'person' ? '#F0F4FF' : '#FFFFFF',
+                  border: selectedTypeFilter === 'person' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  transition: 'all 150ms',
+                  fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                }}
+              >
+                個人
               </button>
             </div>
           </div>
@@ -325,8 +296,9 @@ export default function A2C100Page() {
             <ThemeHierarchyChart
               config={config}
               themes={themes}
-              initiatives={dataViewMode === 'organization' ? initiatives : companyInitiatives}
-              viewMode={dataViewMode}
+              initiatives={initiatives}
+              orgTree={orgTree}
+              selectedTypeFilter={selectedTypeFilter}
               width={(() => {
                 // 階層設定エディタの表示状態を考慮したサイズ計算
                 if (windowSize.width > 1400) {
@@ -379,10 +351,9 @@ export default function A2C100Page() {
             <div>
               <InitiativeList
                 theme={selectedTheme}
-                initiatives={dataViewMode === 'organization' ? initiatives : companyInitiatives}
+                initiatives={initiatives}
                 orgTree={orgTree}
-                companies={dataViewMode === 'company' ? companies : undefined}
-                viewMode={dataViewMode}
+                selectedTypeFilter={selectedTypeFilter}
               />
             </div>
           )}

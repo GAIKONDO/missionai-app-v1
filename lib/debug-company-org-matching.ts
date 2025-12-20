@@ -1,14 +1,22 @@
 /**
  * 事業会社と組織のIDマッチングを確認するデバッグスクリプト
+ * 
+ * ⚠️ Companiesテーブル削除のため、このスクリプトは無効化されています
  */
 
-import { getAllCompanies } from './companiesApi';
+// import { getAllCompanies } from './companiesApi'; // Companiesテーブル削除のためコメントアウト
 import { getOrgTreeFromDb, getAllOrganizationsFromTree } from './orgApi';
 
 /**
  * 通信モバイル部（通信ビジネス部）と辻本郷コンサルティングのIDを確認
+ * 
+ * ⚠️ Companiesテーブル削除のため、この関数は無効化されています
  */
 export async function debugCompanyOrgMatching() {
+  console.warn('⚠️ Companiesテーブルが削除されたため、このデバッグスクリプトは使用できません');
+  return;
+  
+  /* 以下は無効化されたコード
   try {
     console.log('🔍 [デバッグ] 事業会社と組織のIDマッチングを確認します...\n');
 
@@ -126,4 +134,5 @@ export async function debugCompanyOrgMatching() {
   } catch (error: any) {
     console.error('❌ エラー:', error);
   }
+  */
 }

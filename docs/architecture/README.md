@@ -41,70 +41,57 @@
   - テスト方法
   - トラブルシューティング
 
-### 参考ドキュメント
+### その他の設計ドキュメント
 
-#### `port-design-concerns.md`
-- **ステータス**: 参考用（一部解消済み）
-- **用途**: 設計時の懸念点と解決策の記録
-- **対象読者**: 設計レビュー担当者、実装時の参考として
-- **内容**:
-  - 重大な懸念点と解決策
-  - 中程度・軽微な懸念点
-  - 実装優先順位
-  - 確認チェックリスト
-- **注意**: このドキュメントの内容は`port-and-server-design.md`に反映されている可能性があります。
+#### `COMPANY_DATABASE_DESIGN_COMPARISON.md`
+- **ステータス**: アクティブ（設計比較）
+- **用途**: 事業会社データベース設計の比較検討
+- **対象読者**: データベース設計者、実装者
 
-#### `port-design-review.md`
-- **ステータス**: レビュー完了済み（参考用）
-- **用途**: 設計書レビュー時の指摘事項と改善提案の記録
-- **対象読者**: 設計レビュー担当者、実装時の参考として
-- **内容**:
-  - 全体的な評価
-  - 不足している重要な情報の指摘
-  - 明確化が必要な点
-  - 追加すべきセクション
-  - 改善すべき表現
-- **注意**: このレビューの指摘事項は`port-and-server-design.md`に反映されている可能性があります。
+#### `PLANTUML_OFFLINE_IMPLEMENTATION.md`
+- **ステータス**: アクティブ（実装計画）
+- **用途**: PlantUMLのオフライン実装計画
+- **対象読者**: 実装者
 
-#### `port-and-server-design.pdf`
-- **ステータス**: PDF版（印刷・共有用）
-- **用途**: 設計書のPDF版
-- **内容**: `port-and-server-design.md`のPDF版
+#### `THEME_ORDER_RISKS_AND_CONCERNS.md`
+- **ステータス**: アクティブ（リスク分析）
+- **用途**: テーマ順序実装のリスクと懸念点
+- **対象読者**: 実装者、設計レビュー担当者
 
 ## 🔗 ドキュメント間の関係性
 
 ```
+ARCHITECTURE_OVERVIEW.md (アーキテクチャ概要)
+    ↓
 port-and-server-design.md (メイン設計書)
-    ↑
-    │ レビュー・改善提案
-    │
-port-design-review.md (レビューコメント)
-    │
-    ↓ 指摘された問題点を整理
-    │
-port-design-concerns.md (懸念点リスト)
+    ↓
+COMPANY_DATABASE_DESIGN_COMPARISON.md (設計比較)
+THEME_ORDER_RISKS_AND_CONCERNS.md (リスク分析)
+PLANTUML_OFFLINE_IMPLEMENTATION.md (実装計画)
 ```
 
 ### 読み方のガイド
 
-1. **新規開発者・実装者**: 
-   - まず `port-and-server-design.md` を読む
-   - 必要に応じて `port-design-concerns.md` で懸念点を確認
+1. **新規開発者・入門者**: 
+   - まず `ARCHITECTURE_OVERVIEW.md` を読む（全体像の把握）
+   - 次に `port-and-server-design.md` を読む（詳細設計）
 
-2. **設計レビュー担当者**:
-   - `port-design-review.md` で過去のレビュー指摘を確認
-   - `port-design-concerns.md` で懸念点の解決状況を確認
+2. **実装者**:
+   - `port-and-server-design.md` を必読
+   - 必要に応じて `COMPANY_DATABASE_DESIGN_COMPARISON.md`、`THEME_ORDER_RISKS_AND_CONCERNS.md` を参照
 
-3. **トラブルシューティング**:
+3. **設計レビュー担当者**:
+   - すべてのドキュメントを確認
+   - 特に `THEME_ORDER_RISKS_AND_CONCERNS.md` でリスクを確認
+
+4. **トラブルシューティング**:
    - `port-and-server-design.md` の「トラブルシューティング」セクションを参照
-   - `port-design-concerns.md` の「確認チェックリスト」を参照
 
 ## 📝 ドキュメントの更新方針
 
 - **メイン設計書** (`port-and-server-design.md`): 実装に合わせて継続的に更新
-- **参考ドキュメント** (`port-design-concerns.md`, `port-design-review.md`): 
-  - 基本的に更新しない（過去の記録として保持）
-  - 新しい懸念点やレビューはメイン設計書に反映
+- **アーキテクチャ概要** (`ARCHITECTURE_OVERVIEW.md`): 実装変更に合わせて定期的に更新
+- **その他の設計ドキュメント**: 実装状況に合わせて更新
 
 ## 🔄 ステータス管理
 
@@ -116,4 +103,4 @@ port-design-concerns.md (懸念点リスト)
 
 ---
 
-最終更新: 2025-12-11
+最終更新: 2025-01-XX

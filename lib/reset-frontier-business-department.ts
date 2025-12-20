@@ -7,7 +7,7 @@
  */
 
 import { searchOrgsByName, deleteOrg, createOrg } from './orgApi';
-import { getAllCompanies, deleteCompany, getCompaniesByOrganizationId, createCompany } from './companiesApi';
+// import { getAllCompanies, deleteCompany, getCompaniesByOrganizationId, createCompany } from './companiesApi'; // Companiesテーブル削除のためコメントアウト
 import { callTauriCommand } from './localFirebase';
 
 /**
@@ -42,6 +42,10 @@ function isNameMatch(orgName: string, searchName: string): boolean {
  * フロンティアビジネス部のデータを削除して再作成
  */
 export async function resetFrontierBusinessDepartment() {
+  console.warn('⚠️ Companiesテーブルが削除されたため、この関数は使用できません');
+  return { deletedCompanies: 0, importedCompanies: 0 };
+  
+  /* 以下は無効化されたコード
   console.log('resetFrontierBusinessDepartment関数が呼び出されました');
   try {
     console.log('=== フロンティアビジネス部のデータを削除して再作成します ===\n');
@@ -480,13 +484,20 @@ export async function recreateFrontierBusinessDepartment() {
     console.error('❌ フロンティアビジネス部の再作成に失敗しました:', error);
     throw error;
   }
+  */
 }
 
 /**
  * 金融・保険部門の会社データを追加する
  * 既存の組織がある場合は追加、ない場合は新規作成
+ * 
+ * ⚠️ Companiesテーブル削除のため、この関数は無効化されています
  */
 export async function addFinanceInsuranceCompanies() {
+  console.warn('⚠️ Companiesテーブルが削除されたため、この関数は使用できません');
+  return { importedCompanies: 0, skippedCompanies: 0 };
+  
+  /* 以下は無効化されたコード
   console.log('addFinanceInsuranceCompanies関数が呼び出されました');
   try {
     console.log('=== 金融・保険部門の会社データを追加します ===\n');

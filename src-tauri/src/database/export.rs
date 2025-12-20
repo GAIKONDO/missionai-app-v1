@@ -23,7 +23,6 @@ pub fn export_all_data() -> Result<ExportData, Box<dyn std::error::Error>> {
     let table_names = vec![
         "users",
         "pageContainers",
-        "admins",
         "approvalRequests",
         "aiSettings",
         "backupHistory",

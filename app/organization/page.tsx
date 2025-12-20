@@ -1442,7 +1442,7 @@ export default function OrganizationPage() {
                     await tauriAlert(`組織名の更新に失敗しました: ${error.message || error}`);
                   }
                 }}
-                onCreateOrg={async (parentId) => {
+                onCreateOrg={async (parentId, type) => {
                   try {
                     const findOrgInTree = (node: OrgNodeData, targetId: string): OrgNodeData | null => {
                       if (node.id === targetId) return node;
@@ -1474,15 +1474,19 @@ export default function OrganizationPage() {
                     const level = parentLevel >= 0 ? parentLevel + 1 : 1;
                     const levelName = `階層レベル ${level}`;
                     
+                    // デフォルト名をtypeに応じて設定
+                    const defaultName = type === 'company' ? '新しい事業会社' : type === 'person' ? '新しい個人' : '新しい組織';
+                    
                     console.log('🔍 [onCreateOrg] 組織を作成中:', {
                       parentId,
-                      name: '新しい組織',
+                      name: defaultName,
+                      type: type || 'organization',
                       level,
                       levelName,
                     });
                     
                     // 組織を作成
-                    const result = await createOrg(parentId, '新しい組織', null, null, level, levelName, 0);
+                    const result = await createOrg(parentId, defaultName, null, null, level, levelName, 0, type);
                     
                     devLog('🔍 [onCreateOrg] createOrgの結果:', {
                       result,
@@ -1610,7 +1614,7 @@ export default function OrganizationPage() {
                         name: newOrg.name
                       });
                       setEditingOrgId(newOrg.id);
-                      setEditingOrgName('新しい組織');
+                      setEditingOrgName(defaultName);
                       
                       // 親組織が選択されている場合、選択パスを更新して新しく作成された組織を表示
                       if (parentId) {

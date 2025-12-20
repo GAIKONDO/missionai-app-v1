@@ -47,19 +47,31 @@ interface HierarchyLevel {
   orgs: OrgWithDepth[];
 }
 
-// 表示モードの型定義
-type DashboardViewMode = 'organization' | 'company';
+// 表示モードの型定義（typeベースのフィルターに変更）
+type DashboardViewMode = 'all' | 'organization' | 'company' | 'person';
 
 /**
- * 組織ツリーから階層レベルごとの組織を抽出
+ * 組織ツリーから階層レベルごとの組織を抽出（typeフィルター対応）
  */
-function extractOrganizationsByDepth(orgTree: OrgNodeData | null): HierarchyLevel[] {
+function extractOrganizationsByDepth(orgTree: OrgNodeData | null, typeFilter?: 'all' | 'organization' | 'company' | 'person'): HierarchyLevel[] {
   if (!orgTree) return [];
 
   const orgsByDepth = new Map<number, OrgWithDepth[]>();
 
   function traverse(node: OrgNodeData, depth: number, path: string[]) {
     if (!node.id) return;
+
+    // typeフィルターを適用
+    const nodeType = (node as any).type || 'organization';
+    if (typeFilter && typeFilter !== 'all' && nodeType !== typeFilter) {
+      // フィルターに一致しない場合はスキップ（子ノードは確認する）
+      if (node.children) {
+        for (const child of node.children) {
+          traverse(child, depth + 1, path);
+        }
+      }
+      return;
+    }
 
     const orgWithDepth: OrgWithDepth = {
       id: node.id,
@@ -188,7 +200,8 @@ function extractCompaniesByOrganizationDepth(
 }
 
 export default function DashboardPage() {
-  const [viewMode, setViewMode] = useState<DashboardViewMode>('organization');
+  const [viewMode, setViewMode] = useState<DashboardViewMode>('all');
+  const [selectedTypeFilter, setSelectedTypeFilter] = useState<'all' | 'organization' | 'company' | 'person'>('all');
   const [orgTree, setOrgTree] = useState<OrgNodeData | null>(null);
   const [themes, setThemes] = useState<Theme[]>([]);
   const [initiatives, setInitiatives] = useState<FocusInitiative[]>([]);
@@ -200,13 +213,11 @@ export default function DashboardPage() {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [filteredOrgIds, setFilteredOrgIds] = useState<Set<string>>(new Set());
   const [filteredThemeIds, setFilteredThemeIds] = useState<Set<string>>(new Set());
-  // 事業会社関連の状態
-  // const [companies, setCompanies] = useState<Company[]>([]); // 削除（事業会社ページ削除のため）
-  // const [companyInitiatives, setCompanyInitiatives] = useState<CompanyFocusInitiative[]>([]); // 削除（事業会社ページ削除のため）
-  const [companies, setCompanies] = useState<any[]>([]); // 一時的にany[]に変更
-  const [companyInitiatives, setCompanyInitiatives] = useState<any[]>([]); // 一時的にany[]に変更
-  const [companyHierarchyLevels, setCompanyHierarchyLevels] = useState<HierarchyLevel[]>([]);
-  const [filteredCompanyIds, setFilteredCompanyIds] = useState<Set<string>>(new Set());
+  // 事業会社関連の状態は削除（typeで管理するため）
+  // const [companies, setCompanies] = useState<any[]>([]);
+  // const [companyInitiatives, setCompanyInitiatives] = useState<any[]>([]);
+  // const [companyHierarchyLevels, setCompanyHierarchyLevels] = useState<HierarchyLevel[]>([]);
+  // const [filteredCompanyIds, setFilteredCompanyIds] = useState<Set<string>>(new Set());
 
   // グラフと注力施策一覧を含むコンテナの参照
   const chartAndInitiativesRef = useRef<HTMLDivElement>(null);
@@ -219,10 +230,13 @@ export default function DashboardPage() {
         try {
           devLog('🔍 [デバッグ] 事業会社と組織のIDマッチングを確認します...\n');
           
-          const [orgTreeData, allCompaniesData] = await Promise.all([
-            getOrgTreeFromDb(),
-            getAllCompanies(),
-          ]);
+          // const [orgTreeData, allCompaniesData] = await Promise.all([
+          //   getOrgTreeFromDb(),
+          //   getAllCompanies(),
+          // ]);
+          // 事業会社の管理はorganizationsテーブルのtypeカラムで行うため、このデバッグ関数は無効化
+          const orgTreeData = await getOrgTreeFromDb();
+          const allCompaniesData: any[] = [];
           
           if (!orgTreeData) {
             devLog('⚠️ 組織データが取得できませんでした');
@@ -357,10 +371,13 @@ export default function DashboardPage() {
         try {
           devLog('🔧 [修正] 通信ビジネス部に紐づく事業会社のorganizationIdを一括修正します...\n');
           
-          const [orgTreeData, allCompaniesData] = await Promise.all([
-            getOrgTreeFromDb(),
-            getAllCompanies(),
-          ]);
+          // const [orgTreeData, allCompaniesData] = await Promise.all([
+          //   getOrgTreeFromDb(),
+          //   getAllCompanies(),
+          // ]);
+          // 事業会社の管理はorganizationsテーブルのtypeカラムで行うため、このデバッグ関数は無効化
+          const orgTreeData = await getOrgTreeFromDb();
+          const allCompaniesData: any[] = [];
           
           if (!orgTreeData) {
             devLog('⚠️ 組織データが取得できませんでした');
@@ -458,25 +475,31 @@ export default function DashboardPage() {
       setOrgTree(orgTreeData);
       setThemes(themesData);
 
-      // 階層レベルは組織ツリーから計算（組織モードと事業会社モードで共通）
-      const levels = extractOrganizationsByDepth(orgTreeData);
+      // 階層レベルは組織ツリーから計算（typeフィルターを適用）
+      const typeFilter = selectedTypeFilter === 'all' ? undefined : selectedTypeFilter;
+      const levels = extractOrganizationsByDepth(orgTreeData, typeFilter);
       setHierarchyLevels(levels);
 
-      if (viewMode === 'organization') {
-        // 組織モード: 組織データを取得
-        // 選択された階層レベルが存在しない場合、最初の階層レベルを選択
-        if (selectedLevel === null || !levels.find(l => l.level === selectedLevel)) {
-      if (levels.length > 0) {
-        setSelectedLevel(levels[0].level);
-          }
+      // 選択された階層レベルが存在しない場合、最初の階層レベルを選択
+      if (selectedLevel === null || !levels.find(l => l.level === selectedLevel)) {
+        if (levels.length > 0) {
+          setSelectedLevel(levels[0].level);
+        }
       }
 
-      // 全組織の注力施策を取得
+      // 全組織の注力施策を取得（typeフィルターを適用）
       const allOrgs = getAllOrganizationsFromTree(orgTreeData);
-        devLog('📖 [ダッシュボード] 全組織数:', allOrgs.length);
+      const filteredOrgs = typeFilter && typeFilter !== 'all'
+        ? allOrgs.filter(org => {
+            const orgType = (org as any).type || 'organization';
+            return orgType === typeFilter;
+          })
+        : allOrgs;
+      
+      devLog('📖 [ダッシュボード] 全組織数:', allOrgs.length, 'フィルター後:', filteredOrgs.length);
 
       // 並列で各組織の施策を取得（パフォーマンス向上）
-      const initiativePromises = allOrgs.map(org => getFocusInitiatives(org.id));
+      const initiativePromises = filteredOrgs.map(org => getFocusInitiatives(org.id));
       const initiativeResults = await Promise.allSettled(initiativePromises);
 
       const allInitiatives: FocusInitiative[] = [];
@@ -484,89 +507,17 @@ export default function DashboardPage() {
         if (result.status === 'fulfilled') {
           allInitiatives.push(...result.value);
         } else {
-            devWarn(`⚠️ [ダッシュボード] 組織「${allOrgs[index].name}」の施策取得エラー:`, result.reason);
+          devWarn(`⚠️ [ダッシュボード] 組織「${filteredOrgs[index].name}」の施策取得エラー:`, result.reason);
         }
       });
 
       setInitiatives(allInitiatives);
-        devLog('✅ [ダッシュボード] 組織モード データ読み込み完了:', {
+      devLog('✅ [ダッシュボード] データ読み込み完了:', {
         themes: themesData.length,
         initiatives: allInitiatives.length,
         hierarchyLevels: levels.length,
+        typeFilter: selectedTypeFilter,
       });
-      } else {
-        // 事業会社モード: 事業会社データを取得
-        const allCompanies = await getAllCompanies();
-        setCompanies(allCompanies);
-
-        // 各事業会社の注力施策を取得
-        const initiativePromises = allCompanies.map(company => 
-          getCompanyFocusInitiatives(company.id)
-        );
-        const initiativeResults = await Promise.allSettled(initiativePromises);
-
-        const allCompanyInitiatives: CompanyFocusInitiative[] = [];
-        initiativeResults.forEach((result, index) => {
-          if (result.status === 'fulfilled') {
-            allCompanyInitiatives.push(...result.value);
-          } else {
-            devWarn(`⚠️ [ダッシュボード] 事業会社「${allCompanies[index].name}」の施策取得エラー:`, result.reason);
-          }
-        });
-
-        setCompanyInitiatives(allCompanyInitiatives);
-
-        // 事業会社を組織の階層レベルでグループ化（表示用）
-        const companyLevels = extractCompaniesByOrganizationDepth(orgTreeData, allCompanies);
-        setCompanyHierarchyLevels(companyLevels);
-
-        // デバッグ: 通信モバイル部と辻本郷コンサルティングのIDマッチング確認（開発環境のみ）
-        if (isDev) {
-          const allOrgs = getAllOrganizationsFromTree(orgTreeData);
-          const communicationsOrgs = allOrgs.filter(org => 
-            org.name.includes('通信') && 
-            (org.name.includes('モバイル') || org.name.includes('ビジネス'))
-          );
-          // const tsujimotoCompany = allCompanies.find(c => // 削除（事業会社ページ削除のため）
-          //   c.name.includes('辻本') || c.name.includes('コンサルティング')
-          // );
-          const tsujimotoCompany = null; // 一時的に無効化
-          
-          devLog('🔍 [デバッグ] 通信関連組織数:', communicationsOrgs.length);
-          
-          if (tsujimotoCompany) {
-            devLog('🔍 [デバッグ] 辻本郷コンサルティング:', {
-              name: tsujimotoCompany.name,
-              id: tsujimotoCompany.id,
-              organizationId: tsujimotoCompany.organizationId
-            });
-            
-            const matchedOrg = allOrgs.find(org => org.id === tsujimotoCompany.organizationId);
-            if (matchedOrg) {
-              devLog('🔍 [デバッグ] 紐づいている組織:', {
-                name: matchedOrg.name,
-                id: matchedOrg.id,
-                level: (matchedOrg as any).level
-              });
-            } else {
-              devWarn('⚠️ [デバッグ] organizationId', tsujimotoCompany.organizationId, 'に該当する組織が見つかりません');
-            }
-            
-            // 通信モバイル部とのマッチング確認（ループ内のログを削除）
-            communicationsOrgs.forEach(org => {
-              const isMatch = org.id === tsujimotoCompany.organizationId;
-              // ループ内のログを削除（パフォーマンス最適化）
-            });
-          }
-        }
-
-        devLog('✅ [ダッシュボード] 事業会社モード データ読み込み完了:', {
-          themes: themesData.length,
-          companies: 0, // allCompanies.length, // 削除（事業会社ページ削除のため）
-          companyInitiatives: 0, // allCompanyInitiatives.length, // 削除（事業会社ページ削除のため）
-          hierarchyLevels: levels.length,
-        });
-      }
     } catch (err: any) {
       console.error('❌ [ダッシュボード] データ読み込みエラー:', err);
       setError(`データの読み込みに失敗しました: ${err?.message || err}`);
@@ -595,7 +546,7 @@ export default function DashboardPage() {
 
   // 選択された階層レベルの組織を取得（組織モード）
   const selectedLevelOrgs = useMemo(() => {
-    if (viewMode !== 'organization' || selectedLevel === null) return [];
+    if (selectedLevel === null) return [];
     const levelData = hierarchyLevels.find(l => l.level === selectedLevel);
     const orgs = levelData?.orgs || [];
     
@@ -607,45 +558,45 @@ export default function DashboardPage() {
     return orgs;
   }, [viewMode, selectedLevel, hierarchyLevels, filteredOrgIds]);
 
-  // 表示する事業会社を取得（事業会社モード）- すべての事業会社を表示
+  // 表示する事業会社を取得（type='company'の組織を表示）
   const selectedLevelCompanies = useMemo(() => {
-    if (viewMode !== 'company') return [];
+    if (selectedTypeFilter !== 'company') return [];
     
-    // すべての事業会社を取得
-    const allCompaniesAtLevel = companyHierarchyLevels.flatMap(level => level.orgs);
+    // 選択された階層レベルの組織から、type='company'のものを取得
+    const levelData = hierarchyLevels.find(l => l.level === selectedLevel);
+    const orgs = levelData?.orgs || [];
+    const companies = orgs.filter(org => {
+      // orgTreeから実際のtypeを取得
+      const findOrg = (node: OrgNodeData, targetId: string): OrgNodeData | null => {
+        if (node.id === targetId) return node;
+        if (node.children) {
+          for (const child of node.children) {
+            const found = findOrg(child, targetId);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      const actualOrg = orgTree ? findOrg(orgTree, org.id) : null;
+      return actualOrg && (actualOrg as any).type === 'company';
+    });
     
-    // フィルター適用
-    // フィルター適用
-    let filtered = allCompaniesAtLevel;
-    
-    // 組織フィルター（事業会社に紐づけられている組織でフィルター）
+    // フィルター適用（組織フィルター）
     if (filteredOrgIds.size > 0) {
-      filtered = filtered.filter(company => {
-        const companyData = companies.find(c => c.id === company.id);
-        return companyData && filteredOrgIds.has(companyData.organizationId);
+      return companies.filter(company => {
+        return filteredOrgIds.has(company.id);
       });
     }
     
-    // 事業会社名フィルター
-    if (filteredCompanyIds.size > 0) {
-      filtered = filtered.filter(company => filteredCompanyIds.has(company.id));
-    }
-    
-    return filtered;
-  }, [viewMode, companyHierarchyLevels, companies, filteredOrgIds, filteredCompanyIds]);
+    return companies;
+  }, [selectedTypeFilter, hierarchyLevels, selectedLevel, orgTree, filteredOrgIds]);
 
-  // レベル1とレベル2の組織を取得（事業会社モードのフィルターボタン用）
+  // レベル1とレベル2の組織を取得（フィルターボタン用）
   const level1And2Orgs = useMemo(() => {
-    if (viewMode !== 'company') return [];
-    
     const level1Orgs = hierarchyLevels.find(l => l.level === 0)?.orgs || [];
     const level2Orgs = hierarchyLevels.find(l => l.level === 1)?.orgs || [];
-    
-    // 各組織に紐づく事業会社が存在するかチェック
-    return [...level1Orgs, ...level2Orgs].filter(org => {
-      return companies.some(c => c.organizationId === org.id);
-    });
-  }, [viewMode, hierarchyLevels, companies]);
+    return [...level1Orgs, ...level2Orgs];
+  }, [hierarchyLevels]);
 
   // 選択された階層レベルの組織とその子孫組織IDのマップを取得
   const orgIdsWithDescendants = useMemo(() => {
@@ -674,9 +625,9 @@ export default function DashboardPage() {
     return result;
   }, [themes, filteredThemeIds]);
 
-  // テーマ×組織の施策件数を集計（子組織の施策も含める）- 組織モード
+  // テーマ×組織の施策件数を集計（子組織の施策も含める）
   const chartDataOrganization = useMemo(() => {
-    if (viewMode !== 'organization' || filteredThemes.length === 0 || selectedLevelOrgs.length === 0) {
+    if (selectedTypeFilter === 'company' || filteredThemes.length === 0 || selectedLevelOrgs.length === 0) {
       return [];
     }
 
@@ -718,9 +669,9 @@ export default function DashboardPage() {
     return data;
   }, [viewMode, filteredThemes, selectedLevelOrgs, initiatives, orgIdsWithDescendants]);
 
-  // テーマ×事業会社の施策件数を集計 - 事業会社モード
+  // テーマ×事業会社の施策件数を集計（type='company'の組織用）
   const chartDataCompany = useMemo(() => {
-    if (viewMode !== 'company' || filteredThemes.length === 0 || selectedLevelCompanies.length === 0) {
+    if (selectedTypeFilter !== 'company' || filteredThemes.length === 0 || selectedLevelCompanies.length === 0) {
       return [];
     }
 
@@ -734,9 +685,11 @@ export default function DashboardPage() {
 
     filteredThemes.forEach(theme => {
       selectedLevelCompanies.forEach(company => {
-        const relatedInitiatives = companyInitiatives.filter(init => {
-          if (init.companyId !== company.id) return false;
+        // 事業会社の管理はorganizationsテーブルのtypeカラムで行うため、initiativesから取得
+        const relatedInitiatives = initiatives.filter(init => {
+          if (init.organizationId !== company.id) return false;
           if (Array.isArray(init.themeIds) && init.themeIds.includes(theme.id)) return true;
+          if (init.themeId === theme.id) return true;
           return false;
         });
 
@@ -757,12 +710,12 @@ export default function DashboardPage() {
     });
 
     return data;
-  }, [viewMode, filteredThemes, selectedLevelCompanies, companyInitiatives]);
+  }, [selectedTypeFilter, filteredThemes, selectedLevelCompanies, initiatives]);
 
   // 表示モードに応じて適切なデータを返す
   const chartData = useMemo(() => {
-    return viewMode === 'organization' ? chartDataOrganization : chartDataCompany;
-  }, [viewMode, chartDataOrganization, chartDataCompany]);
+    return selectedTypeFilter === 'company' ? chartDataCompany : chartDataOrganization;
+  }, [selectedTypeFilter, chartDataOrganization, chartDataCompany]);
 
   // Vega-Liteのグラフ仕様を生成（メモ化でパフォーマンス向上）
   const chartSpec = useMemo(() => {
@@ -956,28 +909,29 @@ export default function DashboardPage() {
     setFilteredOrgIds(newFilteredOrgIds);
     
     // 事業会社モードの場合、組織に紐づく事業会社も自動的に選択/解除
-    if (viewMode === 'company') {
-      const linkedCompanyIds = companies
-        .filter(c => c.organizationId === orgId)
-        .map(c => c.id);
-      
-      const newFilteredCompanyIds = new Set(filteredCompanyIds);
-      if (isAdding) {
-        // 組織を選択した場合、その組織に紐づく事業会社も選択
-        linkedCompanyIds.forEach(companyId => {
-          newFilteredCompanyIds.add(companyId);
-        });
-      } else {
-        // 組織を解除した場合、その組織に紐づく事業会社も解除
-        linkedCompanyIds.forEach(companyId => {
-          newFilteredCompanyIds.delete(companyId);
-        });
-      }
-      setFilteredCompanyIds(newFilteredCompanyIds);
-    }
+    // 事業会社の管理はorganizationsテーブルのtypeカラムで行うため、この処理は不要
+    // if (viewMode === 'company') {
+    //   const linkedCompanyIds = companies
+    //     .filter(c => c.organizationId === orgId)
+    //     .map(c => c.id);
+    //   
+    //   const newFilteredCompanyIds = new Set(filteredCompanyIds);
+    //   if (isAdding) {
+    //     // 組織を選択した場合、その組織に紐づく事業会社も選択
+    //     linkedCompanyIds.forEach(companyId => {
+    //       newFilteredCompanyIds.add(companyId);
+    //     });
+    //   } else {
+    //     // 組織を解除した場合、その組織に紐づく事業会社も解除
+    //     linkedCompanyIds.forEach(companyId => {
+    //       newFilteredCompanyIds.delete(companyId);
+    //     });
+    //   }
+    //   setFilteredCompanyIds(newFilteredCompanyIds);
+    // }
     
     setSelectedThemeId(null); // フィルター変更時に選択をリセット
-  }, [viewMode, filteredOrgIds, filteredCompanyIds, companies]);
+  }, [viewMode, filteredOrgIds]);
 
   // グラフのクリックイベントハンドラー
   const handleChartSignal = useCallback((signalName: string, value: any) => {
@@ -988,7 +942,7 @@ export default function DashboardPage() {
 
   // 選択されたテーマに関連する注力施策を取得（組織モード）
   const selectedThemeInitiatives = useMemo(() => {
-    if (viewMode !== 'organization' || !selectedThemeId) return [];
+    if (selectedTypeFilter === 'company' || !selectedThemeId) return [];
 
     // 選択された階層レベルの組織とその子孫組織IDを取得
     const orgIdsToInclude = Array.from(orgIdsWithDescendants.values()).flat();
@@ -1006,15 +960,31 @@ export default function DashboardPage() {
 
   // 選択されたテーマに関連する事業会社の注力施策を取得（事業会社モード）
   const selectedThemeCompanyInitiatives = useMemo(() => {
-    if (viewMode !== 'company' || !selectedThemeId) return [];
+    if (selectedTypeFilter !== 'company' || !selectedThemeId) return [];
     
-    return companyInitiatives.filter(init => {
+    // 事業会社の管理はorganizationsテーブルのtypeカラムで行うため、companyInitiativesは使用しない
+    // 代わりに、initiativesからtype='company'の組織の施策を取得
+    return initiatives.filter(init => {
+      // 組織IDからtypeを確認
+      const findOrg = (node: OrgNodeData, targetId: string): OrgNodeData | null => {
+        if (node.id === targetId) return node;
+        if (node.children) {
+          for (const child of node.children) {
+            const found = findOrg(child, targetId);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      const org = orgTree ? findOrg(orgTree, init.organizationId || '') : null;
+      if (!org || (org as any).type !== 'company') return false;
+      
       if (Array.isArray(init.themeIds) && init.themeIds.includes(selectedThemeId)) {
         return true;
       }
       return false;
     });
-  }, [viewMode, selectedThemeId, companyInitiatives]);
+  }, [selectedTypeFilter, selectedThemeId, initiatives, orgTree]);
 
   // 選択されたテーマの情報を取得
   const selectedTheme = useMemo(() => {
@@ -1024,9 +994,9 @@ export default function DashboardPage() {
 
   // フィルター適用後の施策総数を計算
   const filteredInitiativeCount = useMemo(() => {
-    if (viewMode === 'organization') {
-      // 組織モード
-    const orgIdsToInclude = Array.from(orgIdsWithDescendants.values()).flat();
+    if (selectedTypeFilter !== 'company') {
+      // 組織/個人/すべてモード
+      const orgIdsToInclude = Array.from(orgIdsWithDescendants.values()).flat();
     const filteredOrgIdsArray = filteredOrgIds.size > 0 
       ? Array.from(filteredOrgIds)
       : orgIdsToInclude;
@@ -1049,27 +1019,35 @@ export default function DashboardPage() {
       return themeMatch;
     }).length;
     } else {
-      // 事業会社モード
+      // 事業会社モード（type='company'の組織の施策を取得）
       const filteredThemeIdsArray = filteredThemeIds.size > 0
         ? Array.from(filteredThemeIds)
         : filteredThemes.map(t => t.id);
-      
-      let filteredInitiatives = companyInitiatives;
+
+      // 事業会社の管理はorganizationsテーブルのtypeカラムで行うため、initiativesからtype='company'の組織の施策を取得
+      let filteredInitiatives = initiatives.filter(init => {
+        const findOrg = (node: OrgNodeData, targetId: string): OrgNodeData | null => {
+          if (node.id === targetId) return node;
+          if (node.children) {
+            for (const child of node.children) {
+              const found = findOrg(child, targetId);
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+        const org = orgTree ? findOrg(orgTree, init.organizationId || '') : null;
+        return org && (org as any).type === 'company';
+      });
       
       // 組織フィルター
       if (filteredOrgIds.size > 0) {
         filteredInitiatives = filteredInitiatives.filter(init => {
-          const company = companies.find(c => c.id === init.companyId);
-          return company && filteredOrgIds.has(company.organizationId);
+          return init.organizationId && filteredOrgIds.has(init.organizationId);
         });
       }
       
-      // 事業会社名フィルター
-      if (filteredCompanyIds.size > 0) {
-        filteredInitiatives = filteredInitiatives.filter(init => 
-          filteredCompanyIds.has(init.companyId)
-        );
-      }
+      // 事業会社名フィルターは削除（typeで管理するため）
       
       // テーマフィルター
       return filteredInitiatives.filter(init => {
@@ -1079,34 +1057,25 @@ export default function DashboardPage() {
         });
       }).length;
     }
-  }, [viewMode, initiatives, orgIdsWithDescendants, filteredOrgIds, filteredThemeIds, filteredThemes, companyInitiatives, companies, filteredCompanyIds]);
+  }, [viewMode, initiatives, orgIdsWithDescendants, filteredOrgIds, filteredThemeIds, filteredThemes]);
 
   // フィルターが適用されているかチェック
   const hasActiveFilters = useMemo(() => {
-    if (viewMode === 'organization') {
-      return filteredOrgIds.size > 0 || filteredThemeIds.size > 0;
-    } else {
-      return filteredOrgIds.size > 0 || filteredCompanyIds.size > 0 || filteredThemeIds.size > 0;
-    }
-  }, [viewMode, filteredOrgIds, filteredCompanyIds, filteredThemeIds]);
+    return filteredOrgIds.size > 0 || filteredThemeIds.size > 0;
+  }, [filteredOrgIds, filteredThemeIds]);
 
   // フィルター数の計算
   const filterCount = useMemo(() => {
-    if (viewMode === 'organization') {
-      return filteredOrgIds.size + filteredThemeIds.size;
-    } else {
-      return filteredOrgIds.size + filteredCompanyIds.size + filteredThemeIds.size;
-    }
-  }, [viewMode, filteredOrgIds, filteredCompanyIds, filteredThemeIds]);
+    return filteredOrgIds.size + filteredThemeIds.size;
+  }, [filteredOrgIds, filteredThemeIds]);
 
   // フィルタークリア関数
   const handleClearFilters = useCallback(() => {
     setFilteredOrgIds(new Set());
     setFilteredThemeIds(new Set());
-    if (viewMode === 'company') {
-      setFilteredCompanyIds(new Set());
-    }
-  }, [viewMode]);
+    // 事業会社の管理はorganizationsテーブルのtypeカラムで行うため、この処理は不要
+    // setFilteredCompanyIds(new Set());
+  }, []);
 
   // グラフと注力施策一覧を画像としてダウンロード
   const handleDownloadImage = useCallback(async () => {
@@ -1210,7 +1179,7 @@ export default function DashboardPage() {
             fontSize: '14px',
             color: '#808080',
           }}>
-            テーマごとの施策件数を{viewMode === 'organization' ? '組織' : '事業会社'}別に分析します
+            テーマごとの施策件数を{selectedTypeFilter === 'all' ? 'すべて' : selectedTypeFilter === 'company' ? '事業会社' : selectedTypeFilter === 'person' ? '個人' : '組織'}別に分析します
           </p>
         </div>
 
@@ -1223,14 +1192,37 @@ export default function DashboardPage() {
           }}>
             <button
               type="button"
-              onClick={() => setViewMode('organization')}
+              onClick={() => {
+                setViewMode('all');
+                setSelectedTypeFilter('all');
+              }}
               style={{
                 padding: '10px 20px',
                 fontSize: '14px',
-                fontWeight: viewMode === 'organization' ? '600' : '400',
-                color: viewMode === 'organization' ? '#4262FF' : '#1A1A1A',
-                backgroundColor: viewMode === 'organization' ? '#F0F4FF' : '#FFFFFF',
-                border: viewMode === 'organization' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
+                fontWeight: selectedTypeFilter === 'all' ? '600' : '400',
+                color: selectedTypeFilter === 'all' ? '#4262FF' : '#1A1A1A',
+                backgroundColor: selectedTypeFilter === 'all' ? '#F0F4FF' : '#FFFFFF',
+                border: selectedTypeFilter === 'all' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                transition: 'all 150ms',
+              }}
+            >
+              すべて
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode('organization');
+                setSelectedTypeFilter('organization');
+              }}
+              style={{
+                padding: '10px 20px',
+                fontSize: '14px',
+                fontWeight: selectedTypeFilter === 'organization' ? '600' : '400',
+                color: selectedTypeFilter === 'organization' ? '#4262FF' : '#1A1A1A',
+                backgroundColor: selectedTypeFilter === 'organization' ? '#F0F4FF' : '#FFFFFF',
+                border: selectedTypeFilter === 'organization' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
                 borderRadius: '8px',
                 cursor: 'pointer',
                 transition: 'all 150ms',
@@ -1240,20 +1232,43 @@ export default function DashboardPage() {
             </button>
             <button
               type="button"
-              onClick={() => setViewMode('company')}
+              onClick={() => {
+                setViewMode('company');
+                setSelectedTypeFilter('company');
+              }}
               style={{
                 padding: '10px 20px',
                 fontSize: '14px',
-                fontWeight: viewMode === 'company' ? '600' : '400',
-                color: viewMode === 'company' ? '#4262FF' : '#1A1A1A',
-                backgroundColor: viewMode === 'company' ? '#F0F4FF' : '#FFFFFF',
-                border: viewMode === 'company' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
+                fontWeight: selectedTypeFilter === 'company' ? '600' : '400',
+                color: selectedTypeFilter === 'company' ? '#10B981' : '#1A1A1A',
+                backgroundColor: selectedTypeFilter === 'company' ? '#ECFDF5' : '#FFFFFF',
+                border: selectedTypeFilter === 'company' ? '2px solid #10B981' : '1.5px solid #E0E0E0',
                 borderRadius: '8px',
                 cursor: 'pointer',
                 transition: 'all 150ms',
               }}
             >
               事業会社
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode('person');
+                setSelectedTypeFilter('person');
+              }}
+              style={{
+                padding: '10px 20px',
+                fontSize: '14px',
+                fontWeight: selectedTypeFilter === 'person' ? '600' : '400',
+                color: selectedTypeFilter === 'person' ? '#A855F7' : '#1A1A1A',
+                backgroundColor: selectedTypeFilter === 'person' ? '#F5F3FF' : '#FFFFFF',
+                border: selectedTypeFilter === 'person' ? '2px solid #A855F7' : '1.5px solid #E0E0E0',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                transition: 'all 150ms',
+              }}
+            >
+              個人
             </button>
           </div>
         </div>
@@ -1396,7 +1411,7 @@ export default function DashboardPage() {
         )}
 
         {/* 組織モード: 階層レベル選択とフィルター */}
-        {viewMode === 'organization' && hierarchyLevels.length > 0 && (
+        {hierarchyLevels.length > 0 && (
           <div style={{ marginBottom: '24px' }}>
             <div style={{
               display: 'flex',
@@ -1556,7 +1571,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {viewMode === 'company' && selectedLevelCompanies.length === 0 && (
+        {selectedTypeFilter === 'company' && selectedLevelCompanies.length === 0 && (
           <div style={{
             padding: '16px',
             backgroundColor: '#FFFBF0',
@@ -1694,7 +1709,7 @@ export default function DashboardPage() {
                 position: 'relative',
                 zIndex: 1,
               }}>
-                {viewMode === 'organization' ? '組織数' : '事業会社数'}
+                {selectedTypeFilter === 'company' ? '事業会社数' : selectedTypeFilter === 'person' ? '個人数' : '組織数'}
               </div>
               <div style={{
                 fontSize: '40px',
@@ -1706,7 +1721,7 @@ export default function DashboardPage() {
                 zIndex: 1,
                 fontFamily: 'var(--font-inter), -apple-system, BlinkMacSystemFont, sans-serif',
               }}>
-                {viewMode === 'organization' ? selectedLevelOrgs.length : selectedLevelCompanies.length}
+                {selectedTypeFilter === 'company' ? selectedLevelCompanies.length : selectedLevelOrgs.length}
               </div>
               <div style={{
                 fontSize: '13px',
@@ -1715,8 +1730,8 @@ export default function DashboardPage() {
                 position: 'relative',
                 zIndex: 1,
               }}>
-                件の{viewMode === 'organization' ? '組織' : '事業会社'}
-                {(filteredOrgIds.size > 0 || (viewMode === 'company' && filteredCompanyIds.size > 0)) && (
+                件の{selectedTypeFilter === 'company' ? '事業会社' : selectedTypeFilter === 'person' ? '個人' : '組織'}
+                {filteredOrgIds.size > 0 && (
                   <span style={{
                     fontSize: '11px',
                     color: '#4262FF',
@@ -1841,7 +1856,7 @@ export default function DashboardPage() {
                     margin: '4px 0 0 0',
                     fontFamily: 'var(--font-inter), var(--font-noto), sans-serif',
                   }}>
-                    {viewMode === 'company' ? '事業会社別' : `階層レベル${selectedLevel}`}
+                    {selectedTypeFilter === 'company' ? '事業会社別' : selectedTypeFilter === 'person' ? '個人別' : `階層レベル${selectedLevel}`}
                   </p>
                 </div>
                 <DynamicVegaChart
@@ -1856,7 +1871,7 @@ export default function DashboardPage() {
           ) : (
             themes.length > 0 && 
             ((viewMode === 'organization' && selectedLevelOrgs.length > 0) || 
-             (viewMode === 'company' && selectedLevelCompanies.length > 0)) && (
+             (selectedTypeFilter === 'company' && selectedLevelCompanies.length > 0)) && (
               <div style={{
                 padding: '60px 20px',
                 textAlign: 'center',
@@ -1881,7 +1896,7 @@ export default function DashboardPage() {
               fontSize: '14px',
             }}>
             {/* 選択されたテーマの注力施策カード - 組織モード */}
-            {viewMode === 'organization' && selectedTheme && selectedThemeInitiatives.length > 0 && (
+            {selectedTypeFilter !== 'company' && selectedTheme && selectedThemeInitiatives.length > 0 && (
               <div style={{ marginTop: '24px', borderTop: '1px solid #E5E7EB', paddingTop: '16px' }}>
                 <div style={{ fontWeight: '600', marginBottom: '12px', fontSize: '16px', color: '#1A1A1A' }}>
                   「{selectedTheme.title}」の注力施策 ({selectedThemeInitiatives.length}件)
@@ -2014,7 +2029,7 @@ export default function DashboardPage() {
             )}
 
             {/* 選択されたテーマの注力施策カード - 事業会社モード */}
-            {viewMode === 'company' && selectedTheme && selectedThemeCompanyInitiatives.length > 0 && (
+            {selectedTypeFilter === 'company' && selectedTheme && selectedThemeCompanyInitiatives.length > 0 && (
               <div style={{ marginTop: '24px', borderTop: '1px solid #E5E7EB', paddingTop: '16px' }}>
                 <div style={{ fontWeight: '600', marginBottom: '12px', fontSize: '16px', color: '#1A1A1A' }}>
                   「{selectedTheme.title}」の注力施策 ({selectedThemeCompanyInitiatives.length}件)
@@ -2048,8 +2063,8 @@ export default function DashboardPage() {
                           e.currentTarget.style.boxShadow = 'none';
                         }}
                         onClick={() => {
-                          // 事業会社の注力施策詳細ページに遷移（/organization/initiativeページを使用）
-                          window.location.href = `/organization/initiative?companyId=${initiative.companyId}&initiativeId=${initiative.id}`;
+                          // 注力施策詳細ページに遷移（/organization/initiativeページを使用）
+                          window.location.href = `/organization/initiative?organizationId=${initiative.organizationId}&initiativeId=${initiative.id}`;
                         }}
                       >
                         <div style={{
@@ -2075,8 +2090,8 @@ export default function DashboardPage() {
             )}
 
             {selectedTheme && 
-             ((viewMode === 'organization' && selectedThemeInitiatives.length === 0) ||
-              (viewMode === 'company' && selectedThemeCompanyInitiatives.length === 0)) && (
+             ((selectedTypeFilter !== 'company' && selectedThemeInitiatives.length === 0) ||
+              (selectedTypeFilter === 'company' && selectedThemeCompanyInitiatives.length === 0)) && (
               <div style={{
                 marginTop: '24px',
                 borderTop: '1px solid #E5E7EB',
@@ -2211,7 +2226,7 @@ export default function DashboardPage() {
               </div>
 
               {/* 組織フィルター（階層ごと、ボタン形式） */}
-              {viewMode === 'organization' && (
+              {(
               <div style={{ marginBottom: '32px' }}>
                 <label style={{
                   display: 'block',
@@ -2342,9 +2357,21 @@ export default function DashboardPage() {
                           backgroundColor: '#FAFAFA',
                         }}>
                           {levelData.orgs.map(org => {
-                            // この組織に紐づく事業会社が存在するかチェック
-                            const hasCompanies = companies.some(c => c.organizationId === org.id);
-                            if (!hasCompanies) return null;
+                            // type='company'の組織のみ表示（事業会社モードの場合）
+                            if (selectedTypeFilter === 'company') {
+                              const findOrg = (node: OrgNodeData, targetId: string): OrgNodeData | null => {
+                                if (node.id === targetId) return node;
+                                if (node.children) {
+                                  for (const child of node.children) {
+                                    const found = findOrg(child, targetId);
+                                    if (found) return found;
+                                  }
+                                }
+                                return null;
+                              };
+                              const actualOrg = orgTree ? findOrg(orgTree, org.id) : null;
+                              if (!actualOrg || (actualOrg as any).type !== 'company') return null;
+                            }
 
                             const isSelected = filteredOrgIds.has(org.id);
                             return (
@@ -2363,23 +2390,24 @@ export default function DashboardPage() {
                                   setFilteredOrgIds(newFilteredOrgIds);
                                   
                                   // 組織に紐づく事業会社も自動的に選択/解除
-                                  const linkedCompanyIds = companies
-                                    .filter(c => c.organizationId === org.id)
-                                    .map(c => c.id);
-                                  
-                                  const newFilteredCompanyIds = new Set(filteredCompanyIds);
-                                  if (isAdding) {
-                                    // 組織を選択した場合、その組織に紐づく事業会社も選択
-                                    linkedCompanyIds.forEach(companyId => {
-                                      newFilteredCompanyIds.add(companyId);
-                                    });
-                                  } else {
-                                    // 組織を解除した場合、その組織に紐づく事業会社も解除
-                                    linkedCompanyIds.forEach(companyId => {
-                                      newFilteredCompanyIds.delete(companyId);
-                                    });
-                                  }
-                                  setFilteredCompanyIds(newFilteredCompanyIds);
+                                  // 事業会社の管理はorganizationsテーブルのtypeカラムで行うため、この処理は不要
+                                  // const linkedCompanyIds = companies
+                                  //   .filter(c => c.organizationId === org.id)
+                                  //   .map(c => c.id);
+                                  // 
+                                  // const newFilteredCompanyIds = new Set(filteredCompanyIds);
+                                  // if (isAdding) {
+                                  //   // 組織を選択した場合、その組織に紐づく事業会社も選択
+                                  //   linkedCompanyIds.forEach(companyId => {
+                                  //     newFilteredCompanyIds.add(companyId);
+                                  //   });
+                                  // } else {
+                                  //   // 組織を解除した場合、その組織に紐づく事業会社も解除
+                                  //   linkedCompanyIds.forEach(companyId => {
+                                  //     newFilteredCompanyIds.delete(companyId);
+                                  //   });
+                                  // }
+                                  // setFilteredCompanyIds(newFilteredCompanyIds);
                                 }}
                                 style={{
                                   padding: '12px 20px',
@@ -2417,88 +2445,7 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {/* 事業会社名フィルター（事業会社モードのみ） */}
-              {viewMode === 'company' && (
-                <div style={{ marginBottom: '32px' }}>
-                  <label style={{
-                    display: 'block',
-                    fontSize: '16px',
-                    fontWeight: '600',
-                    color: '#1A1A1A',
-                    marginBottom: '20px',
-                  }}>
-                    事業会社名でフィルター
-                  </label>
-                  <div style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: '12px',
-                    maxHeight: '400px',
-                    overflowY: 'auto',
-                    padding: '16px',
-                    border: '1px solid #E5E7EB',
-                    borderRadius: '8px',
-                    backgroundColor: '#FAFAFA',
-                  }}>
-                    {companies.length === 0 ? (
-                      <p style={{
-                        fontSize: '13px',
-                        color: '#6B7280',
-                        width: '100%',
-                        textAlign: 'center',
-                        padding: '20px',
-                      }}>
-                        事業会社が登録されていません
-                      </p>
-                    ) : (
-                      companies.map(company => {
-                        const isSelected = filteredCompanyIds.has(company.id);
-                        return (
-                          <button
-                            key={company.id}
-                            type="button"
-                            onClick={() => {
-                              const newFilteredCompanyIds = new Set(filteredCompanyIds);
-                              if (isSelected) {
-                                newFilteredCompanyIds.delete(company.id);
-                              } else {
-                                newFilteredCompanyIds.add(company.id);
-                              }
-                              setFilteredCompanyIds(newFilteredCompanyIds);
-                            }}
-                            style={{
-                              padding: '12px 20px',
-                              fontSize: '14px',
-                              fontWeight: isSelected ? '600' : '400',
-                              color: isSelected ? '#4262FF' : '#1A1A1A',
-                              backgroundColor: isSelected ? '#F0F4FF' : '#FFFFFF',
-                              border: isSelected ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
-                              borderRadius: '8px',
-                              cursor: 'pointer',
-                              transition: 'all 150ms',
-                              whiteSpace: 'nowrap',
-                            }}
-                            onMouseEnter={(e) => {
-                              if (!isSelected) {
-                                e.currentTarget.style.borderColor = '#C4C4C4';
-                                e.currentTarget.style.backgroundColor = '#FAFAFA';
-                              }
-                            }}
-                            onMouseLeave={(e) => {
-                              if (!isSelected) {
-                                e.currentTarget.style.borderColor = '#E0E0E0';
-                                e.currentTarget.style.backgroundColor = '#FFFFFF';
-                              }
-                            }}
-                          >
-                            {company.name}
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-              )}
+              {/* 事業会社名フィルターは削除（typeで管理するため） */}
 
               {/* テーマフィルター（ボタン形式） */}
               <div style={{ marginBottom: '32px' }}>

@@ -2,7 +2,8 @@
 
 import { useMemo, useEffect, useRef, useState } from 'react';
 import { hierarchy, pack } from 'd3-hierarchy';
-import type { Company } from '@/lib/companiesApi';
+// import type { Company } from '@/lib/companiesApi'; // Companiesテーブル削除のためコメントアウト
+type Company = any; // Companiesテーブル削除のため、一時的な型定義
 import type { CompanyNodeData } from './CompanyChart';
 
 interface CompanyBubbleChartProps {

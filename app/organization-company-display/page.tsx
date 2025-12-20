@@ -11,14 +11,14 @@ import {
   type OrganizationCompanyDisplay,
 } from '@/lib/organizationCompanyDisplayApi';
 import { getOrgTreeFromDb, type OrgNodeData } from '@/lib/orgApi';
-import { getAllCompanies, type Company } from '@/lib/companiesApi';
+// import { getAllCompanies, type Company } from '@/lib/companiesApi'; // Companiesテーブル削除のためコメントアウト
 import { tauriAlert, tauriConfirm } from '@/lib/orgApi';
 
 export default function OrganizationCompanyDisplayPage() {
   const router = useRouter();
   const [displays, setDisplays] = useState<OrganizationCompanyDisplay[]>([]);
   const [organizations, setOrganizations] = useState<OrgNodeData | null>(null);
-  const [companies, setCompanies] = useState<Company[]>([]);
+  // const [companies, setCompanies] = useState<Company[]>([]); // Companiesテーブル削除のためコメントアウト
   const [loading, setLoading] = useState(true);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
@@ -30,13 +30,12 @@ export default function OrganizationCompanyDisplayPage() {
     const loadData = async () => {
       try {
         setLoading(true);
-        const [orgTree, companiesData, displaysData] = await Promise.all([
+        const [orgTree, displaysData] = await Promise.all([
           getOrgTreeFromDb(),
-          getAllCompanies(),
           getAllOrganizationCompanyDisplays(),
         ]);
         setOrganizations(orgTree);
-        setCompanies(companiesData || []);
+        // setCompanies(companiesData || []); // Companiesテーブル削除のためコメントアウト
         setDisplays(displaysData || []);
       } catch (error: any) {
         console.error('データの取得に失敗しました:', error);
@@ -81,10 +80,11 @@ export default function OrganizationCompanyDisplayPage() {
     return org?.name || organizationId;
   };
 
-  // 事業会社名を取得
+  // 事業会社名を取得（Companiesテーブル削除のため、IDをそのまま返す）
   const getCompanyName = (companyId: string): string => {
-    const company = companies.find(c => c.id === companyId);
-    return company?.name || companyId;
+    // const company = companies.find(c => c.id === companyId);
+    // return company?.name || companyId;
+    return companyId; // Companiesテーブル削除のため、IDをそのまま返す
   };
 
   // 選択された組織に表示される事業会社のリスト
@@ -332,30 +332,11 @@ export default function OrganizationCompanyDisplayPage() {
                 </select>
               </div>
 
-              <div style={{ marginBottom: '24px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
-                  事業会社
-                </label>
-                <select
-                  value={selectedCompanyId || ''}
-                  onChange={(e) => setSelectedCompanyId(e.target.value || null)}
-                  disabled={saving}
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    border: '1px solid #D1D5DB',
-                    borderRadius: '6px',
-                    fontSize: '14px',
-                    backgroundColor: saving ? '#F3F4F6' : '#FFFFFF',
-                  }}
-                >
-                  <option value="">選択してください</option>
-                  {companies.map(company => (
-                    <option key={company.id} value={company.id}>
-                      {company.name} ({company.code})
-                    </option>
-                  ))}
-                </select>
+              {/* 事業会社選択はCompaniesテーブル削除のため無効化 */}
+              <div style={{ marginBottom: '24px', padding: '12px', backgroundColor: '#FEF3C7', borderRadius: '6px', border: '1px solid #FCD34D' }}>
+                <p style={{ margin: 0, fontSize: '14px', color: '#92400E' }}>
+                  ⚠️ 事業会社機能は削除されました。組織と事業会社の表示関係管理は現在利用できません。
+                </p>
               </div>
 
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
@@ -380,18 +361,18 @@ export default function OrganizationCompanyDisplayPage() {
                 </button>
                 <button
                   onClick={handleAddDisplay}
-                  disabled={saving || !selectedOrganizationId || !selectedCompanyId}
+                  disabled={true}
                   style={{
                     padding: '10px 20px',
-                    backgroundColor: saving || !selectedOrganizationId || !selectedCompanyId ? '#9CA3AF' : '#3B82F6',
+                    backgroundColor: '#9CA3AF',
                     color: 'white',
                     border: 'none',
                     borderRadius: '6px',
-                    cursor: saving || !selectedOrganizationId || !selectedCompanyId ? 'not-allowed' : 'pointer',
+                    cursor: 'not-allowed',
                     fontSize: '14px',
                   }}
                 >
-                  {saving ? '追加中...' : '追加'}
+                  追加（無効化）
                 </button>
               </div>
             </div>

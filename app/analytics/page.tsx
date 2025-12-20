@@ -337,9 +337,6 @@ function SortableThemeItem({
   );
 }
 
-// データ表示モードの型定義
-type DataViewMode = 'organization' | 'company';
-
 export default function AnalyticsPage() {
   const [themes, setThemes] = useState<Theme[]>([]);
   const [selectedThemeId, setSelectedThemeId] = useState<string | null>(null);
@@ -349,7 +346,7 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'diagram' | 'bubble'>('diagram');
-  const [dataViewMode, setDataViewMode] = useState<DataViewMode>('organization');
+  const [selectedTypeFilter, setSelectedTypeFilter] = useState<'all' | 'organization' | 'company' | 'person'>('all');
   const [showThemeModal, setShowThemeModal] = useState(false);
   const [editingTheme, setEditingTheme] = useState<Theme | null>(null);
   const [themeFormTitle, setThemeFormTitle] = useState('');
@@ -358,12 +355,6 @@ export default function AnalyticsPage() {
   const [themeToDelete, setThemeToDelete] = useState<Theme | null>(null);
   const [showEditThemesModal, setShowEditThemesModal] = useState(false);
   const [orderedThemes, setOrderedThemes] = useState<Theme[]>([]);
-  
-  // 事業会社関連の状態
-  // const [companies, setCompanies] = useState<Company[]>([]); // 削除（Companiesページ削除のため）
-  // const [companyInitiatives, setCompanyInitiatives] = useState<CompanyFocusInitiative[]>([]); // 削除（Companiesページ削除のため）
-  const [companies, setCompanies] = useState<any[]>([]); // 一時的にany[]に変更
-  const [companyInitiatives, setCompanyInitiatives] = useState<any[]>([]); // 一時的にany[]に変更
 
   // テーマリストを再読み込みする関数（先に定義）
   const refreshThemes = useCallback(async () => {
@@ -570,109 +561,55 @@ export default function AnalyticsPage() {
           (window as any).refreshThemes = refreshThemes;
         }
         
-        // データ表示モードに応じてデータを取得
-        if (dataViewMode === 'organization') {
-          // 組織モード: 組織の注力施策を取得
-          if (orgTree) {
-            const allInitiatives: FocusInitiative[] = [];
-            const collectInitiatives = async (org: OrgNodeData) => {
-              if (org.id) {
-                const orgInitiatives = await getFocusInitiatives(org.id);
-                allInitiatives.push(...orgInitiatives);
+        // 組織と事業会社の注力施策を取得（typeで区別）
+        if (orgTree) {
+          const allInitiatives: FocusInitiative[] = [];
+          const collectInitiatives = async (org: OrgNodeData) => {
+            if (org.id) {
+              const orgInitiatives = await getFocusInitiatives(org.id);
+              allInitiatives.push(...orgInitiatives);
+            }
+            
+            if (org.children) {
+              for (const child of org.children) {
+                await collectInitiatives(child);
               }
-              
-              if (org.children) {
-                for (const child of org.children) {
-                  await collectInitiatives(child);
-                }
-              }
-            };
-            
-            await collectInitiatives(orgTree);
-            
-            // デバッグ: topicIdsが含まれている注力施策を確認
-            const initiativesWithTopics = allInitiatives.filter(i => i.topicIds && i.topicIds.length > 0);
-            devLog('🔍 [Analytics] トピックが紐づけられた注力施策:', {
-              count: initiativesWithTopics.length,
-            });
-            
-            setInitiatives(allInitiatives);
-            
-            // すべての個別トピックを取得
-            const allTopics: TopicInfo[] = [];
-            const collectTopics = async (org: OrgNodeData) => {
-              if (org.id) {
-                const orgTopics = await getAllTopics(org.id);
-                allTopics.push(...orgTopics);
-              }
-              
-              if (org.children) {
-                for (const child of org.children) {
-                  await collectTopics(child);
-                }
-              }
-            };
-            
-            await collectTopics(orgTree);
-            
-            // デバッグ: 取得したトピックを確認
-            devLog('🔍 [Analytics] 取得したトピック:', {
-              count: allTopics.length,
-            });
-            
-            setTopics(allTopics);
-          }
-        } else {
-          // 事業会社モード: 事業会社の注力施策を取得
+            }
+          };
           
-          // 各事業会社の注力施策を取得（事業会社ページ削除のため一時的に無効化）
-          // const initiativePromises = allCompanies.map(company => 
-          //   getCompanyFocusInitiatives(company.id)
-          // );
-          // const initiativeResults = await Promise.allSettled(initiativePromises);
+          await collectInitiatives(orgTree);
           
-          // const allCompanyInitiatives: CompanyFocusInitiative[] = [];
-          // initiativeResults.forEach((result, index) => {
-          //   if (result.status === 'fulfilled') {
-          //     allCompanyInitiatives.push(...result.value);
-          //   } else {
-          //     devWarn(`⚠️ [Analytics] 事業会社「${allCompanies[index].name}」の施策取得エラー:`, result.reason);
-          //   }
-          // });
-          
-          setCompanyInitiatives([]); // 空配列に設定
-          
-          // 事業会社モードでもトピックを取得（組織ツリーから）
-          
-          // 事業会社モードでもトピックを取得（組織ツリーから）
-          if (orgTree) {
-            const allTopics: TopicInfo[] = [];
-            const collectTopics = async (org: OrgNodeData) => {
-              if (org.id) {
-                const orgTopics = await getAllTopics(org.id);
-                allTopics.push(...orgTopics);
-              }
-              
-              if (org.children) {
-                for (const child of org.children) {
-                  await collectTopics(child);
-                }
-              }
-            };
-            
-            await collectTopics(orgTree);
-            
-            devLog('🔍 [Analytics] 取得したトピック:', {
-              count: allTopics.length,
-            });
-            
-            setTopics(allTopics);
-          }
-          
-          devLog('🔍 [Analytics] 事業会社モード データ読み込み完了:', {
-            companies: 0, // allCompanies.length, // 削除（事業会社ページ削除のため）
-            companyInitiatives: 0, // allCompanyInitiatives.length, // 削除（事業会社ページ削除のため）
+          // デバッグ: topicIdsが含まれている注力施策を確認
+          const initiativesWithTopics = allInitiatives.filter(i => i.topicIds && i.topicIds.length > 0);
+          devLog('🔍 [Analytics] トピックが紐づけられた注力施策:', {
+            count: initiativesWithTopics.length,
           });
+          
+          setInitiatives(allInitiatives);
+          
+          // すべての個別トピックを取得
+          const allTopics: TopicInfo[] = [];
+          const collectTopics = async (org: OrgNodeData) => {
+            if (org.id) {
+              const orgTopics = await getAllTopics(org.id);
+              allTopics.push(...orgTopics);
+            }
+            
+            if (org.children) {
+              for (const child of org.children) {
+                await collectTopics(child);
+              }
+            }
+          };
+          
+          await collectTopics(orgTree);
+          
+          // デバッグ: 取得したトピックを確認
+          devLog('🔍 [Analytics] 取得したトピック:', {
+            count: allTopics.length,
+          });
+          
+          setTopics(allTopics);
         }
       } catch (error: any) {
         console.error('データの読み込みに失敗しました:', error);
@@ -683,21 +620,21 @@ export default function AnalyticsPage() {
     };
     
     loadData();
-  }, [dataViewMode]);
+  }, []);
 
   // 選択されたテーマに基づいて2D関係性図のノードとリンクを生成
   const { nodes, links } = useMemo(() => {
     devLog('🔍 [2D関係性図] useMemo実行:', {
       selectedThemeId,
-      dataViewMode,
+      selectedTypeFilter,
       hasOrgData: !!orgData,
       themesCount: themes.length,
-      initiativesCount: dataViewMode === 'organization' ? initiatives.length : 0, // companyInitiatives.length, // 削除（事業会社ページ削除のため）
+      initiativesCount: initiatives.length,
       topicsCount: topics.length,
     });
 
     // テーマが存在する場合は、組織データがなくても、テーマが選択されていなくても（すべて表示）テーマノードを表示
-    if (!orgData && themes.length === 0 && dataViewMode === 'organization') {
+    if (!orgData && themes.length === 0) {
       devLog('🔍 [2D関係性図] 組織データなし、かつテーマが存在しない');
       return { nodes: [], links: [] };
     }
@@ -705,9 +642,9 @@ export default function AnalyticsPage() {
     const diagramNodes: RelationshipNode[] = [];
     const diagramLinks: RelationshipLink[] = [];
 
-    // 親ノード「情報・通信部門」を追加（組織データがある場合のみ、組織モードのみ）
+    // 親ノード「情報・通信部門」を追加（組織データがある場合のみ）
     const parentNodeId = 'parent-department';
-    if (orgData && dataViewMode === 'organization') {
+    if (orgData) {
     diagramNodes.push({
       id: parentNodeId,
       label: '情報・通信部門',
@@ -739,8 +676,8 @@ export default function AnalyticsPage() {
         data: theme,
       });
 
-      // 親ノードからテーマへのリンク（親ノードが存在する場合のみ、組織モードのみ）
-      if (orgData && dataViewMode === 'organization') {
+      // 親ノードからテーマへのリンク（親ノードが存在する場合のみ）
+      if (orgData) {
       diagramLinks.push({
         source: parentNodeId,
         target: theme.id,
@@ -748,20 +685,12 @@ export default function AnalyticsPage() {
       });
       }
 
-      // テーマに関連する注力施策を取得（データ表示モードに応じて）
-      let relatedInitiatives: Array<FocusInitiative | any> = [];
-      if (dataViewMode === 'organization') {
-        relatedInitiatives = initiatives.filter((init) => 
-          theme.initiativeIds?.includes(init.id) || 
-          init.themeId === theme.id || 
-          (Array.isArray(init.themeIds) && init.themeIds.includes(theme.id))
-        );
-      } else {
-        // 事業会社モード: 事業会社の注力施策をフィルター
-        relatedInitiatives = companyInitiatives.filter((init) => 
-          Array.isArray(init.themeIds) && init.themeIds.includes(theme.id)
-        );
-      }
+      // テーマに関連する注力施策を取得（typeでフィルタリング）
+      const relatedInitiatives = initiatives.filter((init) => 
+        theme.initiativeIds?.includes(init.id) || 
+        init.themeId === theme.id || 
+        (Array.isArray(init.themeIds) && init.themeIds.includes(theme.id))
+      );
 
       // ループ内のログを削除（パフォーマンス最適化）
 
@@ -789,82 +718,64 @@ export default function AnalyticsPage() {
       // テーマが選択されている場合、組織や注力施策、トピックが0件でもテーマノードは表示する
       // （既にテーマノードは追加済み）
 
-      if (dataViewMode === 'organization') {
-        // 組織モード: このテーマに関連する組織を収集（注力施策から組織IDを取得）
-        const organizationIds = new Set<string>();
-        relatedInitiatives.forEach((init) => {
-          const orgInit = init as FocusInitiative;
-          // メインの組織ID
-          if (orgInit.organizationId) {
-            organizationIds.add(orgInit.organizationId);
+      // このテーマに関連する組織を収集（注力施策から組織IDを取得、typeでフィルタリング）
+      const organizationIds = new Set<string>();
+      relatedInitiatives.forEach((init) => {
+        // メインの組織ID
+        if (init.organizationId) {
+          organizationIds.add(init.organizationId);
+        }
+        // 関連組織も追加
+        if (Array.isArray((init as any).relatedOrganizations)) {
+          (init as any).relatedOrganizations.forEach((orgId: string) => {
+            if (orgId) {
+              organizationIds.add(orgId);
+            }
+          });
+        }
+      });
+
+      // 各組織のノードとリンクを追加（各テーマごとに独立したノードを作成、typeでフィルタリング）
+      organizationIds.forEach((orgId) => {
+        // orgTreeから実際のtypeを取得
+        const findOrg = (node: OrgNodeData, targetId: string): OrgNodeData | null => {
+          if (node.id === targetId) return node;
+          if (node.children) {
+            for (const child of node.children) {
+              const found = findOrg(child, targetId);
+              if (found) return found;
+            }
           }
-          // 関連組織も追加
-          if (Array.isArray(orgInit.relatedOrganizations)) {
-            orgInit.relatedOrganizations.forEach((orgId) => {
-              if (orgId) {
-                organizationIds.add(orgId);
-              }
-            });
-          }
+          return null;
+        };
+        const actualOrg = orgData ? findOrg(orgData, orgId) : null;
+        const orgType = actualOrg ? ((actualOrg as any).type || 'organization') : 'organization';
+        
+        // typeフィルターを適用
+        if (selectedTypeFilter !== 'all' && orgType !== selectedTypeFilter) {
+          return;
+        }
+        
+        // テーマごとに独立したノードIDを作成（テーマID_組織ID）
+        const orgNodeId = `${theme.id}_${orgId}`;
+        
+        const orgName = getOrgName(orgId, orgData);
+        
+        // このテーマ用の組織ノードを追加（各テーマごとに独立）
+        diagramNodes.push({
+          id: orgNodeId,
+          label: orgName,
+          type: orgType === 'company' ? 'company' : 'organization',
+          data: { id: orgId, name: orgName, originalId: orgId, themeId: theme.id, type: orgType },
         });
 
-        // 各組織のノードとリンクを追加（各テーマごとに独立したノードを作成）
-        organizationIds.forEach((orgId) => {
-          // テーマごとに独立したノードIDを作成（テーマID_組織ID）
-          const orgNodeId = `${theme.id}_${orgId}`;
-          
-          const orgName = getOrgName(orgId, orgData);
-          
-          // このテーマ用の組織ノードを追加（各テーマごとに独立）
-          diagramNodes.push({
-            id: orgNodeId,
-            label: orgName,
-            type: 'organization',
-            data: { id: orgId, name: orgName, originalId: orgId, themeId: theme.id },
-          });
-
-          // テーマから組織へのリンク
-          diagramLinks.push({
-            source: theme.id,
-            target: orgNodeId,
-            type: 'main',
-          });
+        // テーマから組織へのリンク
+        diagramLinks.push({
+          source: theme.id,
+          target: orgNodeId,
+          type: 'main',
         });
-      } else {
-        // 事業会社モード: このテーマに関連する事業会社を収集（注力施策から事業会社IDを取得）
-        const companyIds = new Set<string>();
-        relatedInitiatives.forEach((init) => {
-          const companyInit = init as any; // CompanyFocusInitiative から any に変更
-          if (companyInit.companyId) {
-            companyIds.add(companyInit.companyId);
-          }
-        });
-
-        // 各事業会社のノードとリンクを追加（各テーマごとに独立したノードを作成）
-        companyIds.forEach((companyId) => {
-          // テーマごとに独立したノードIDを作成（テーマID_事業会社ID）
-          const companyNodeId = `${theme.id}_${companyId}`;
-          
-          // 事業会社名を取得
-          const company = companies.find(c => c.id === companyId);
-          const companyName = company ? (company.name || companyId) : companyId;
-          
-          // このテーマ用の事業会社ノードを追加（各テーマごとに独立）
-          diagramNodes.push({
-            id: companyNodeId,
-            label: companyName,
-            type: 'company',
-            data: { id: companyId, name: companyName, originalId: companyId, themeId: theme.id },
-          });
-
-          // テーマから事業会社へのリンク
-          diagramLinks.push({
-            source: theme.id,
-            target: companyNodeId,
-            type: 'main',
-          });
-        });
-      }
+      });
 
       // 各注力施策のノードとリンクを追加（各テーマごとに独立したノードを作成）
       relatedInitiatives.forEach((initiative) => {
@@ -879,38 +790,19 @@ export default function AnalyticsPage() {
           data: { ...initiative, originalId: initiative.id, themeId: theme.id },
         });
 
-        // 組織/事業会社から注力施策へのリンク（組織/事業会社が存在する場合のみ）
-        if (dataViewMode === 'organization') {
-          const orgInit = initiative as FocusInitiative;
-          if (orgInit.organizationId) {
-            // このテーマ用の組織ノードIDを作成
-            const orgNodeId = `${theme.id}_${orgInit.organizationId}`;
-            
-            // 組織ノードが存在することを確認
-            const orgNodeExists = diagramNodes.find(n => n.id === orgNodeId);
-            if (orgNodeExists) {
-              diagramLinks.push({
-                source: orgNodeId,
-                target: initiativeNodeId,
-                type: 'branch',
-              });
-            }
-          }
-        } else {
-          const companyInit = initiative as any; // CompanyFocusInitiative から any に変更
-          if (companyInit.companyId) {
-            // このテーマ用の事業会社ノードIDを作成
-            const companyNodeId = `${theme.id}_${companyInit.companyId}`;
-            
-            // 事業会社ノードが存在することを確認
-            const companyNodeExists = diagramNodes.find(n => n.id === companyNodeId);
-            if (companyNodeExists) {
-              diagramLinks.push({
-                source: companyNodeId,
-                target: initiativeNodeId,
-                type: 'branch',
-              });
-            }
+        // 組織から注力施策へのリンク（組織が存在する場合のみ）
+        if (initiative.organizationId) {
+          // このテーマ用の組織ノードIDを作成
+          const orgNodeId = `${theme.id}_${initiative.organizationId}`;
+          
+          // 組織ノードが存在することを確認
+          const orgNodeExists = diagramNodes.find(n => n.id === orgNodeId);
+          if (orgNodeExists) {
+            diagramLinks.push({
+              source: orgNodeId,
+              target: initiativeNodeId,
+              type: 'branch',
+            });
           }
         }
         
@@ -1052,7 +944,7 @@ export default function AnalyticsPage() {
     });
 
     return { nodes: diagramNodes, links: validLinks };
-  }, [selectedThemeId, themes, initiatives, orgData, topics, dataViewMode, companyInitiatives, companies]);
+  }, [selectedThemeId, themes, initiatives, orgData, topics, selectedTypeFilter]);
 
   const handleNodeClick = (node: RelationshipNode) => {
     // ノードクリック時の処理（必要に応じて実装）
@@ -1235,11 +1127,11 @@ export default function AnalyticsPage() {
               color: '#808080',
               fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
             }}>
-              テーマを中心に、各{dataViewMode === 'organization' ? '組織' : '事業会社'}と注力施策の関係を2Dで表示します
+              テーマを中心に、各組織と注力施策の関係を2Dで表示します（typeで組織と事業会社を区別）
             </p>
         </div>
 
-        {/* データ表示モード切り替え（組織/事業会社） */}
+        {/* タイプフィルター（組織/事業会社/個人） */}
         <div style={{ marginBottom: '16px' }}>
           <div style={{
             display: 'flex',
@@ -1248,63 +1140,75 @@ export default function AnalyticsPage() {
           }}>
             <button
               type="button"
-              onClick={() => setDataViewMode('organization')}
+              onClick={() => setSelectedTypeFilter('all')}
               style={{
                 padding: '10px 20px',
                 fontSize: '14px',
-                fontWeight: dataViewMode === 'organization' ? '600' : '400',
-                color: dataViewMode === 'organization' ? '#4262FF' : '#1A1A1A',
-                backgroundColor: dataViewMode === 'organization' ? '#F0F4FF' : '#FFFFFF',
-                border: dataViewMode === 'organization' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
+                fontWeight: selectedTypeFilter === 'all' ? '600' : '400',
+                color: selectedTypeFilter === 'all' ? '#4262FF' : '#1A1A1A',
+                backgroundColor: selectedTypeFilter === 'all' ? '#F0F4FF' : '#FFFFFF',
+                border: selectedTypeFilter === 'all' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
                 borderRadius: '8px',
                 cursor: 'pointer',
                 transition: 'all 150ms',
                 fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
               }}
-              onMouseEnter={(e) => {
-                if (dataViewMode !== 'organization') {
-                  e.currentTarget.style.borderColor = '#C4C4C4';
-                  e.currentTarget.style.backgroundColor = '#FAFAFA';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (dataViewMode !== 'organization') {
-                  e.currentTarget.style.borderColor = '#E0E0E0';
-                  e.currentTarget.style.backgroundColor = '#FFFFFF';
-                }
+            >
+              すべて
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedTypeFilter('organization')}
+              style={{
+                padding: '10px 20px',
+                fontSize: '14px',
+                fontWeight: selectedTypeFilter === 'organization' ? '600' : '400',
+                color: selectedTypeFilter === 'organization' ? '#4262FF' : '#1A1A1A',
+                backgroundColor: selectedTypeFilter === 'organization' ? '#F0F4FF' : '#FFFFFF',
+                border: selectedTypeFilter === 'organization' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                transition: 'all 150ms',
+                fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
               }}
             >
               組織
             </button>
             <button
               type="button"
-              onClick={() => setDataViewMode('company')}
+              onClick={() => setSelectedTypeFilter('company')}
               style={{
                 padding: '10px 20px',
                 fontSize: '14px',
-                fontWeight: dataViewMode === 'company' ? '600' : '400',
-                color: dataViewMode === 'company' ? '#4262FF' : '#1A1A1A',
-                backgroundColor: dataViewMode === 'company' ? '#F0F4FF' : '#FFFFFF',
-                border: dataViewMode === 'company' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
+                fontWeight: selectedTypeFilter === 'company' ? '600' : '400',
+                color: selectedTypeFilter === 'company' ? '#4262FF' : '#1A1A1A',
+                backgroundColor: selectedTypeFilter === 'company' ? '#F0F4FF' : '#FFFFFF',
+                border: selectedTypeFilter === 'company' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
                 borderRadius: '8px',
                 cursor: 'pointer',
                 transition: 'all 150ms',
                 fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
               }}
-              onMouseEnter={(e) => {
-                if (dataViewMode !== 'company') {
-                  e.currentTarget.style.borderColor = '#C4C4C4';
-                  e.currentTarget.style.backgroundColor = '#FAFAFA';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (dataViewMode !== 'company') {
-                  e.currentTarget.style.borderColor = '#E0E0E0';
-                  e.currentTarget.style.backgroundColor = '#FFFFFF';
-                }
-              }}
             >
               事業会社
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedTypeFilter('person')}
+              style={{
+                padding: '10px 20px',
+                fontSize: '14px',
+                fontWeight: selectedTypeFilter === 'person' ? '600' : '400',
+                color: selectedTypeFilter === 'person' ? '#4262FF' : '#1A1A1A',
+                backgroundColor: selectedTypeFilter === 'person' ? '#F0F4FF' : '#FFFFFF',
+                border: selectedTypeFilter === 'person' ? '2px solid #4262FF' : '1.5px solid #E0E0E0',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                transition: 'all 150ms',
+                fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+              }}
+            >
+              個人
             </button>
           </div>
         </div>

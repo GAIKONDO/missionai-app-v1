@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { hierarchy, pack } from 'd3-hierarchy';
 import type { ThemeHierarchyConfig } from '@/lib/themeHierarchy';
 import type { Theme, FocusInitiative } from '@/lib/orgApi';
-import type { CompanyFocusInitiative } from '@/lib/companiesApi';
+// import type { CompanyFocusInitiative } from '@/lib/companiesApi'; // Companiesテーブル削除のためコメントアウト
+type CompanyFocusInitiative = any; // Companiesテーブル削除のため、一時的な型定義
 
 interface ThemeHierarchyChartProps {
   config: ThemeHierarchyConfig;

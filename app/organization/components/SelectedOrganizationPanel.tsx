@@ -34,7 +34,7 @@ export default function SelectedOrganizationPanel({
   if (!selectedNode) {
     return (
       <div style={{
-        width: '320px',
+        width: '400px',
         padding: '20px',
         backgroundColor: 'var(--color-surface)',
         borderRadius: '8px',
@@ -60,7 +60,7 @@ export default function SelectedOrganizationPanel({
 
   return (
     <div style={{
-      width: '320px',
+      width: '400px',
       padding: '20px',
       backgroundColor: 'var(--color-surface)',
       borderRadius: '8px',
@@ -144,20 +144,25 @@ export default function SelectedOrganizationPanel({
                 onClick={onNavigateToDetail}
                 style={{
                   padding: '8px 16px',
-                  backgroundColor: '#4262FF',
+                  backgroundColor: '#1F2937',
                   color: '#fff',
                   border: 'none',
                   borderRadius: '6px',
                   cursor: 'pointer',
                   fontSize: '14px',
                   fontWeight: '500',
-                  transition: 'background-color 0.2s',
+                  transition: 'all 0.2s ease',
+                  boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = '#3151E6';
+                  e.currentTarget.style.backgroundColor = '#111827';
+                  e.currentTarget.style.boxShadow = '0 2px 6px rgba(0, 0, 0, 0.15)';
+                  e.currentTarget.style.transform = 'translateY(-1px)';
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = '#4262FF';
+                  e.currentTarget.style.backgroundColor = '#1F2937';
+                  e.currentTarget.style.boxShadow = '0 1px 3px rgba(0, 0, 0, 0.1)';
+                  e.currentTarget.style.transform = 'translateY(0)';
                 }}
               >
                 専用ページへ →

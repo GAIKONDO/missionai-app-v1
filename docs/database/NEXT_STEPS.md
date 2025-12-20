@@ -172,3 +172,6 @@ WHERE searchableText IS NULL;
 3. その後のステップ（RAG検索結果の拡張、コンテキスト生成の最適化）の基盤になる
 
 
+
+
+

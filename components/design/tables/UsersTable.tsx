@@ -27,6 +27,12 @@ const columns: ColumnDefinition[] = [
     pages: '/（ログイン機能、承認機能）',
     relatedTables: 'approvalRequests.userId',
   },
+  {
+    name: 'role',
+    description: 'ユーザー役割（\'user\': 一般ユーザー、\'admin\': 管理者、デフォルト: \'user\'）',
+    pages: '/（ユーザー管理機能）',
+    relatedTables: '-',
+  },
 ];
 
 export default function UsersTable() {

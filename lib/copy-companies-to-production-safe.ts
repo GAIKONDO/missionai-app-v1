@@ -1,16 +1,24 @@
 /**
  * 開発環境の事業会社データを本番環境のデータベースにコピーするスクリプト（安全版）
  * Tauriコマンドを使用してデータベースにアクセス
+ * 
+ * ⚠️ Companiesテーブル削除のため、このスクリプトは無効化されています
  */
 
-import { getAllCompanies, createCompany } from './companiesApi';
-import type { Company } from './companiesApi';
+// import { getAllCompanies, createCompany } from './companiesApi'; // Companiesテーブル削除のためコメントアウト
+// import type { Company } from './companiesApi'; // Companiesテーブル削除のためコメントアウト
 
 /**
  * 開発環境のデータベースから事業会社データを取得して本番環境にコピー
  * 注意: このスクリプトは開発環境で実行してください
+ * 
+ * ⚠️ Companiesテーブル削除のため、この関数は無効化されています
  */
 export async function copyCompaniesToProductionSafe() {
+  console.warn('⚠️ Companiesテーブルが削除されたため、このスクリプトは使用できません');
+  return;
+  
+  /* 以下は無効化されたコード
   try {
     console.log('事業会社データを本番環境にコピーします...\n');
     console.log('⚠️  このスクリプトは開発環境で実行してください\n');
