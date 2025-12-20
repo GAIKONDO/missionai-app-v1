@@ -103,21 +103,27 @@ export async function saveTopicEmbeddingToChroma(
       console.warn('議事録タイトルの取得に失敗しました（続行します）:', error);
     }
 
-    // メタデータを準備
+    // contentSummaryを生成（contentの最初の200文字、SQLiteのトリガーと同じロジック）
+    const contentSummary = content && content.length > 0 
+      ? content.substring(0, 200)
+      : '';
+
+    // メタデータを準備（検索に必要な情報のみを保存、メタデータサイズを削減）
     const embeddingMetadata: Record<string, any> = {
+      topicId, // SQLite参照用
+      meetingNoteId, // SQLite参照用
+      organizationId, // 組織ID
       title,
-      content,
+      contentSummary, // contentの代わりにcontentSummaryを使用（メタデータサイズ削減）
       semanticCategory: metadata?.semanticCategory || '',
       keywords: metadata?.keywords ? JSON.stringify(metadata.keywords) : '',
       tags: metadata?.tags ? JSON.stringify(metadata.tags) : '',
       summary: metadata?.summary || '',
       importance: metadata?.importance || '',
       meetingNoteTitle: meetingNoteTitle, // 出典情報として追加
-      titleEmbedding: titleEmbedding ? JSON.stringify(titleEmbedding) : '',
-      contentEmbedding: contentEmbedding ? JSON.stringify(contentEmbedding) : '',
-      metadataEmbedding: metadataEmbedding ? JSON.stringify(metadataEmbedding) : '',
-      embeddingModel: 'text-embedding-3-small',
-      embeddingVersion,
+      // 不要なフィールドを削除（メタデータサイズ削減）:
+      // - titleEmbedding, contentEmbedding, metadataEmbedding（未使用の埋め込みベクトル）
+      // - embeddingModel, embeddingVersion（検索に不要な管理用情報）
       createdAt: now,
       updatedAt: now,
     };
@@ -145,12 +151,55 @@ export async function saveTopicEmbeddingToChroma(
  */
 export async function getTopicEmbeddingFromChroma(
   topicId: string,
-  meetingNoteId: string
+  organizationId: string
 ): Promise<TopicEmbedding | null> {
-  // Rust側のChromaDB実装では、IDから直接取得する機能が未実装のため、
-  // SQLiteフォールバックを使用
-  console.warn('getTopicEmbeddingFromChroma: Rust側のChromaDB実装では未対応。SQLiteフォールバックを使用してください。');
-  return null;
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    // Rust側のTauriコマンドを呼び出し
+    const result = await callTauriCommand('chromadb_get_topic_embedding', {
+      topicId,
+      organizationId,
+    }) as Record<string, any> | null;
+
+    if (!result) {
+      return null;
+    }
+
+    // 埋め込みベクトルを取得
+    const combinedEmbedding = result.combinedEmbedding as number[] | undefined;
+    if (!combinedEmbedding || !Array.isArray(combinedEmbedding) || combinedEmbedding.length === 0) {
+      return null;
+    }
+
+    // メタデータから情報を取得
+    const meetingNoteId = result.meetingNoteId as string | undefined || '';
+    const title = result.title as string | undefined || '';
+    const content = result.content as string | undefined || '';
+    
+    // TopicEmbeddingオブジェクトを構築
+    const embedding: TopicEmbedding = {
+      id: `${meetingNoteId}-topic-${topicId}`,
+      topicId,
+      meetingNoteId,
+      organizationId,
+      title,
+      content,
+      combinedEmbedding,
+      embeddingModel: (result.embeddingModel as string) || 'text-embedding-3-small',
+      embeddingVersion: (result.embeddingVersion as string) || '1.0',
+      createdAt: (result.createdAt as string) || new Date().toISOString(),
+      updatedAt: (result.updatedAt as string) || new Date().toISOString(),
+      metadata: result.metadata || {},
+    };
+
+    return embedding;
+  } catch (error) {
+    console.error('ChromaDBからのトピック埋め込み取得エラー:', error);
+    return null;
+  }
 }
 
 /**
@@ -161,7 +210,7 @@ export async function findSimilarTopicsChroma(
   limit: number = 5,
   organizationId?: string,
   semanticCategory?: string
-): Promise<Array<{ topicId: string; meetingNoteId: string; similarity: number }>> {
+): Promise<Array<{ topicId: string; meetingNoteId: string; similarity: number; title?: string; contentSummary?: string }>> {
   if (typeof window === 'undefined') {
     return [];
   }
@@ -180,18 +229,57 @@ export async function findSimilarTopicsChroma(
 
     // Rust側のTauriコマンドを呼び出し（パラメータ名はcamelCase）
     // organizationIdが未指定の場合はundefinedを渡して組織横断検索を実行
+    console.log(`[findSimilarTopicsChroma] ChromaDB検索を実行中... (organizationId: ${organizationId || 'undefined'})`);
     const results = await callTauriCommand('chromadb_find_similar_topics', {
       queryEmbedding,
       limit,
       organizationId: organizationId || undefined, // undefinedの場合は組織横断検索
-    }) as Array<[string, string, number]>;
+    }) as Array<{
+      topic_id: string;
+      meeting_note_id: string;
+      similarity: number;
+      title: string;
+      content_summary: string;
+    }>;
 
-    // 結果を変換
-    let similarities = results.map(([topicId, meetingNoteId, similarity]) => ({
-      topicId,
-      meetingNoteId,
-      similarity,
-    }));
+    console.log(`[findSimilarTopicsChroma] ChromaDB検索完了: ${results.length}件の結果を取得`);
+    if (results.length > 0) {
+      console.log(`[findSimilarTopicsChroma] 検索結果トップ5:`, results.slice(0, 5).map((r) => ({
+        topicId: r.topic_id,
+        meetingNoteId: r.meeting_note_id,
+        title: r.title,
+        contentSummary: r.content_summary,
+        similarity: typeof r.similarity === 'number' ? r.similarity.toFixed(4) : String(r.similarity),
+      })));
+    } else {
+      if (organizationId) {
+        console.warn(`[findSimilarTopicsChroma] 検索結果が空です。コレクション topics_${organizationId} にデータが存在しない可能性があります。`);
+      } else {
+        console.warn(`[findSimilarTopicsChroma] 検索結果が空です。すべての組織のコレクションを検索しましたが、データが見つかりませんでした。`);
+      }
+    }
+
+    // 結果を変換（Rust側から返されるTopicSearchResult構造体を変換）
+    let similarities = results.map((result) => {
+      // similarityが有効な数値であることを確認
+      if (typeof result.similarity !== 'number' || isNaN(result.similarity)) {
+        console.warn(`[findSimilarTopicsChroma] ⚠️ トピック ${result.topic_id} (${result.meeting_note_id}) のsimilarityが無効です:`, result.similarity);
+        return {
+          topicId: result.topic_id,
+          meetingNoteId: result.meeting_note_id,
+          similarity: 0, // 無効な場合は0に設定
+          title: result.title,
+          contentSummary: result.content_summary,
+        };
+      }
+      return {
+        topicId: result.topic_id,
+        meetingNoteId: result.meeting_note_id,
+        similarity: result.similarity,
+        title: result.title,
+        contentSummary: result.content_summary,
+      };
+    });
 
     // semanticCategoryでフィルタリング（Rust側で未対応のため、JavaScript側でフィルタリング）
     if (semanticCategory) {

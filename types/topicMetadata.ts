@@ -115,6 +115,10 @@ export interface TopicEmbedding {
   meetingNoteId: string;             // 親議事録ID
   organizationId: string;            // 組織ID
   
+  // 基本情報（ChromaDBから取得時に必要）
+  title?: string;                    // トピックタイトル
+  content?: string;                  // トピックコンテンツ
+  
   // 埋め込みベクトル
   combinedEmbedding?: number[];      // 統合埋め込み
   titleEmbedding?: number[];         // タイトル埋め込み
@@ -129,6 +133,7 @@ export interface TopicEmbedding {
   semanticCategory?: TopicSemanticCategory;
   keywords?: string[];
   tags?: string[];
+  metadata?: Record<string, any>;    // 追加のメタデータ（ChromaDBから取得時に使用）
   
   // タイムスタンプ
   createdAt: string;

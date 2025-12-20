@@ -12,6 +12,28 @@ import { saveDesignDocEmbeddingToChroma } from '@/lib/designDocRAG';
 import { analyzeSectionSemantics } from '@/lib/designDocSemanticAnalysis';
 import { getAllSectionRelations, createSectionRelation, updateSectionRelation, deleteSectionRelation, getSectionRelationsBySection, RELATION_TYPES, type DesignDocSectionRelation } from '@/lib/designDocSectionRelations';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
+// テーブル詳細コンポーネント
+import OrganizationsTable from '@/components/design/tables/OrganizationsTable';
+import OrganizationMembersTable from '@/components/design/tables/OrganizationMembersTable';
+import OrganizationContentsTable from '@/components/design/tables/OrganizationContentsTable';
+import MeetingNotesTable from '@/components/design/tables/MeetingNotesTable';
+import TopicsTable from '@/components/design/tables/TopicsTable';
+import EntitiesTable from '@/components/design/tables/EntitiesTable';
+import RelationsTable from '@/components/design/tables/RelationsTable';
+import CompaniesTable from '@/components/design/tables/CompaniesTable';
+import CompanyContentsTable from '@/components/design/tables/CompanyContentsTable';
+import FocusInitiativesTable from '@/components/design/tables/FocusInitiativesTable';
+import ThemesTable from '@/components/design/tables/ThemesTable';
+import OrganizationCompanyDisplayTable from '@/components/design/tables/OrganizationCompanyDisplayTable';
+import DesignDocSectionsTable from '@/components/design/tables/DesignDocSectionsTable';
+import DesignDocSectionRelationsTable from '@/components/design/tables/DesignDocSectionRelationsTable';
+import UsersTable from '@/components/design/tables/UsersTable';
+import PageContainersTable from '@/components/design/tables/PageContainersTable';
+import AdminsTable from '@/components/design/tables/AdminsTable';
+import ApprovalRequestsTable from '@/components/design/tables/ApprovalRequestsTable';
+import AiSettingsTable from '@/components/design/tables/AiSettingsTable';
+import BackupHistoryTable from '@/components/design/tables/BackupHistoryTable';
+import ThemeHierarchyConfigsTable from '@/components/design/tables/ThemeHierarchyConfigsTable';
 
 // Mermaid.jsの型定義は lib/mermaidLoader.ts で定義されています
 
@@ -95,7 +117,6 @@ function ZoomableMermaidDiagram({
   const zoomRef = useRef(1);
   const mermaidRenderedRef = useRef(false);
   const [mermaidLoaded, setMermaidLoaded] = useState(false);
-  const [isRendered, setIsRendered] = useState(false);
 
   // 最新の値をrefに同期
   useEffect(() => {
@@ -118,189 +139,6 @@ function ZoomableMermaidDiagram({
     setZoom(1);
     setTranslateX(0);
     setTranslateY(0);
-  };
-
-  // PNGダウンロード機能
-  const handleDownloadPNG = async () => {
-    try {
-      if (!mermaidContainerRef.current) {
-        console.error('Mermaidコンテナが見つかりません');
-        return;
-      }
-
-      const svgElement = mermaidContainerRef.current.querySelector('svg');
-      if (!svgElement) {
-        console.error('SVG要素が見つかりません');
-        alert('図がまだレンダリングされていません。しばらく待ってから再度お試しください。');
-        return;
-      }
-
-      // SVGをクローンしてスタイルを適用
-      const clonedSvg = svgElement.cloneNode(true) as SVGElement;
-      
-      // SVGのサイズを取得
-      const svgRect = svgElement.getBoundingClientRect();
-      let svgWidth = svgElement.viewBox.baseVal.width;
-      let svgHeight = svgElement.viewBox.baseVal.height;
-      
-      // viewBoxがない場合は、width/height属性または実際のサイズを使用
-      if (!svgWidth || svgWidth === 0) {
-        svgWidth = parseFloat(svgElement.getAttribute('width') || '0') || svgRect.width;
-      }
-      if (!svgHeight || svgHeight === 0) {
-        svgHeight = parseFloat(svgElement.getAttribute('height') || '0') || svgRect.height;
-      }
-      
-      // それでもサイズが取得できない場合は、実際のサイズを使用
-      if (!svgWidth || svgWidth === 0) {
-        svgWidth = svgRect.width;
-      }
-      if (!svgHeight || svgHeight === 0) {
-        svgHeight = svgRect.height;
-      }
-
-      // SVGのスタイルを取得して適用
-      clonedSvg.setAttribute('width', svgWidth.toString());
-      clonedSvg.setAttribute('height', svgHeight.toString());
-      clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-      clonedSvg.setAttribute('style', 'background: white;');
-
-      // SVGをBase64エンコードしたData URLに変換（セキュリティエラーを回避）
-      const svgData = new XMLSerializer().serializeToString(clonedSvg);
-      const base64Svg = btoa(unescape(encodeURIComponent(svgData)));
-      const svgDataUrl = `data:image/svg+xml;base64,${base64Svg}`;
-
-      // Canvasを作成してSVGを描画
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        console.error('Canvas contextが取得できません');
-        return;
-      }
-
-      // 高解像度で描画（2倍スケール）
-      const scale = 2;
-      canvas.width = svgWidth * scale;
-      canvas.height = svgHeight * scale;
-      ctx.scale(scale, scale);
-
-      // 背景を白に設定
-      ctx.fillStyle = 'white';
-      ctx.fillRect(0, 0, svgWidth, svgHeight);
-
-      // SVGを画像として読み込んでCanvasに描画
-      return new Promise<void>((resolve, reject) => {
-        const img = new Image();
-        img.crossOrigin = 'anonymous'; // CORSエラーを回避
-        
-        img.onload = () => {
-          try {
-            ctx.drawImage(img, 0, 0, svgWidth, svgHeight);
-            
-            // PNGとしてダウンロード
-            canvas.toBlob((blob) => {
-              if (!blob) {
-                console.error('PNGの生成に失敗しました');
-                reject(new Error('PNGの生成に失敗しました'));
-                return;
-              }
-
-              try {
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `${diagramId || 'mermaid-diagram'}-${Date.now()}.png`;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                
-                // 少し遅延させてからURLを解放
-                setTimeout(() => {
-                  URL.revokeObjectURL(url);
-                }, 100);
-                
-                resolve();
-              } catch (error) {
-                console.error('ダウンロードリンクの作成に失敗しました:', error);
-                reject(error);
-              }
-            }, 'image/png', 1.0);
-          } catch (error) {
-            console.error('Canvas描画エラー:', error);
-            reject(error);
-          }
-        };
-
-        img.onerror = (error) => {
-          console.error('SVG画像の読み込みに失敗しました:', error);
-          reject(new Error('SVG画像の読み込みに失敗しました'));
-        };
-
-        img.src = svgDataUrl;
-      }).catch((error) => {
-        console.error('PNGダウンロードエラー:', error);
-        // html2canvasにフォールバック
-        handleDownloadPNGFallback();
-      });
-    } catch (error) {
-      console.error('PNGダウンロードエラー:', error);
-      // html2canvasにフォールバック
-      handleDownloadPNGFallback();
-    }
-  };
-
-  // html2canvasを使用したフォールバック方法
-  const handleDownloadPNGFallback = async () => {
-    try {
-      if (!mermaidContainerRef.current) {
-        alert('図がまだレンダリングされていません。');
-        return;
-      }
-
-      const svgElement = mermaidContainerRef.current.querySelector('svg');
-      if (!svgElement) {
-        alert('図がまだレンダリングされていません。');
-        return;
-      }
-
-      // SVG要素を含む親要素を取得
-      const container = svgElement.parentElement;
-      if (!container) {
-        alert('コンテナが見つかりません。');
-        return;
-      }
-
-      // html2canvasでキャプチャ
-      const canvas = await html2canvas(container as HTMLElement, {
-        backgroundColor: '#ffffff',
-        scale: 2, // 高解像度
-        useCORS: true,
-        logging: false,
-      });
-
-      // PNGとしてダウンロード
-      canvas.toBlob((blob) => {
-        if (!blob) {
-          alert('PNGの生成に失敗しました。');
-          return;
-        }
-
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `${diagramId || 'mermaid-diagram'}-${Date.now()}.png`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        
-        setTimeout(() => {
-          URL.revokeObjectURL(url);
-        }, 100);
-      }, 'image/png', 1.0);
-    } catch (error) {
-      console.error('html2canvasフォールバックエラー:', error);
-      alert('PNGのダウンロードに失敗しました。');
-    }
   };
 
   // マウスドラッグ処理
@@ -410,16 +248,15 @@ function ZoomableMermaidDiagram({
       return; // コードが変更されていないかつレンダリング済みの場合はスキップ
     }
 
-      // mermaidCodeが変更された場合は、レンダリング済みフラグをリセット
-      if (previousMermaidCodeRef.current !== mermaidCode) {
-        const svg = mermaidContainerRef.current.querySelector('svg');
-        if (svg) {
-          svg.remove();
-        }
-        mermaidRenderedRef.current = false;
-        setIsRendered(false);
-        previousMermaidCodeRef.current = mermaidCode;
+    // mermaidCodeが変更された場合は、レンダリング済みフラグをリセット
+    if (previousMermaidCodeRef.current !== mermaidCode) {
+      const svg = mermaidContainerRef.current.querySelector('svg');
+      if (svg) {
+        svg.remove();
       }
+      mermaidRenderedRef.current = false;
+      previousMermaidCodeRef.current = mermaidCode;
+    }
 
     if (mermaidRenderedRef.current) return; // 既にレンダリング済みの場合はスキップ
 
@@ -453,7 +290,6 @@ function ZoomableMermaidDiagram({
         // 既にSVGが生成されている場合はスキップ
         if (mermaidContainerRef.current.querySelector('svg')) {
           mermaidRenderedRef.current = true;
-          setIsRendered(true);
           return;
         }
 
@@ -463,7 +299,6 @@ function ZoomableMermaidDiagram({
         });
         
         mermaidRenderedRef.current = true;
-        setIsRendered(true);
       } catch (error) {
         console.error('Mermaid図のレンダリングエラー:', error);
         mermaidRenderedRef.current = false;
@@ -600,34 +435,6 @@ function ZoomableMermaidDiagram({
           }}
         >
           リセット
-        </button>
-        <button
-          onClick={handleDownloadPNG}
-          disabled={!isRendered}
-          style={{
-            padding: '6px 12px',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            backgroundColor: isRendered ? 'white' : '#f5f5f5',
-            cursor: isRendered ? 'pointer' : 'not-allowed',
-            fontSize: '12px',
-            fontWeight: 600,
-            marginLeft: '4px',
-            opacity: isRendered ? 1 : 0.5,
-          }}
-          onMouseEnter={(e) => {
-            if (isRendered) {
-              e.currentTarget.style.backgroundColor = '#f5f5f5';
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (isRendered) {
-              e.currentTarget.style.backgroundColor = 'white';
-            }
-          }}
-          title="PNGとしてダウンロード"
-        >
-          📥 PNG
         </button>
       </div>
       <div
@@ -1213,10 +1020,60 @@ function DatabaseOverviewSection() {
   );
 }
 
+// renderRelatedTables関数は components/design/TableDetailCard.tsx に移動しました
+
 // SQLiteスキーマセクション
 function SQLiteSchemaSection() {
   // Mermaid図のレンダリングはZoomableMermaidDiagramコンポーネント内で管理されるため、
   // ここでは何もする必要がない
+
+  // 選択中のテーブルIDを管理（nullの場合はすべて表示、'none'の場合はすべて非表示）
+  const [selectedTableId, setSelectedTableId] = useState<string | null>('none');
+  const [selectedSystemTableId, setSelectedSystemTableId] = useState<string | null>('none');
+  const [selectedIdLinkageId, setSelectedIdLinkageId] = useState<string | null>('none');
+
+  // テーブル番号一覧のデータ
+  const tableList = [
+    { number: '①', name: 'organizations', id: 'table-organizations', japanese: '組織', component: OrganizationsTable },
+    { number: '②', name: 'organizationMembers', id: 'table-organization-members', japanese: '組織メンバー', component: OrganizationMembersTable },
+    { number: '③', name: 'organizationContents', id: 'table-organization-contents', japanese: '組織コンテンツ', component: OrganizationContentsTable },
+    { number: '④', name: 'meetingNotes', id: 'table-meeting-notes', japanese: '議事録', component: MeetingNotesTable },
+    { number: '⑤', name: 'topics', id: 'table-topics', japanese: 'トピック', component: TopicsTable },
+    { number: '⑥', name: 'entities', id: 'table-entities', japanese: 'エンティティ', component: EntitiesTable },
+    { number: '⑦', name: 'relations', id: 'table-relations', japanese: 'リレーション', component: RelationsTable },
+    { number: '⑧', name: 'companies', id: 'table-companies', japanese: '事業会社', component: CompaniesTable },
+    { number: '⑨', name: 'companyContents', id: 'table-company-contents', japanese: '事業会社コンテンツ', component: CompanyContentsTable },
+    { number: '⑩', name: 'focusInitiatives', id: 'table-focus-initiatives', japanese: '注力施策', component: FocusInitiativesTable },
+    { number: '⑪', name: 'themes', id: 'table-themes', japanese: 'テーマ', component: ThemesTable },
+    { number: '⑫', name: 'organizationCompanyDisplay', id: 'table-organization-company-display', japanese: '組織・事業会社表示', component: OrganizationCompanyDisplayTable },
+    { number: '⑬', name: 'designDocSections', id: 'table-design-doc-sections', japanese: 'システム設計ドキュメントセクション', component: DesignDocSectionsTable },
+    { number: '⑭', name: 'designDocSectionRelations', id: 'table-design-doc-section-relations', japanese: '設計ドキュメントセクションリレーション', component: DesignDocSectionRelationsTable },
+  ];
+
+  const systemTableList = [
+    { number: '', name: 'users', id: 'table-users', japanese: 'ユーザー', component: UsersTable },
+    { number: '', name: 'pageContainers', id: 'table-page-containers', japanese: 'ページコンテナ', component: PageContainersTable },
+    { number: '', name: 'admins', id: 'table-admins', japanese: '管理者', component: AdminsTable },
+    { number: '', name: 'approvalRequests', id: 'table-approval-requests', japanese: '承認リクエスト', component: ApprovalRequestsTable },
+    { number: '', name: 'aiSettings', id: 'table-ai-settings', japanese: 'AI設定', component: AiSettingsTable },
+    { number: '', name: 'backupHistory', id: 'table-backup-history', japanese: 'バックアップ履歴', component: BackupHistoryTable },
+    { number: '', name: 'themeHierarchyConfigs', id: 'table-theme-hierarchy-configs', japanese: 'テーマ階層設定', component: ThemeHierarchyConfigsTable },
+  ];
+
+  // テーブルを選択する関数
+  const selectTable = useCallback((tableId: string | null) => {
+    setSelectedTableId(tableId);
+  }, []);
+
+  // システム管理テーブルを選択する関数
+  const selectSystemTable = useCallback((tableId: string | null) => {
+    setSelectedSystemTableId(tableId);
+  }, []);
+
+  // ID連携セクションを選択する関数
+  const selectIdLinkage = useCallback((sectionId: string | null) => {
+    setSelectedIdLinkageId(sectionId);
+  }, []);
 
   return (
     <div>
@@ -1227,19 +1084,36 @@ function SQLiteSchemaSection() {
         <ZoomableMermaidDiagram
           diagramId="sqlite-schema-diagram"
           mermaidCode={`erDiagram
+    %% テーブル番号: ①organizations ②organizationMembers ③organizationContents ④meetingNotes ⑤topics ⑥entities ⑦relations ⑧companies ⑨companyContents ⑩focusInitiatives ⑪themes ⑫organizationCompanyDisplay ⑬designDocSections ⑭designDocSectionRelations
+    
     organizations ||--o{ organizationMembers : "has"
+    organizations ||--o{ organizationContents : "has"
     organizations ||--o{ meetingNotes : "has"
     organizations ||--o{ entities : "belongs_to"
-    organizations ||--o{ topicEmbeddings : "belongs_to"
+    organizations ||--o{ topics : "belongs_to"
+    organizations ||--o{ relations : "belongs_to"
     organizations ||--o{ companies : "belongs_to"
+    organizations ||--o{ focusInitiatives : "has"
     
-    meetingNotes ||--o{ topicEmbeddings : "contains"
+    companies ||--o{ companyContents : "has"
+    companies ||--o{ meetingNotes : "has"
+    companies ||--o{ entities : "belongs_to"
+    companies ||--o{ topics : "belongs_to"
+    companies ||--o{ relations : "belongs_to"
+    companies ||--o{ focusInitiatives : "has"
+    companies ||--o{ organizationCompanyDisplay : "displayed_in"
     
-    topicEmbeddings ||--o{ topicRelations : "has"
-    topicEmbeddings }o--|| entities : "referenced_by_metadata"
+    meetingNotes ||--o{ topics : "contains"
     
-    entities ||--o{ topicRelations : "source"
-    entities ||--o{ topicRelations : "target"
+    topics ||--o{ relations : "has"
+    
+    entities ||--o{ relations : "source"
+    entities ||--o{ relations : "target"
+    
+    themes ||--o{ focusInitiatives : "contains"
+    
+    designDocSections ||--o{ designDocSectionRelations : "source"
+    designDocSections ||--o{ designDocSectionRelations : "target"
     
     organizations {
         string id PK
@@ -1259,6 +1133,30 @@ function SQLiteSchemaSection() {
         string organizationId FK
         string name
         string position
+        string nameRomaji
+        string department
+        string extension
+        string companyPhone
+        string mobilePhone
+        string email
+        string itochuEmail
+        string teams
+        string employeeType
+        string roleName
+        string indicator
+        string location
+        string floorDoorNo
+        string previousName
+        string createdAt
+        string updatedAt
+    }
+    
+    organizationContents {
+        string id PK
+        string organizationId FK
+        string introduction
+        string focusAreas
+        string meetingNotes
         string createdAt
         string updatedAt
     }
@@ -1266,27 +1164,36 @@ function SQLiteSchemaSection() {
     meetingNotes {
         string id PK
         string organizationId FK
+        string companyId FK
         string title
         string description
         string content
+        int chromaSynced
+        string chromaSyncError
+        string lastChromaSyncAttempt
         string createdAt
         string updatedAt
     }
     
-    topicEmbeddings {
+    topics {
         string id PK
         string topicId
         string meetingNoteId FK
         string organizationId FK
-        string combinedEmbedding
-        string titleEmbedding
-        string contentEmbedding
-        string metadataEmbedding
-        string embeddingModel
-        string embeddingVersion
+        string companyId FK
+        string title
+        string description
+        string content
         string semanticCategory
         string keywords
         string tags
+        string contentSummary
+        string searchableText
+        int chromaSynced
+        string chromaSyncError
+        string lastChromaSyncAttempt
+        string lastSearchDate
+        int searchCount
         string createdAt
         string updatedAt
     }
@@ -1298,11 +1205,19 @@ function SQLiteSchemaSection() {
         string aliases
         string metadata
         string organizationId FK
+        string companyId FK
+        string searchableText
+        string displayName
+        int chromaSynced
+        string chromaSyncError
+        string lastChromaSyncAttempt
+        string lastSearchDate
+        int searchCount
         string createdAt
         string updatedAt
     }
     
-    topicRelations {
+    relations {
         string id PK
         string topicId FK
         string sourceEntityId FK
@@ -1312,13 +1227,20 @@ function SQLiteSchemaSection() {
         float confidence
         string metadata
         string organizationId FK
+        string companyId FK
+        string searchableText
+        int chromaSynced
+        string chromaSyncError
+        string lastChromaSyncAttempt
+        string lastSearchDate
+        int searchCount
         string createdAt
         string updatedAt
     }
     
     companies {
         string id PK
-        string code
+        string code UK
         string name
         string nameShort
         string category
@@ -1330,215 +1252,910 @@ function SQLiteSchemaSection() {
         int position
         string createdAt
         string updatedAt
+    }
+    
+    companyContents {
+        string id PK
+        string companyId FK
+        string introduction
+        string focusBusinesses
+        string capitalStructure
+        string capitalStructureDiagram
+        string createdAt
+        string updatedAt
+    }
+    
+    focusInitiatives {
+        string id PK
+        string organizationId FK
+        string companyId FK
+        string title
+        string description
+        string content
+        string themeIds
+        string topicIds
+        string createdAt
+        string updatedAt
+    }
+    
+    themes {
+        string id PK
+        string title
+        string description
+        string initiativeIds
+        int position
+        string createdAt
+        string updatedAt
+    }
+    
+    organizationCompanyDisplay {
+        string id PK
+        string organizationId FK
+        string companyId FK
+        int displayOrder
+        string createdAt
+        string updatedAt
+    }
+    
+    designDocSections {
+        string id PK
+        string title
+        string description
+        string content
+        string tags
+        int order_index
+        string pageUrl
+        string hierarchy
+        string relatedSections
+        string semanticCategory
+        string keywords
+        string summary
+        string createdAt
+        string updatedAt
+    }
+    
+    designDocSectionRelations {
+        string id PK
+        string sourceSectionId FK
+        string targetSectionId FK
+        string relationType
+        string description
+        string createdAt
+        string updatedAt
     }`}
         />
       </div>
 
       <div style={styles.section}>
         <h3 style={styles.sectionTitle}>
-          主要テーブル詳細
+          ① すべてのSQLiteテーブル詳細
         </h3>
-
-        <div style={{ marginBottom: '24px' }}>
-          <h4 style={styles.subsectionTitle}>
-            <span style={styles.colorDot('#4A90E2')}></span>
-            organizations（組織）
-          </h4>
-          <div style={styles.subsectionContent}>
-            <p style={{ marginBottom: '12px' }}>
-              <strong>役割:</strong> 組織階層を管理するマスターテーブル。親子関係で階層構造を表現します。
+        <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <p style={{ fontSize: '14px', fontWeight: 600, margin: 0, color: 'var(--color-text)' }}>
+              テーブル番号一覧（クリックで該当テーブルを表示）:
             </p>
-            <p style={{ marginBottom: '8px', fontWeight: 600 }}>主要カラム:</p>
-            <ul style={styles.subsectionList}>
-              <li><code>id</code> - 主キー（例: <code>init_miwceusf_lmthnq2ks</code>）</li>
-              <li><code>parentId</code> - 親組織のID（自己参照外部キー）</li>
-              <li><code>name</code> - 組織名</li>
-              <li><code>level</code> - 階層レベル（0=ルート、1=部門、2=チームなど）</li>
-              <li><code>levelName</code> - レベル名（例: "部門"、"チーム"）</li>
-            </ul>
-            <p style={{ fontSize: '14px', color: 'var(--color-text-light)', fontStyle: 'italic' }}>
-              <strong>ID連携:</strong> 他のテーブル（<code>organizationMembers</code>、<code>meetingNotes</code>、<code>entities</code>など）の<code>organizationId</code>で参照されます。
-            </p>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button
+                onClick={() => selectTable('none')}
+                style={{
+                  fontSize: '12px',
+                  padding: '4px 10px',
+                  backgroundColor: selectedTableId === 'none' ? '#4A90E2' : 'var(--color-surface)',
+                  color: selectedTableId === 'none' ? 'white' : 'var(--color-text)',
+                  border: '1px solid var(--color-border-color)',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 500,
+                  transition: 'all 0.2s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedTableId !== 'none') {
+                    e.currentTarget.style.backgroundColor = 'var(--color-border-color)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedTableId !== 'none') {
+                    e.currentTarget.style.backgroundColor = 'var(--color-surface)';
+                  }
+                }}
+              >
+                非表示
+              </button>
+              <button
+                onClick={() => selectTable(null)}
+                style={{
+                  fontSize: '12px',
+                  padding: '4px 10px',
+                  backgroundColor: selectedTableId === null ? '#4A90E2' : 'var(--color-surface)',
+                  color: selectedTableId === null ? 'white' : 'var(--color-text)',
+                  border: '1px solid var(--color-border-color)',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 500,
+                  transition: 'all 0.2s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedTableId !== null) {
+                    e.currentTarget.style.backgroundColor = 'var(--color-border-color)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedTableId !== null) {
+                    e.currentTarget.style.backgroundColor = 'var(--color-surface)';
+                  }
+                }}
+              >
+                すべて表示
+              </button>
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+            {tableList.map((table) => {
+              const isSelected = selectedTableId === table.id;
+              return (
+                <button
+                  key={table.id}
+                  onClick={() => selectTable(isSelected ? 'none' : table.id)}
+                  style={{
+                    fontSize: '13px',
+                    padding: '6px 12px',
+                    backgroundColor: isSelected ? '#4A90E2' : 'var(--color-surface)',
+                    color: isSelected ? 'white' : 'var(--color-text)',
+                    border: `1px solid ${isSelected ? '#4A90E2' : 'var(--color-border-color)'}`,
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontFamily: 'monospace',
+                    fontWeight: 500,
+                    transition: 'all 0.2s ease',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.backgroundColor = 'var(--color-border-color)';
+                      e.currentTarget.style.transform = 'translateY(-1px)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.backgroundColor = 'var(--color-surface)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                    }
+                  }}
+                >
+                  <span style={{ fontSize: '14px' }}>{table.number}</span>
+                  <span>{table.name}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        <div style={{ marginBottom: '24px' }}>
-          <h4 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)', display: 'flex', alignItems: 'center' }}>
-            <span style={{ display: 'inline-block', width: '8px', height: '8px', backgroundColor: '#7ED321', borderRadius: '50%', marginRight: '8px' }}></span>
-            topicEmbeddings（トピック埋め込み）
-          </h4>
-          <div style={{ paddingLeft: '24px', borderLeft: '2px solid #e0e0e0' }}>
-            <p style={{ marginBottom: '12px' }}>
-              <strong>役割:</strong> 議事録内のトピック情報と埋め込みベクトル（SQLite側）を保存します。トピックのメタデータとキーワードも管理します。
-            </p>
-            <p style={{ marginBottom: '8px', fontWeight: 600 }}>主要カラム:</p>
-            <ul style={{ marginLeft: '20px', marginBottom: '12px' }}>
-              <li><code>id</code> - 主キー（形式: <code>{'{meetingNoteId}-topic-{topicId}'}</code>）</li>
-              <li><code>topicId</code> - トピックのユニークID（例: <code>init_mj0b1gma_hywcwrspw</code>）</li>
-              <li><code>meetingNoteId</code> - 議事録ID（外部キー）</li>
-              <li><code>organizationId</code> - 組織ID（外部キー）</li>
-              <li><code>semanticCategory</code> - セマンティックカテゴリ（例: "戦略"、"実行"）</li>
-              <li><code>keywords</code> - キーワード（JSON配列）</li>
-              <li><code>combinedEmbedding</code> - 結合埋め込みベクトル（JSON配列、ChromaDB移行予定）</li>
-            </ul>
-            <p style={{ fontSize: '14px', color: 'var(--color-text-light)', fontStyle: 'italic' }}>
-              <strong>ID連携:</strong> <code>topicRelations</code>テーブルの<code>topicId</code>で参照されます。エンティティの<code>metadata.topicId</code>には<code>topicId</code>（<code>id</code>ではない）が保存されます。
-            </p>
-          </div>
-        </div>
-
-        <div style={{ marginBottom: '24px' }}>
-          <h4 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)', display: 'flex', alignItems: 'center' }}>
-            <span style={{ display: 'inline-block', width: '8px', height: '8px', backgroundColor: '#F5A623', borderRadius: '50%', marginRight: '8px' }}></span>
-            entities（エンティティ）
-          </h4>
-          <div style={{ paddingLeft: '24px', borderLeft: '2px solid #e0e0e0' }}>
-            <p style={{ marginBottom: '12px' }}>
-              <strong>役割:</strong> ナレッジグラフのノード（人物、組織、製品など）を表すエンティティ情報を保存します。
-            </p>
-            <p style={{ marginBottom: '8px', fontWeight: 600 }}>主要カラム:</p>
-            <ul style={{ marginLeft: '20px', marginBottom: '12px' }}>
-              <li><code>id</code> - 主キー（形式: <code>{'entity_{timestamp}_{random}'}</code>）</li>
-              <li><code>name</code> - エンティティ名（例: "トヨタ自動車"）</li>
-              <li><code>type</code> - エンティティタイプ（例: "organization"、"person"、"product"）</li>
-              <li><code>aliases</code> - 別名リスト（JSON配列）</li>
-              <li><code>metadata</code> - メタデータ（JSONオブジェクト、<code>topicId</code>を含む）</li>
-              <li><code>organizationId</code> - 組織ID（外部キー）</li>
-            </ul>
-            <p style={{ fontSize: '14px', color: 'var(--color-text-light)', fontStyle: 'italic' }}>
-              <strong>ID連携:</strong> <code>topicRelations</code>テーブルの<code>sourceEntityId</code>と<code>targetEntityId</code>で参照されます。<code>metadata.topicId</code>には、そのエンティティが属するトピックの<code>topicId</code>が保存されます。
-            </p>
-          </div>
-        </div>
-
-        <div style={{ marginBottom: '24px' }}>
-          <h4 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)', display: 'flex', alignItems: 'center' }}>
-            <span style={{ display: 'inline-block', width: '8px', height: '8px', backgroundColor: '#BD10E0', borderRadius: '50%', marginRight: '8px' }}></span>
-            topicRelations（トピックリレーション）
-          </h4>
-          <div style={{ paddingLeft: '24px', borderLeft: '2px solid #e0e0e0' }}>
-            <p style={{ marginBottom: '12px' }}>
-              <strong>役割:</strong> エンティティ間の関係性を表すリレーション（エッジ）を保存します。各リレーションは特定のトピックに紐づきます。
-            </p>
-            <p style={{ marginBottom: '8px', fontWeight: 600 }}>主要カラム:</p>
-            <ul style={{ marginLeft: '20px', marginBottom: '12px' }}>
-              <li><code>id</code> - 主キー</li>
-              <li><code>topicId</code> - トピック埋め込みID（外部キー、形式: <code>{'{meetingNoteId}-topic-{topicId}'}</code>）</li>
-              <li><code>sourceEntityId</code> - 起点エンティティID（外部キー）</li>
-              <li><code>targetEntityId</code> - 終点エンティティID（外部キー）</li>
-              <li><code>relationType</code> - リレーションタイプ（例: "works_for"、"partners_with"）</li>
-              <li><code>description</code> - リレーションの説明</li>
-              <li><code>confidence</code> - 信頼度（0.0-1.0）</li>
-              <li><code>metadata</code> - 追加メタデータ（JSONオブジェクト）</li>
-              <li><code>organizationId</code> - 組織ID（外部キー）</li>
-            </ul>
-            <p style={{ fontSize: '14px', color: 'var(--color-text-light)', fontStyle: 'italic' }}>
-              <strong>ID連携:</strong> <code>topicId</code>は<code>topicEmbeddings.id</code>を参照し、<code>sourceEntityId</code>と<code>targetEntityId</code>は<code>entities.id</code>を参照します。これにより、トピックごとに独立したリレーションを管理できます。
-            </p>
-          </div>
-        </div>
-
-        <div style={{ marginBottom: '24px' }}>
-          <h4 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)', display: 'flex', alignItems: 'center' }}>
-            <span style={{ display: 'inline-block', width: '8px', height: '8px', backgroundColor: '#E53935', borderRadius: '50%', marginRight: '8px' }}></span>
-            meetingNotes（議事録）
-          </h4>
-          <div style={{ paddingLeft: '24px', borderLeft: '2px solid #e0e0e0' }}>
-            <p style={{ marginBottom: '12px' }}>
-              <strong>役割:</strong> 組織の議事録情報を保存します。各議事録には複数のトピックが含まれます。
-            </p>
-            <p style={{ marginBottom: '8px', fontWeight: 600 }}>主要カラム:</p>
-            <ul style={{ marginLeft: '20px', marginBottom: '12px' }}>
-              <li><code>id</code> - 主キー（例: <code>init_miwceusf_lmthnq2ks</code>）</li>
-              <li><code>organizationId</code> - 組織ID（外部キー）</li>
-              <li><code>title</code> - 議事録タイトル</li>
-              <li><code>description</code> - 議事録の説明</li>
-              <li><code>content</code> - 議事録の内容（JSON形式）</li>
-            </ul>
-            <p style={{ fontSize: '14px', color: 'var(--color-text-light)', fontStyle: 'italic' }}>
-              <strong>ID連携:</strong> <code>topicEmbeddings.meetingNoteId</code>で参照されます。議事録IDは<code>topicEmbeddings.id</code>の一部として使用されます。
-            </p>
-          </div>
-        </div>
-
-        <div style={{ marginBottom: '24px' }}>
-          <h4 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)', display: 'flex', alignItems: 'center' }}>
-            <span style={{ display: 'inline-block', width: '8px', height: '8px', backgroundColor: '#9C27B0', borderRadius: '50%', marginRight: '8px' }}></span>
-            organizationMembers（組織メンバー）
-          </h4>
-          <div style={{ paddingLeft: '24px', borderLeft: '2px solid #e0e0e0' }}>
-            <p style={{ marginBottom: '12px' }}>
-              <strong>役割:</strong> 組織に所属するメンバー情報を保存します。
-            </p>
-            <p style={{ marginBottom: '8px', fontWeight: 600 }}>主要カラム:</p>
-            <ul style={{ marginLeft: '20px', marginBottom: '12px' }}>
-              <li><code>id</code> - 主キー</li>
-              <li><code>organizationId</code> - 組織ID（外部キー）</li>
-              <li><code>name</code> - メンバー名</li>
-              <li><code>position</code> - 役職</li>
-            </ul>
-            <p style={{ fontSize: '14px', color: 'var(--color-text-light)', fontStyle: 'italic' }}>
-              <strong>ID連携:</strong> <code>organizations.id</code>で参照されます。
-            </p>
-          </div>
-        </div>
+        {selectedTableId === 'none' ? null : selectedTableId === null ? (
+          <>
+            <OrganizationsTable />
+            <OrganizationMembersTable />
+            <OrganizationContentsTable />
+            <MeetingNotesTable />
+            <TopicsTable />
+            <EntitiesTable />
+            <RelationsTable />
+            <CompaniesTable />
+            <CompanyContentsTable />
+            <FocusInitiativesTable />
+            <ThemesTable />
+            <OrganizationCompanyDisplayTable />
+            <DesignDocSectionsTable />
+            <DesignDocSectionRelationsTable />
+          </>
+        ) : (
+          tableList.find(t => t.id === selectedTableId)?.component && (
+            <div key={selectedTableId}>
+              {React.createElement(tableList.find(t => t.id === selectedTableId)!.component)}
+            </div>
+          )
+        )}
       </div>
 
       <div style={{ marginBottom: '32px' }}>
         <h3 style={{ fontSize: '20px', fontWeight: 600, marginBottom: '16px', color: 'var(--color-text)' }}>
-          ID連携の仕組み
+          ② システム管理テーブル
+        </h3>
+        <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <p style={{ fontSize: '14px', fontWeight: 600, margin: 0, color: 'var(--color-text)' }}>
+              システム管理テーブル一覧（クリックで該当テーブルを表示）:
+            </p>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button
+                onClick={() => selectSystemTable('none')}
+                style={{
+                  fontSize: '12px',
+                  padding: '4px 10px',
+                  backgroundColor: selectedSystemTableId === 'none' ? '#4A90E2' : 'var(--color-surface)',
+                  color: selectedSystemTableId === 'none' ? 'white' : 'var(--color-text)',
+                  border: '1px solid var(--color-border-color)',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 500,
+                  transition: 'all 0.2s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedSystemTableId !== 'none') {
+                    e.currentTarget.style.backgroundColor = 'var(--color-border-color)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedSystemTableId !== 'none') {
+                    e.currentTarget.style.backgroundColor = 'var(--color-surface)';
+                  }
+                }}
+              >
+                非表示
+              </button>
+              <button
+                onClick={() => selectSystemTable(null)}
+                style={{
+                  fontSize: '12px',
+                  padding: '4px 10px',
+                  backgroundColor: selectedSystemTableId === null ? '#4A90E2' : 'var(--color-surface)',
+                  color: selectedSystemTableId === null ? 'white' : 'var(--color-text)',
+                  border: '1px solid var(--color-border-color)',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 500,
+                  transition: 'all 0.2s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedSystemTableId !== null) {
+                    e.currentTarget.style.backgroundColor = 'var(--color-border-color)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedSystemTableId !== null) {
+                    e.currentTarget.style.backgroundColor = 'var(--color-surface)';
+                  }
+                }}
+              >
+                すべて表示
+              </button>
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+            {systemTableList.map((table) => {
+              const isSelected = selectedSystemTableId === table.id;
+              return (
+                <button
+                  key={table.id}
+                  onClick={() => selectSystemTable(isSelected ? 'none' : table.id)}
+                  style={{
+                    fontSize: '13px',
+                    padding: '6px 12px',
+                    backgroundColor: isSelected ? '#4A90E2' : 'var(--color-surface)',
+                    color: isSelected ? 'white' : 'var(--color-text)',
+                    border: `1px solid ${isSelected ? '#4A90E2' : 'var(--color-border-color)'}`,
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontFamily: 'monospace',
+                    fontWeight: 500,
+                    transition: 'all 0.2s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.backgroundColor = 'var(--color-border-color)';
+                      e.currentTarget.style.transform = 'translateY(-1px)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.backgroundColor = 'var(--color-surface)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                    }
+                  }}
+                >
+                  {table.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {selectedSystemTableId === 'none' ? null : selectedSystemTableId === null ? (
+          <>
+            <UsersTable />
+            <PageContainersTable />
+            <AdminsTable />
+            <ApprovalRequestsTable />
+            <AiSettingsTable />
+            <BackupHistoryTable />
+            <ThemeHierarchyConfigsTable />
+          </>
+        ) : (
+          systemTableList.find(t => t.id === selectedSystemTableId)?.component && (
+            <div key={selectedSystemTableId}>
+              {React.createElement(systemTableList.find(t => t.id === selectedSystemTableId)!.component)}
+            </div>
+          )
+        )}
+      </div>
+
+      <div style={{ marginBottom: '32px' }}>
+        <h3 style={{ fontSize: '20px', fontWeight: 600, marginBottom: '16px', color: 'var(--color-text)' }}>
+          ③ ID連携の仕組み
         </h3>
         
-        <div style={{ padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
-          <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
-            トピックIDの構造
-          </h4>
-          <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8' }}>
-            <code>topicEmbeddings.id</code>は<strong>複合ID</strong>として設計されています：
-          </p>
-          <div style={{ padding: '12px', backgroundColor: '#f5f5f5', borderRadius: '4px', marginBottom: '12px', fontFamily: 'monospace', fontSize: '13px' }}>
-            <code>{'{meetingNoteId}-topic-{topicId}'}</code>
+        <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <p style={{ fontSize: '14px', fontWeight: 600, margin: 0, color: 'var(--color-text)' }}>
+              ID連携セクション一覧（クリックで該当セクションを表示）:
+            </p>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button
+                onClick={() => selectIdLinkage('none')}
+                style={{
+                  fontSize: '12px',
+                  padding: '4px 10px',
+                  backgroundColor: selectedIdLinkageId === 'none' ? '#4A90E2' : 'var(--color-surface)',
+                  color: selectedIdLinkageId === 'none' ? 'white' : 'var(--color-text)',
+                  border: '1px solid var(--color-border-color)',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 500,
+                  transition: 'all 0.2s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedIdLinkageId !== 'none') {
+                    e.currentTarget.style.backgroundColor = 'var(--color-border-color)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedIdLinkageId !== 'none') {
+                    e.currentTarget.style.backgroundColor = 'var(--color-surface)';
+                  }
+                }}
+              >
+                非表示
+              </button>
+              <button
+                onClick={() => selectIdLinkage(null)}
+                style={{
+                  fontSize: '12px',
+                  padding: '4px 10px',
+                  backgroundColor: selectedIdLinkageId === null ? '#4A90E2' : 'var(--color-surface)',
+                  color: selectedIdLinkageId === null ? 'white' : 'var(--color-text)',
+                  border: '1px solid var(--color-border-color)',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 500,
+                  transition: 'all 0.2s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedIdLinkageId !== null) {
+                    e.currentTarget.style.backgroundColor = 'var(--color-border-color)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedIdLinkageId !== null) {
+                    e.currentTarget.style.backgroundColor = 'var(--color-surface)';
+                  }
+                }}
+              >
+                すべて表示
+              </button>
+            </div>
           </div>
-          <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8' }}>
-            例: <code>init_miwceusf_lmthnq2ks-topic-init_mj0b1gma_hywcwrspw</code>
-          </p>
-          <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
-            <li><code>meetingNoteId</code>部分: 議事録ID（<code>meetingNotes.id</code>）</li>
-            <li><code>topicId</code>部分: トピックのユニークID（<code>topicEmbeddings.topicId</code>）</li>
-          </ul>
-          <p style={{ marginTop: '12px', fontSize: '14px', lineHeight: '1.8' }}>
-            <strong>重要なポイント:</strong> エンティティの<code>metadata.topicId</code>には<code>topicId</code>部分のみが保存され、<code>topicRelations.topicId</code>には完全な<code>id</code>（<code>{'{meetingNoteId}-topic-{topicId}'}</code>）が保存されます。
-          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+            {[
+              { id: 'id-linkage-topic-structure', name: 'トピックIDの構造' },
+              { id: 'id-linkage-data-flow', name: 'データ取得フロー' },
+              { id: 'id-linkage-foreign-keys', name: '外部キー制約' },
+              { id: 'id-linkage-check-constraints', name: 'CHECK制約' },
+              { id: 'id-linkage-chroma-sync', name: 'ChromaDB同期状態管理' },
+              { id: 'id-linkage-rag-optimization', name: 'RAG検索最適化カラム' },
+            ].map((section) => {
+              const isSelected = selectedIdLinkageId === section.id;
+              return (
+                <button
+                  key={section.id}
+                  onClick={() => selectIdLinkage(isSelected ? 'none' : section.id)}
+                  style={{
+                    fontSize: '13px',
+                    padding: '6px 12px',
+                    backgroundColor: isSelected ? '#4A90E2' : 'var(--color-surface)',
+                    color: isSelected ? 'white' : 'var(--color-text)',
+                    border: `1px solid ${isSelected ? '#4A90E2' : 'var(--color-border-color)'}`,
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontWeight: 500,
+                    transition: 'all 0.2s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.backgroundColor = 'var(--color-border-color)';
+                      e.currentTarget.style.transform = 'translateY(-1px)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.backgroundColor = 'var(--color-surface)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                    }
+                  }}
+                >
+                  {section.name}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        <div style={{ marginTop: '24px', padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
-          <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
-            データ取得フロー
-          </h4>
-          <ol style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
-            <li><strong>トピック選択時:</strong> <code>topicEmbeddings.id</code>（例: <code>init_miwceusf_lmthnq2ks-topic-init_mj0b1gma_hywcwrspw</code>）を使用</li>
-            <li><strong>リレーション取得:</strong> <code>getRelationsByTopicId(topicEmbeddings.id)</code>で<code>topicRelations</code>を検索</li>
-            <li><strong>エンティティ取得:</strong> リレーションから<code>sourceEntityId</code>と<code>targetEntityId</code>を抽出し、<code>entities</code>から取得</li>
-            <li><strong>トピックフィルタリング:</strong> エンティティの<code>metadata.topicId</code>が<code>topicEmbeddings.topicId</code>と一致するもののみを表示</li>
-          </ol>
-        </div>
+        {selectedIdLinkageId === 'none' ? null : selectedIdLinkageId === null ? (
+          <>
+            <div style={{ padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+              <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
+                トピックIDの構造
+              </h4>
+              <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8' }}>
+                <code>topics.id</code>は<strong>複合ID</strong>として設計されています：
+              </p>
+              <div style={{ padding: '12px', backgroundColor: '#f5f5f5', borderRadius: '4px', marginBottom: '12px', fontFamily: 'monospace', fontSize: '13px' }}>
+                <code>{'{meetingNoteId}-topic-{topicId}'}</code>
+              </div>
+              <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8' }}>
+                例: <code>init_miwceusf_lmthnq2ks-topic-init_mj0b1gma_hywcwrspw</code>
+              </p>
+              <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
+                <li><code>meetingNoteId</code>部分: 議事録ID（<code>meetingNotes.id</code>）</li>
+                <li><code>topicId</code>部分: トピックのユニークID（<code>topics.topicId</code>）</li>
+              </ul>
+              <p style={{ marginTop: '12px', fontSize: '14px', lineHeight: '1.8' }}>
+                <strong>重要なポイント:</strong> エンティティの<code>metadata.topicId</code>には<code>topicId</code>部分のみが保存され、<code>relations.topicId</code>には完全な<code>id</code>（<code>{'{meetingNoteId}-topic-{topicId}'}</code>）が保存されます。
+              </p>
+            </div>
 
-        <div style={{ marginTop: '24px', padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
-          <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
-            外部キー制約
-          </h4>
-          <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8' }}>
-            SQLiteでは外部キー制約が有効化されており、以下の参照整合性が保証されます：
-          </p>
-          <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
-            <li><code>topicRelations.topicId</code> → <code>topicEmbeddings.id</code></li>
-            <li><code>topicRelations.sourceEntityId</code> → <code>entities.id</code></li>
-            <li><code>topicRelations.targetEntityId</code> → <code>entities.id</code></li>
-            <li><code>topicEmbeddings.meetingNoteId</code> → <code>meetingNotes.id</code></li>
-            <li><code>topicEmbeddings.organizationId</code> → <code>organizations.id</code></li>
-            <li><code>entities.organizationId</code> → <code>organizations.id</code></li>
-          </ul>
-        </div>
+            <div style={{ marginTop: '24px', padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+              <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
+                データ取得フロー
+              </h4>
+              <ol style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
+                <li><strong>トピック選択時:</strong> <code>topics.id</code>（例: <code>init_miwceusf_lmthnq2ks-topic-init_mj0b1gma_hywcwrspw</code>）を使用</li>
+                <li><strong>リレーション取得:</strong> <code>getRelationsByTopicId(topics.id)</code>で<code>relations</code>を検索</li>
+                <li><strong>エンティティ取得:</strong> リレーションから<code>sourceEntityId</code>と<code>targetEntityId</code>を抽出し、<code>entities</code>から取得</li>
+                <li><strong>トピックフィルタリング:</strong> エンティティの<code>metadata.topicId</code>が<code>topics.topicId</code>と一致するもののみを表示</li>
+              </ol>
+            </div>
+
+            <div style={{ marginTop: '24px', padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+              <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
+                外部キー制約
+              </h4>
+              <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8' }}>
+                SQLiteでは外部キー制約が有効化されており、以下の参照整合性が保証されます：
+              </p>
+              <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
+                <li><code>relations.topicId</code> → <code>topics.id</code></li>
+                <li><code>relations.sourceEntityId</code> → <code>entities.id</code></li>
+                <li><code>relations.targetEntityId</code> → <code>entities.id</code></li>
+                <li><code>relations.organizationId</code> → <code>organizations.id</code></li>
+                <li><code>relations.companyId</code> → <code>companies.id</code></li>
+                <li><code>topics.meetingNoteId</code> → <code>meetingNotes.id</code></li>
+                <li><code>topics.organizationId</code> → <code>organizations.id</code></li>
+                <li><code>topics.companyId</code> → <code>companies.id</code></li>
+                <li><code>entities.organizationId</code> → <code>organizations.id</code></li>
+                <li><code>entities.companyId</code> → <code>companies.id</code></li>
+                <li><code>meetingNotes.organizationId</code> → <code>organizations.id</code></li>
+                <li><code>meetingNotes.companyId</code> → <code>companies.id</code></li>
+                <li><code>focusInitiatives.organizationId</code> → <code>organizations.id</code></li>
+                <li><code>focusInitiatives.companyId</code> → <code>companies.id</code></li>
+              </ul>
+            </div>
+
+            <div style={{ marginTop: '24px', padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+              <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
+                CHECK制約
+              </h4>
+              <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8' }}>
+                以下のテーブルでは、<code>organizationId</code>と<code>companyId</code>のいずれか一方のみがNULLでない必要があります：
+              </p>
+              <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
+                <li><code>entities</code> - エンティティは組織または事業会社のいずれかに属する</li>
+                <li><code>relations</code> - リレーションは組織または事業会社のいずれかに属する</li>
+                <li><code>topics</code> - トピックは組織または事業会社のいずれかに属する</li>
+                <li><code>meetingNotes</code> - 議事録は組織または事業会社のいずれかに属する</li>
+                <li><code>focusInitiatives</code> - 注力施策は組織または事業会社のいずれかに属する</li>
+              </ul>
+            </div>
+
+            <div style={{ marginTop: '24px', padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+              <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
+                ChromaDB同期状態管理
+              </h4>
+              <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8' }}>
+                以下のテーブルには、ChromaDBとの同期状態を管理するカラムが追加されています：
+              </p>
+              <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
+                <li><code>chromaSynced</code> - 同期状態（0: 未同期、1: 同期済み）</li>
+                <li><code>chromaSyncError</code> - 同期エラーメッセージ（NULL: エラーなし）</li>
+                <li><code>lastChromaSyncAttempt</code> - 最後の同期試行日時</li>
+              </ul>
+              <p style={{ marginTop: '12px', fontSize: '14px', lineHeight: '1.8' }}>
+                <strong>対象テーブル:</strong> <code>entities</code>、<code>relations</code>、<code>topics</code>、<code>meetingNotes</code>
+              </p>
+            </div>
+
+            <div style={{ marginTop: '24px', padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+              <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
+                RAG検索最適化カラム
+              </h4>
+              <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8' }}>
+                以下のテーブルには、RAG検索のパフォーマンス向上のためのカラムが追加されています：
+              </p>
+              <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
+                <li><code>entities.searchableText</code> - 検索用テキスト（name + aliases + metadataから自動生成）</li>
+                <li><code>entities.displayName</code> - 表示名（name + roleから自動生成）</li>
+                <li><code>relations.searchableText</code> - 検索用テキスト（relationType + descriptionから自動生成）</li>
+                <li><code>topics.searchableText</code> - 検索用テキスト（title + description + contentの先頭200文字から自動生成）</li>
+                <li><code>topics.contentSummary</code> - コンテンツ要約（contentの先頭200文字から自動生成）</li>
+              </ul>
+              <p style={{ marginTop: '12px', fontSize: '14px', lineHeight: '1.8' }}>
+                <strong>自動生成:</strong> これらのカラムは、INSERT/UPDATE時にトリガーによって自動的に生成されます。
+              </p>
+            </div>
+          </>
+        ) : (
+          <>
+            {selectedIdLinkageId === 'id-linkage-topic-structure' && (
+              <div style={{ padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+                <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
+                  トピックIDの構造
+                </h4>
+                <ZoomableMermaidDiagram
+                  diagramId="topic-id-structure-diagram"
+                  mermaidCode={`graph TB
+    subgraph TopicID["topics.id（複合ID）"]
+        MeetingNoteID["meetingNoteId部分<br/>例: init_miwceusf_lmthnq2ks<br/>（meetingNotes.id）"]
+        Separator["-topic-"]
+        TopicIDPart["topicId部分<br/>例: init_mj0b1gma_hywcwrspw<br/>（topics.topicId）"]
+    end
+    
+    subgraph Usage["IDの使用箇所"]
+        EntityMeta["entities.metadata.topicId<br/>topicId部分のみ"]
+        RelationTopicID["relations.topicId<br/>完全なid"]
+        ChromaDBID["ChromaDB topics_{orgId}.id<br/>topicId部分のみ"]
+    end
+    
+    TopicID --> MeetingNoteID
+    TopicID --> Separator
+    TopicID --> TopicIDPart
+    
+    TopicIDPart --> EntityMeta
+    TopicID --> RelationTopicID
+    TopicIDPart --> ChromaDBID
+    
+    style TopicID fill:#e1f5ff
+    style MeetingNoteID fill:#fff9c4
+    style TopicIDPart fill:#fff9c4
+    style EntityMeta fill:#c8e6c9
+    style RelationTopicID fill:#c8e6c9
+    style ChromaDBID fill:#c8e6c9`}
+                />
+                <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8', marginTop: '16px' }}>
+                  <code>topics.id</code>は<strong>複合ID</strong>として設計されています：
+                </p>
+                <div style={{ padding: '12px', backgroundColor: '#f5f5f5', borderRadius: '4px', marginBottom: '12px', fontFamily: 'monospace', fontSize: '13px' }}>
+                  <code>{'{meetingNoteId}-topic-{topicId}'}</code>
+                </div>
+                <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8' }}>
+                  例: <code>init_miwceusf_lmthnq2ks-topic-init_mj0b1gma_hywcwrspw</code>
+                </p>
+                <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
+                  <li><code>meetingNoteId</code>部分: 議事録ID（<code>meetingNotes.id</code>）</li>
+                  <li><code>topicId</code>部分: トピックのユニークID（<code>topics.topicId</code>）</li>
+                </ul>
+                <p style={{ marginTop: '12px', fontSize: '14px', lineHeight: '1.8' }}>
+                  <strong>重要なポイント:</strong> エンティティの<code>metadata.topicId</code>には<code>topicId</code>部分のみが保存され、<code>relations.topicId</code>には完全な<code>id</code>（<code>{'{meetingNoteId}-topic-{topicId}'}</code>）が保存されます。
+                </p>
+              </div>
+            )}
+
+            {selectedIdLinkageId === 'id-linkage-data-flow' && (
+              <div style={{ padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+                <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
+                  データ取得フロー
+                </h4>
+                <ZoomableMermaidDiagram
+                  diagramId="data-retrieval-flow-diagram"
+                  mermaidCode={`sequenceDiagram
+    participant User as ユーザー
+    participant App as アプリケーション
+    participant Topics as topicsテーブル
+    participant Relations as relationsテーブル
+    participant Entities as entitiesテーブル
+    
+    User->>App: トピック選択<br/>topics.idを使用
+    App->>Topics: SELECT * FROM topics<br/>WHERE id = topics.id
+    Topics-->>App: トピックデータ取得
+    
+    App->>Relations: getRelationsByTopicId(topics.id)<br/>WHERE topicId = topics.id
+    Relations-->>App: リレーション一覧<br/>sourceEntityId, targetEntityId
+    
+    App->>Entities: SELECT * FROM entities<br/>WHERE id IN (sourceEntityId, targetEntityId)
+    Entities-->>App: エンティティデータ取得
+    
+    App->>App: フィルタリング<br/>metadata.topicId = topics.topicId
+    App-->>User: トピック + リレーション + エンティティ表示`}
+                />
+                <ol style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px', marginTop: '16px' }}>
+                  <li><strong>トピック選択時:</strong> <code>topics.id</code>（例: <code>init_miwceusf_lmthnq2ks-topic-init_mj0b1gma_hywcwrspw</code>）を使用</li>
+                  <li><strong>リレーション取得:</strong> <code>getRelationsByTopicId(topics.id)</code>で<code>relations</code>を検索</li>
+                  <li><strong>エンティティ取得:</strong> リレーションから<code>sourceEntityId</code>と<code>targetEntityId</code>を抽出し、<code>entities</code>から取得</li>
+                  <li><strong>トピックフィルタリング:</strong> エンティティの<code>metadata.topicId</code>が<code>topics.topicId</code>と一致するもののみを表示</li>
+                </ol>
+              </div>
+            )}
+
+            {selectedIdLinkageId === 'id-linkage-foreign-keys' && (
+              <div style={{ padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+                <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
+                  外部キー制約
+                </h4>
+                <ZoomableMermaidDiagram
+                  diagramId="foreign-key-constraints-diagram"
+                  mermaidCode={`erDiagram
+    organizations ||--o{ relations : "has"
+    organizations ||--o{ topics : "has"
+    organizations ||--o{ entities : "has"
+    organizations ||--o{ meetingNotes : "has"
+    organizations ||--o{ focusInitiatives : "has"
+    
+    companies ||--o{ relations : "has"
+    companies ||--o{ topics : "has"
+    companies ||--o{ entities : "has"
+    companies ||--o{ meetingNotes : "has"
+    companies ||--o{ focusInitiatives : "has"
+    
+    meetingNotes ||--o{ topics : "has"
+    topics ||--o{ relations : "has"
+    entities ||--o{ relations : "source"
+    entities ||--o{ relations : "target"
+    
+    organizations {
+        string id PK
+    }
+    
+    companies {
+        string id PK
+    }
+    
+    meetingNotes {
+        string id PK
+        string organizationId FK
+        string companyId FK
+    }
+    
+    topics {
+        string id PK
+        string topicId
+        string meetingNoteId FK
+        string organizationId FK
+        string companyId FK
+    }
+    
+    entities {
+        string id PK
+        string organizationId FK
+        string companyId FK
+    }
+    
+    relations {
+        string id PK
+        string topicId FK
+        string sourceEntityId FK
+        string targetEntityId FK
+        string organizationId FK
+        string companyId FK
+    }
+    
+    focusInitiatives {
+        string id PK
+        string organizationId FK
+        string companyId FK
+    }`}
+                />
+                <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8', marginTop: '16px' }}>
+                  SQLiteでは外部キー制約が有効化されており、以下の参照整合性が保証されます：
+                </p>
+                <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
+                  <li><code>relations.topicId</code> → <code>topics.id</code></li>
+                  <li><code>relations.sourceEntityId</code> → <code>entities.id</code></li>
+                  <li><code>relations.targetEntityId</code> → <code>entities.id</code></li>
+                  <li><code>relations.organizationId</code> → <code>organizations.id</code></li>
+                  <li><code>relations.companyId</code> → <code>companies.id</code></li>
+                  <li><code>topics.meetingNoteId</code> → <code>meetingNotes.id</code></li>
+                  <li><code>topics.organizationId</code> → <code>organizations.id</code></li>
+                  <li><code>topics.companyId</code> → <code>companies.id</code></li>
+                  <li><code>entities.organizationId</code> → <code>organizations.id</code></li>
+                  <li><code>entities.companyId</code> → <code>companies.id</code></li>
+                  <li><code>meetingNotes.organizationId</code> → <code>organizations.id</code></li>
+                  <li><code>meetingNotes.companyId</code> → <code>companies.id</code></li>
+                  <li><code>focusInitiatives.organizationId</code> → <code>organizations.id</code></li>
+                  <li><code>focusInitiatives.companyId</code> → <code>companies.id</code></li>
+                </ul>
+              </div>
+            )}
+
+            {selectedIdLinkageId === 'id-linkage-check-constraints' && (
+              <div style={{ padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+                <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
+                  CHECK制約
+                </h4>
+                <ZoomableMermaidDiagram
+                  diagramId="check-constraints-diagram"
+                  mermaidCode={`graph TB
+    subgraph Constraint["CHECK制約: organizationId XOR companyId"]
+        Condition["(organizationId IS NOT NULL AND companyId IS NULL)<br/>OR<br/>(organizationId IS NULL AND companyId IS NOT NULL)"]
+    end
+    
+    subgraph Tables["対象テーブル"]
+        Entities["entities"]
+        Relations["relations"]
+        Topics["topics"]
+        MeetingNotes["meetingNotes"]
+        FocusInitiatives["focusInitiatives"]
+    end
+    
+    subgraph Valid["有効なパターン"]
+        OrgOnly["organizationId = 'org_001'<br/>companyId = NULL<br/>✓ 有効"]
+        CompanyOnly["organizationId = NULL<br/>companyId = 'comp_001'<br/>✓ 有効"]
+    end
+    
+    subgraph Invalid["無効なパターン"]
+        BothNull["organizationId = NULL<br/>companyId = NULL<br/>✗ 無効"]
+        BothSet["organizationId = 'org_001'<br/>companyId = 'comp_001'<br/>✗ 無効"]
+    end
+    
+    Constraint --> Tables
+    Tables --> Valid
+    Tables --> Invalid
+    
+    style Constraint fill:#e1f5ff
+    style Valid fill:#c8e6c9
+    style Invalid fill:#ffcdd2`}
+                />
+                <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8', marginTop: '16px' }}>
+                  以下のテーブルでは、<code>organizationId</code>と<code>companyId</code>のいずれか一方のみがNULLでない必要があります：
+                </p>
+                <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
+                  <li><code>entities</code> - エンティティは組織または事業会社のいずれかに属する</li>
+                  <li><code>relations</code> - リレーションは組織または事業会社のいずれかに属する</li>
+                  <li><code>topics</code> - トピックは組織または事業会社のいずれかに属する</li>
+                  <li><code>meetingNotes</code> - 議事録は組織または事業会社のいずれかに属する</li>
+                  <li><code>focusInitiatives</code> - 注力施策は組織または事業会社のいずれかに属する</li>
+                </ul>
+              </div>
+            )}
+
+            {selectedIdLinkageId === 'id-linkage-chroma-sync' && (
+              <div style={{ padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+                <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
+                  ChromaDB同期状態管理
+                </h4>
+                <ZoomableMermaidDiagram
+                  diagramId="chromadb-sync-state-diagram"
+                  mermaidCode={`stateDiagram-v2
+    [*] --> 未同期: データ作成/更新
+    
+    未同期 --> 同期中: 同期処理開始
+    同期中 --> 同期済み: 同期成功
+    同期中 --> 同期エラー: 同期失敗
+    
+    同期済み --> 未同期: データ更新
+    同期エラー --> 未同期: 再同期試行
+    
+    note right of 未同期
+        chromaSynced = 0
+        chromaSyncError = NULL
+    end note
+    
+    note right of 同期中
+        lastChromaSyncAttempt = 現在時刻
+    end note
+    
+    note right of 同期済み
+        chromaSynced = 1
+        chromaSyncError = NULL
+    end note
+    
+    note right of 同期エラー
+        chromaSynced = 0
+        chromaSyncError = エラーメッセージ
+    end note`}
+                />
+                <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8', marginTop: '16px' }}>
+                  以下のテーブルには、ChromaDBとの同期状態を管理するカラムが追加されています：
+                </p>
+                <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
+                  <li><code>chromaSynced</code> - 同期状態（0: 未同期、1: 同期済み）</li>
+                  <li><code>chromaSyncError</code> - 同期エラーメッセージ（NULL: エラーなし）</li>
+                  <li><code>lastChromaSyncAttempt</code> - 最後の同期試行日時</li>
+                </ul>
+                <p style={{ marginTop: '12px', fontSize: '14px', lineHeight: '1.8' }}>
+                  <strong>対象テーブル:</strong> <code>entities</code>、<code>relations</code>、<code>topics</code>、<code>meetingNotes</code>
+                </p>
+              </div>
+            )}
+
+            {selectedIdLinkageId === 'id-linkage-rag-optimization' && (
+              <div style={{ padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+                <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
+                  RAG検索最適化カラム
+                </h4>
+                <ZoomableMermaidDiagram
+                  diagramId="rag-optimization-columns-diagram"
+                  mermaidCode={`graph TB
+    subgraph EntitiesTable["entitiesテーブル"]
+        EntityName["name"]
+        EntityAliases["aliases (JSON)"]
+        EntityMetadata["metadata (JSON)"]
+        EntityRole["role"]
+        EntitySearchableText["searchableText<br/>（自動生成）"]
+        EntityDisplayName["displayName<br/>（自動生成）"]
+    end
+    
+    subgraph RelationsTable["relationsテーブル"]
+        RelationType["relationType"]
+        RelationDesc["description"]
+        RelationSearchableText["searchableText<br/>（自動生成）"]
+    end
+    
+    subgraph TopicsTable["topicsテーブル"]
+        TopicTitle["title"]
+        TopicDesc["description"]
+        TopicContent["content"]
+        TopicSearchableText["searchableText<br/>（自動生成）"]
+        TopicContentSummary["contentSummary<br/>（自動生成）"]
+    end
+    
+    EntityName --> EntitySearchableText
+    EntityAliases --> EntitySearchableText
+    EntityMetadata --> EntitySearchableText
+    
+    EntityName --> EntityDisplayName
+    EntityRole --> EntityDisplayName
+    
+    RelationType --> RelationSearchableText
+    RelationDesc --> RelationSearchableText
+    
+    TopicTitle --> TopicSearchableText
+    TopicDesc --> TopicSearchableText
+    TopicContent --> TopicSearchableText
+    TopicContent --> TopicContentSummary
+    
+    style EntitySearchableText fill:#c8e6c9
+    style EntityDisplayName fill:#c8e6c9
+    style RelationSearchableText fill:#c8e6c9
+    style TopicSearchableText fill:#c8e6c9
+    style TopicContentSummary fill:#c8e6c9`}
+                />
+                <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8', marginTop: '16px' }}>
+                  以下のテーブルには、RAG検索のパフォーマンス向上のためのカラムが追加されています：
+                </p>
+                <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
+                  <li><code>entities.searchableText</code> - 検索用テキスト（name + aliases + metadataから自動生成）</li>
+                  <li><code>entities.displayName</code> - 表示名（name + roleから自動生成）</li>
+                  <li><code>relations.searchableText</code> - 検索用テキスト（relationType + descriptionから自動生成）</li>
+                  <li><code>topics.searchableText</code> - 検索用テキスト（title + description + contentの先頭200文字から自動生成）</li>
+                  <li><code>topics.contentSummary</code> - コンテンツ要約（contentの先頭200文字から自動生成）</li>
+                </ul>
+                <p style={{ marginTop: '12px', fontSize: '14px', lineHeight: '1.8' }}>
+                  <strong>自動生成:</strong> これらのカラムは、INSERT/UPDATE時にトリガーによって自動的に生成されます。
+                </p>
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -1572,15 +2189,21 @@ function ChromaDBSchemaSection() {
         end
     end
     
+    subgraph Shared["共有コレクション"]
+        DesignDocs["design_docs<br/>システム設計ドキュメント<br/>（組織を跨いで共有）"]
+    end
+    
     subgraph SQLite["SQLite（参照用）"]
         SQLiteEntities[("entities<br/>テーブル")]
-        SQLiteRelations[("topicRelations<br/>テーブル")]
-        SQLiteTopics[("topicEmbeddings<br/>テーブル")]
+        SQLiteRelations[("relations<br/>テーブル")]
+        SQLiteTopics[("topics<br/>テーブル")]
+        SQLiteDesignDocs[("designDocSections<br/>テーブル")]
     end
     
     Entities1 -.->|"メタデータ: entityId"| SQLiteEntities
     Relations1 -.->|"メタデータ: relationId"| SQLiteRelations
     Topics1 -.->|"メタデータ: topicId"| SQLiteTopics
+    DesignDocs -.->|"メタデータ: sectionId"| SQLiteDesignDocs
     
     Entities2 -.->|"メタデータ: entityId"| SQLiteEntities
     Relations2 -.->|"メタデータ: relationId"| SQLiteRelations
@@ -1595,7 +2218,10 @@ function ChromaDBSchemaSection() {
     style Topics2 fill:#e8f5e9
     style SQLiteEntities fill:#e1f5ff
     style SQLiteRelations fill:#e1f5ff
-    style SQLiteTopics fill:#e1f5ff`}
+    style SQLiteTopics fill:#e1f5ff
+    style SQLiteDesignDocs fill:#e1f5ff
+    style DesignDocs fill:#fff9c4
+    style Shared fill:#fff4e1`}
         />
       </div>
 
@@ -1620,9 +2246,10 @@ function ChromaDBSchemaSection() {
               <li><code>metadata</code> - メタデータ（JSON形式）:
                 <ul style={{ marginLeft: '20px', marginTop: '8px' }}>
                   <li><code>entityId</code> - エンティティID（SQLite参照用）</li>
-                  <li><code>organizationId</code> - 組織ID</li>
+                  <li><code>organizationId</code> - 組織ID（NULL可能）</li>
+                  <li><code>companyId</code> - 事業会社ID（NULL可能、Rust側で追加される可能性あり）</li>
                   <li><code>name</code> - エンティティ名</li>
-                  <li><code>type</code> - エンティティタイプ（例: "organization"、"person"）</li>
+                  <li><code>type</code> - エンティティタイプ（例: "organization"、"person"、"product"）</li>
                   <li><code>aliases</code> - 別名リスト（JSON文字列）</li>
                   <li><code>metadata</code> - 追加メタデータ（JSON文字列、<code>topicId</code>を含む）</li>
                   <li><code>nameEmbedding</code> - 名前のみの埋め込み（JSON文字列、将来用）</li>
@@ -1636,6 +2263,9 @@ function ChromaDBSchemaSection() {
             </ul>
             <p style={{ fontSize: '14px', color: 'var(--color-text-light)', fontStyle: 'italic' }}>
               <strong>ID連携:</strong> <code>id</code>フィールドはSQLiteの<code>entities.id</code>と同じ値を使用します。これにより、ChromaDBで検索した結果のIDを使ってSQLiteから詳細情報を取得できます。
+            </p>
+            <p style={{ fontSize: '14px', color: 'var(--color-text-light)', fontStyle: 'italic', marginTop: '8px' }}>
+              <strong>埋め込み生成:</strong> エンティティ名 + エイリアス + メタデータ（JSON文字列）を結合したテキストから埋め込みベクトルを生成します。
             </p>
           </div>
         </div>
@@ -1651,28 +2281,32 @@ function ChromaDBSchemaSection() {
             </p>
             <p style={{ marginBottom: '8px', fontWeight: 600 }}>コレクション構造:</p>
             <ul style={{ marginLeft: '20px', marginBottom: '12px' }}>
-              <li><code>id</code> - リレーションID（SQLiteの<code>topicRelations.id</code>と同じ）</li>
-              <li><code>embedding</code> - 埋め込みベクトル（リレーションタイプ + 説明 + メタデータ）</li>
+              <li><code>id</code> - リレーションID（SQLiteの<code>relations.id</code>と同じ）</li>
+              <li><code>embedding</code> - 埋め込みベクトル（リレーションタイプ + 説明 + 関連エンティティ名 + メタデータ、1536次元）</li>
               <li><code>metadata</code> - メタデータ（JSON形式）:
                 <ul style={{ marginLeft: '20px', marginTop: '8px' }}>
                   <li><code>relationId</code> - リレーションID（SQLite参照用）</li>
-                  <li><code>organizationId</code> - 組織ID</li>
-                  <li><code>topicId</code> - トピックID（SQLiteの<code>topicEmbeddings.id</code>形式: <code>{'{meetingNoteId}-topic-{topicId}'}</code>）</li>
+                  <li><code>organizationId</code> - 組織ID（NULL可能）</li>
+                  <li><code>companyId</code> - 事業会社ID（NULL可能）</li>
+                  <li><code>topicId</code> - トピックID（SQLiteの<code>topics.id</code>形式: <code>{'{meetingNoteId}-topic-{topicId}'}</code>）</li>
                   <li><code>sourceEntityId</code> - 起点エンティティID</li>
                   <li><code>targetEntityId</code> - 終点エンティティID</li>
+                  <li><code>sourceEntityName</code> - 起点エンティティ名（検索用）</li>
+                  <li><code>targetEntityName</code> - 終点エンティティ名（検索用）</li>
                   <li><code>relationType</code> - リレーションタイプ（例: "works_for"、"partners_with"）</li>
                   <li><code>description</code> - リレーションの説明</li>
-                  <li><code>confidence</code> - 信頼度（0.0-1.0）</li>
                   <li><code>metadata</code> - 追加メタデータ（JSON文字列）</li>
-                  <li><code>embeddingModel</code> - 使用した埋め込みモデル</li>
-                  <li><code>embeddingVersion</code> - 埋め込みバージョン</li>
-                  <li><code>createdAt</code> - 作成日時</li>
-                  <li><code>updatedAt</code> - 更新日時</li>
+                  <li><code>descriptionEmbedding</code> - 説明のみの埋め込み（JSON文字列、将来用）</li>
+                  <li><code>relationTypeEmbedding</code> - リレーションタイプのみの埋め込み（JSON文字列、将来用）</li>
+                  <li><code>embeddingModel</code> - 使用した埋め込みモデル（例: "text-embedding-3-small"）</li>
+                  <li><code>embeddingVersion</code> - 埋め込みバージョン（例: "1.0"）</li>
+                  <li><code>createdAt</code> - 作成日時（ISO 8601形式）</li>
+                  <li><code>updatedAt</code> - 更新日時（ISO 8601形式）</li>
                 </ul>
               </li>
             </ul>
             <p style={{ fontSize: '14px', color: 'var(--color-text-light)', fontStyle: 'italic' }}>
-              <strong>ID連携:</strong> <code>id</code>フィールドはSQLiteの<code>topicRelations.id</code>と同じ値を使用します。<code>metadata.topicId</code>には完全なトピックID（<code>{'{meetingNoteId}-topic-{topicId}'}</code>）が保存されます。
+              <strong>ID連携:</strong> <code>id</code>フィールドはSQLiteの<code>relations.id</code>と同じ値を使用します。<code>metadata.topicId</code>には完全なトピックID（<code>{'{meetingNoteId}-topic-{topicId}'}</code>）が保存されます。
             </p>
           </div>
         </div>
@@ -1688,29 +2322,73 @@ function ChromaDBSchemaSection() {
             </p>
             <p style={{ marginBottom: '8px', fontWeight: 600 }}>コレクション構造:</p>
             <ul style={{ marginLeft: '20px', marginBottom: '12px' }}>
-              <li><code>id</code> - トピックID（SQLiteの<code>topicEmbeddings.topicId</code>と同じ、例: <code>init_mj0b1gma_hywcwrspw</code>）</li>
-              <li><code>embedding</code> - 埋め込みベクトル（タイトル + コンテンツ + メタデータ）</li>
+              <li><code>id</code> - トピックID（SQLiteの<code>topics.topicId</code>と同じ、例: <code>init_mj0b1gma_hywcwrspw</code>）</li>
+              <li><code>embedding</code> - 埋め込みベクトル（タイトル + コンテンツ + メタデータ、1536次元）</li>
               <li><code>metadata</code> - メタデータ（JSON形式）:
                 <ul style={{ marginLeft: '20px', marginTop: '8px' }}>
                   <li><code>topicId</code> - トピックID（SQLite参照用）</li>
                   <li><code>meetingNoteId</code> - 議事録ID</li>
-                  <li><code>organizationId</code> - 組織ID</li>
+                  <li><code>organizationId</code> - 組織ID（NULL可能）</li>
+                  <li><code>companyId</code> - 事業会社ID（NULL可能）</li>
                   <li><code>title</code> - トピックタイトル</li>
                   <li><code>content</code> - トピックコンテンツ</li>
-                  <li><code>keywords</code> - キーワードリスト（JSON文字列）</li>
                   <li><code>semanticCategory</code> - セマンティックカテゴリ（例: "戦略"、"実行"）</li>
+                  <li><code>keywords</code> - キーワードリスト（JSON文字列）</li>
                   <li><code>tags</code> - タグリスト（JSON文字列）</li>
                   <li><code>summary</code> - 要約</li>
                   <li><code>importance</code> - 重要度（例: "high"、"medium"、"low"）</li>
-                  <li><code>embeddingModel</code> - 使用した埋め込みモデル</li>
-                  <li><code>embeddingVersion</code> - 埋め込みバージョン</li>
-                  <li><code>createdAt</code> - 作成日時</li>
-                  <li><code>updatedAt</code> - 更新日時</li>
+                  <li><code>meetingNoteTitle</code> - 議事録タイトル（出典情報）</li>
+                  <li><code>titleEmbedding</code> - タイトルのみの埋め込み（JSON文字列、将来用）</li>
+                  <li><code>contentEmbedding</code> - コンテンツのみの埋め込み（JSON文字列、将来用）</li>
+                  <li><code>metadataEmbedding</code> - メタデータのみの埋め込み（JSON文字列、将来用）</li>
+                  <li><code>embeddingModel</code> - 使用した埋め込みモデル（例: "text-embedding-3-small"）</li>
+                  <li><code>embeddingVersion</code> - 埋め込みバージョン（例: "1.0"、"2.0"）</li>
+                  <li><code>createdAt</code> - 作成日時（ISO 8601形式）</li>
+                  <li><code>updatedAt</code> - 更新日時（ISO 8601形式）</li>
                 </ul>
               </li>
             </ul>
             <p style={{ fontSize: '14px', color: 'var(--color-text-light)', fontStyle: 'italic' }}>
-              <strong>ID連携:</strong> <code>id</code>フィールドはSQLiteの<code>topicEmbeddings.topicId</code>と同じ値を使用します（<code>topicEmbeddings.id</code>ではないことに注意）。<code>metadata.meetingNoteId</code>には議事録IDが保存されます。
+              <strong>ID連携:</strong> <code>id</code>フィールドはSQLiteの<code>topics.topicId</code>と同じ値を使用します（<code>topics.id</code>ではないことに注意）。<code>metadata.meetingNoteId</code>には議事録IDが保存されます。SQLiteで検索する際は<code>topics.id</code>（<code>{'{meetingNoteId}-topic-{topicId}'}</code>形式）を使用する必要があります。
+            </p>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: '24px' }}>
+          <h4 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)', display: 'flex', alignItems: 'center' }}>
+            <span style={{ display: 'inline-block', width: '8px', height: '8px', backgroundColor: '#95A5A6', borderRadius: '50%', marginRight: '8px' }}></span>
+            design_docs（システム設計ドキュメント埋め込み）
+          </h4>
+          <div style={{ paddingLeft: '24px', borderLeft: '2px solid #e0e0e0' }}>
+            <p style={{ marginBottom: '12px' }}>
+              <strong>役割:</strong> システム設計ドキュメントの埋め込みベクトルを保存し、設計ドキュメントのセマンティック検索を提供します。<strong>組織を跨いで共有</strong>されるコレクションです。
+            </p>
+            <p style={{ marginBottom: '8px', fontWeight: 600 }}>コレクション構造:</p>
+            <ul style={{ marginLeft: '20px', marginBottom: '12px' }}>
+              <li><code>id</code> - セクションID（SQLiteの<code>designDocSections.id</code>と同じ）</li>
+              <li><code>embedding</code> - 埋め込みベクトル（タイトル + コンテンツ、1536次元）</li>
+              <li><code>metadata</code> - メタデータ（JSON形式）:
+                <ul style={{ marginLeft: '20px', marginTop: '8px' }}>
+                  <li><code>sectionId</code> - セクションID（SQLite参照用）</li>
+                  <li><code>sectionTitle</code> - セクションタイトル</li>
+                  <li><code>content</code> - セクションの内容（全文、検索後の表示用）</li>
+                  <li><code>tags</code> - タグリスト（JSON文字列）</li>
+                  <li><code>order</code> - 表示順序</li>
+                  <li><code>pageUrl</code> - ページURL（デフォルト: '/design'）</li>
+                  <li><code>hierarchy</code> - 階層情報（JSON文字列）</li>
+                  <li><code>relatedSections</code> - 関連セクションIDリスト（JSON文字列）</li>
+                  <li><code>embeddingModel</code> - 使用した埋め込みモデル（例: "text-embedding-3-small"）</li>
+                  <li><code>embeddingVersion</code> - 埋め込みバージョン（例: "1.0"）</li>
+                  <li><code>createdAt</code> - 作成日時（ISO 8601形式）</li>
+                  <li><code>updatedAt</code> - 更新日時（ISO 8601形式）</li>
+                </ul>
+              </li>
+            </ul>
+            <p style={{ fontSize: '14px', color: 'var(--color-text-light)', fontStyle: 'italic' }}>
+              <strong>ID連携:</strong> <code>id</code>フィールドはSQLiteの<code>designDocSections.id</code>と同じ値を使用します。これにより、ChromaDBで検索した結果のIDを使ってSQLiteから詳細情報を取得できます。
+            </p>
+            <p style={{ fontSize: '14px', color: 'var(--color-text-light)', fontStyle: 'italic', marginTop: '8px' }}>
+              <strong>共有コレクション:</strong> このコレクションは組織を跨いで共有されるため、すべての組織の設計ドキュメントが同じコレクションに保存されます。
             </p>
           </div>
         </div>
@@ -1723,12 +2401,13 @@ function ChromaDBSchemaSection() {
         
         <div style={{ padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
           <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8' }}>
-            ChromaDBのコレクション名は<strong>組織ごとに分離</strong>されています：
+            ChromaDBのコレクション名は<strong>組織ごとに分離</strong>されています（<code>design_docs</code>を除く）：
           </p>
           <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
-            <li><code>{'entities_{organizationId}'}</code> - エンティティ埋め込みコレクション</li>
-            <li><code>{'relations_{organizationId}'}</code> - リレーション埋め込みコレクション</li>
-            <li><code>{'topics_{organizationId}'}</code> - トピック埋め込みコレクション</li>
+            <li><code>{'entities_{organizationId}'}</code> - エンティティ埋め込みコレクション（組織ごと）</li>
+            <li><code>{'relations_{organizationId}'}</code> - リレーション埋め込みコレクション（組織ごと）</li>
+            <li><code>{'topics_{organizationId}'}</code> - トピック埋め込みコレクション（組織ごと）</li>
+            <li><code>design_docs</code> - システム設計ドキュメント埋め込みコレクション（<strong>組織を跨いで共有</strong>）</li>
           </ul>
           <p style={{ marginTop: '12px', fontSize: '14px', lineHeight: '1.8' }}>
             <strong>例:</strong> 組織IDが<code>init_miwceusf_lmthnq2ks</code>の場合：
@@ -1737,9 +2416,10 @@ function ChromaDBSchemaSection() {
             <li><code>entities_init_miwceusf_lmthnq2ks</code></li>
             <li><code>relations_init_miwceusf_lmthnq2ks</code></li>
             <li><code>topics_init_miwceusf_lmthnq2ks</code></li>
+            <li><code>design_docs</code>（全組織で共有）</li>
           </ul>
           <p style={{ marginTop: '12px', fontSize: '14px', lineHeight: '1.8' }}>
-            これにより、組織間でデータが混在することなく、セキュアにベクトル検索を実行できます。
+            これにより、組織間でデータが混在することなく、セキュアにベクトル検索を実行できます。システム設計ドキュメントは全組織で共有されるため、設計情報の横断的な検索が可能です。
           </p>
         </div>
       </div>
@@ -1765,12 +2445,13 @@ function ChromaDBSchemaSection() {
           </h4>
           <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
             <li><strong>エンティティ:</strong> ChromaDBの<code>id</code> = SQLiteの<code>entities.id</code></li>
-            <li><strong>リレーション:</strong> ChromaDBの<code>id</code> = SQLiteの<code>topicRelations.id</code></li>
-            <li><strong>トピック:</strong> ChromaDBの<code>id</code> = SQLiteの<code>topicEmbeddings.topicId</code>（<code>topicEmbeddings.id</code>ではない）</li>
+            <li><strong>リレーション:</strong> ChromaDBの<code>id</code> = SQLiteの<code>relations.id</code></li>
+            <li><strong>トピック:</strong> ChromaDBの<code>id</code> = SQLiteの<code>topics.topicId</code>（<code>topics.id</code>ではない）</li>
+            <li><strong>システム設計ドキュメント:</strong> ChromaDBの<code>id</code> = SQLiteの<code>designDocSections.id</code></li>
           </ul>
           
           <p style={{ marginTop: '12px', fontSize: '14px', lineHeight: '1.8', fontStyle: 'italic' }}>
-            <strong>注意:</strong> トピックの場合、ChromaDBの<code>id</code>は<code>topicEmbeddings.topicId</code>（例: <code>init_mj0b1gma_hywcwrspw</code>）を使用しますが、SQLiteで検索する際は<code>topicEmbeddings.id</code>（例: <code>init_miwceusf_lmthnq2ks-topic-init_mj0b1gma_hywcwrspw</code>）を使用する必要があります。この変換はアプリケーション層で処理されます。
+            <strong>注意:</strong> トピックの場合、ChromaDBの<code>id</code>は<code>topics.topicId</code>（例: <code>init_mj0b1gma_hywcwrspw</code>）を使用しますが、SQLiteで検索する際は<code>topics.id</code>（例: <code>init_miwceusf_lmthnq2ks-topic-init_mj0b1gma_hywcwrspw</code>）を使用する必要があります。この変換はアプリケーション層で処理されます。
           </p>
         </div>
       </div>
@@ -1805,13 +2486,13 @@ function ChromaDBSchemaSection() {
           </h4>
           <div style={{ paddingLeft: '24px', borderLeft: '2px solid #e0e0e0' }}>
             <p style={{ marginBottom: '12px' }}>
-              <strong>生成方法:</strong> リレーションタイプ + 説明 + メタデータを結合して埋め込みベクトルを生成します。
+              <strong>生成方法:</strong> リレーションタイプ（3回繰り返して重要度を上げる）+ 関連エンティティ名 + 説明 + メタデータを結合して埋め込みベクトルを生成します。
             </p>
             <div style={{ padding: '12px', backgroundColor: '#f5f5f5', borderRadius: '4px', marginBottom: '12px', fontFamily: 'monospace', fontSize: '13px' }}>
-              <code>combinedText = "{'{relationType}'}\n\n{'{description}'}\n\n{'{metadataJSON}'}"</code>
+              <code>combinedText = "{'{relationType}'}\n\n{'{relationType}'}\n\n{'{relationType}'}\n\n{'{sourceEntityName} と {targetEntityName} の関係'}\n\n{'{description}'}\n\n{'{metadataText}'}"</code>
             </div>
             <p style={{ fontSize: '14px', color: 'var(--color-text-light)', fontStyle: 'italic' }}>
-              リレーションの意味的な関係性を検索できるようになります。
+              リレーションタイプを3回繰り返すことで、リレーションタイプの重要度を上げ、より正確な検索が可能になります。関連エンティティ名も含めることで、エンティティ間の関係性を検索できます。
             </p>
           </div>
         </div>
@@ -1823,15 +2504,65 @@ function ChromaDBSchemaSection() {
           </h4>
           <div style={{ paddingLeft: '24px', borderLeft: '2px solid #e0e0e0' }}>
             <p style={{ marginBottom: '12px' }}>
-              <strong>生成方法:</strong> タイトル + コンテンツ + メタデータ（キーワード、セマンティックカテゴリなど）を結合して埋め込みベクトルを生成します。
+              <strong>生成方法:</strong> タイトル + コンテンツ + メタデータ（キーワード、セマンティックカテゴリなど）を結合して埋め込みベクトルを生成します。メタデータがある場合は、分離埋め込み（タイトル、コンテンツ、メタデータ）も生成されます。
             </p>
             <div style={{ padding: '12px', backgroundColor: '#f5f5f5', borderRadius: '4px', marginBottom: '12px', fontFamily: 'monospace', fontSize: '13px' }}>
-              <code>combinedText = "{'{title}'}\n\n{'{content}'}\n\n{'{keywords}'}\n\n{'{semanticCategory}'}"</code>
+              <code>combinedText = "{'{title}'}\n\n{'{content}'}\n\n{'{keywords}'}\n\n{'{semanticCategory}'}\n\n{'{tags}'}\n\n{'{summary}'}"</code>
             </div>
             <p style={{ fontSize: '14px', color: 'var(--color-text-light)', fontStyle: 'italic' }}>
-              トピックの内容全体を理解した検索が可能になります。
+              トピックの内容全体を理解した検索が可能になります。メタデータがある場合（embeddingVersion: "2.0"）、タイトル、コンテンツ、メタデータの分離埋め込みも生成され、より柔軟な検索が可能です。
             </p>
           </div>
+        </div>
+
+        <div style={{ marginBottom: '24px' }}>
+          <h4 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)', display: 'flex', alignItems: 'center' }}>
+            <span style={{ display: 'inline-block', width: '8px', height: '8px', backgroundColor: '#95A5A6', borderRadius: '50%', marginRight: '8px' }}></span>
+            システム設計ドキュメント埋め込み
+          </h4>
+          <div style={{ paddingLeft: '24px', borderLeft: '2px solid #e0e0e0' }}>
+            <p style={{ marginBottom: '12px' }}>
+              <strong>生成方法:</strong> セクションタイトル + コンテンツ（Mermaidコードを除去したテキスト）を結合して埋め込みベクトルを生成します。
+            </p>
+            <div style={{ padding: '12px', backgroundColor: '#f5f5f5', borderRadius: '4px', marginBottom: '12px', fontFamily: 'monospace', fontSize: '13px' }}>
+              <code>combinedText = "{'{sectionTitle}'}\n\n{'{content}'}"</code>
+            </div>
+            <p style={{ fontSize: '14px', color: 'var(--color-text-light)', fontStyle: 'italic' }}>
+              システム設計ドキュメントの内容を理解した検索が可能になります。Mermaidコードは検索前に除去されるため、テキストのみが埋め込みに使用されます。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: '32px' }}>
+        <h3 style={{ fontSize: '20px', fontWeight: 600, marginBottom: '16px', color: 'var(--color-text)' }}>
+          埋め込みベクトルの仕様
+        </h3>
+        
+        <div style={{ padding: '20px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
+          <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
+            モデルと次元数
+          </h4>
+          <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
+            <li><strong>モデル:</strong> OpenAI <code>text-embedding-3-small</code></li>
+            <li><strong>次元数:</strong> 1536次元（固定）</li>
+            <li><strong>ベクトル形式:</strong> <code>number[]</code>（浮動小数点数の配列）</li>
+          </ul>
+          
+          <h4 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', marginTop: '24px', color: 'var(--color-text)' }}>
+            組織横断検索
+          </h4>
+          <p style={{ marginBottom: '12px', fontSize: '14px', lineHeight: '1.8' }}>
+            <code>organizationId</code>が未指定の場合、すべての組織のコレクションを横断して検索を実行します：
+          </p>
+          <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
+            <li>エンティティ: すべての<code>entities_{'{organizationId}'}</code>コレクションを検索</li>
+            <li>リレーション: すべての<code>relations_{'{organizationId}'}</code>コレクションを検索</li>
+            <li>トピック: すべての<code>topics_{'{organizationId}'}</code>コレクションを検索</li>
+          </ul>
+          <p style={{ marginTop: '12px', fontSize: '14px', lineHeight: '1.8', fontStyle: 'italic' }}>
+            これにより、複数の組織にまたがる情報を一度に検索できます。
+          </p>
         </div>
       </div>
     </div>

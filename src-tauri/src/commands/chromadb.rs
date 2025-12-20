@@ -103,13 +103,22 @@ pub async fn chromadb_save_topic_embedding(
     ).await
 }
 
+/// トピック埋め込みを取得
+#[tauri::command]
+pub async fn chromadb_get_topic_embedding(
+    topicId: String,
+    organizationId: String,
+) -> Result<Option<HashMap<String, Value>>, String> {
+    chromadb::get_topic_embedding(topicId, organizationId).await
+}
+
 /// 類似トピックを検索
 #[tauri::command]
 pub async fn chromadb_find_similar_topics(
     queryEmbedding: Vec<f32>,
     limit: usize,
     organizationId: Option<String>,
-) -> Result<Vec<(String, String, f32)>, String> {
+) -> Result<Vec<chromadb::TopicSearchResult>, String> {
     chromadb::find_similar_topics(queryEmbedding, limit, organizationId).await
 }
 

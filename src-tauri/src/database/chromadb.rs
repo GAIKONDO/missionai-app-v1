@@ -12,7 +12,7 @@ use tokio::time::{sleep, Duration};
 use tokio::io::AsyncReadExt;
 use chromadb::client::{ChromaAuthMethod, ChromaClient, ChromaClientOptions};
 use chromadb::collection::{CollectionEntries, QueryOptions, GetOptions};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -477,7 +477,12 @@ pub async fn save_entity_embedding(
     }
     
     let client_lock = get_chromadb_client()?;
-    let collection_name = format!("entities_{}", organization_id);
+    // organizationIdが空文字列の場合は"entities_all"を使用（ChromaDBの命名規則に準拠）
+    let collection_name = if organization_id.is_empty() {
+        "entities_all".to_string()
+    } else {
+        format!("entities_{}", organization_id)
+    };
     
     // MutexGuardをdropしてから.awaitする必要がある
     let client = {
@@ -600,7 +605,12 @@ pub async fn get_entity_embedding(
     }
     
     let client_lock = get_chromadb_client()?;
-    let collection_name = format!("entities_{}", organization_id);
+    // organizationIdが空文字列の場合は"entities_all"を使用（ChromaDBの命名規則に準拠）
+    let collection_name = if organization_id.is_empty() {
+        "entities_all".to_string()
+    } else {
+        format!("entities_{}", organization_id)
+    };
     
     // MutexGuardをdropしてから.awaitする必要がある
     let client = {
@@ -796,7 +806,12 @@ pub async fn find_similar_entities(
     let mut search_tasks = Vec::new();
     
     for org_id in org_ids {
-        let collection_name = format!("entities_{}", org_id);
+        // org_idは組織IDのリストから来ているので、空文字列になることはないが、念のためチェック
+        let collection_name = if org_id.is_empty() {
+            "entities_all".to_string()
+        } else {
+            format!("entities_{}", org_id)
+        };
         let client_clone = client.clone();
         let embedding_clone = query_embedding.clone();
         
@@ -864,7 +879,12 @@ pub async fn save_relation_embedding(
     metadata: HashMap<String, Value>,
 ) -> Result<(), String> {
     let client_lock = get_chromadb_client()?;
-    let collection_name = format!("relations_{}", organization_id);
+    // organizationIdが空文字列の場合は"relations_all"を使用（ChromaDBの命名規則に準拠）
+    let collection_name = if organization_id.is_empty() {
+        "relations_all".to_string()
+    } else {
+        format!("relations_{}", organization_id)
+    };
     
     // MutexGuardをdropしてから.awaitする必要がある
     let client = {
@@ -984,7 +1004,12 @@ pub async fn get_relation_embedding(
     }
     
     let client_lock = get_chromadb_client()?;
-    let collection_name = format!("relations_{}", organization_id);
+    // organizationIdが空文字列の場合は"relations_all"を使用（ChromaDBの命名規則に準拠）
+    let collection_name = if organization_id.is_empty() {
+        "relations_all".to_string()
+    } else {
+        format!("relations_{}", organization_id)
+    };
     
     // MutexGuardをdropしてから.awaitする必要がある
     let client = {
@@ -1147,7 +1172,12 @@ pub async fn find_similar_relations(
     let mut search_tasks = Vec::new();
     
     for org_id in org_ids {
-        let collection_name = format!("relations_{}", org_id);
+        // org_idは組織IDのリストから来ているので、空文字列になることはないが、念のためチェック
+        let collection_name = if org_id.is_empty() {
+            "relations_all".to_string()
+        } else {
+            format!("relations_{}", org_id)
+        };
         let client_clone = client.clone();
         let embedding_clone = query_embedding.clone();
         
@@ -1228,12 +1258,22 @@ pub async fn save_topic_embedding(
 }
 
 /// 単一のコレクションから類似トピックを検索（ヘルパー関数）
+/// トピック検索結果（メタデータを含む）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicSearchResult {
+    pub topic_id: String,
+    pub meeting_note_id: String,
+    pub similarity: f32,
+    pub title: String,
+    pub content_summary: String,
+}
+
 async fn search_topics_in_collection(
     client: Arc<ChromaClient>,
     collection_name: &str,
     query_embedding: Vec<f32>,
     limit: usize,
-) -> Result<Vec<(String, String, f32)>, String> {
+) -> Result<Vec<TopicSearchResult>, String> {
     let collection = client.get_or_create_collection(collection_name, None).await
         .map_err(|e| format!("コレクションの取得に失敗しました: {}", e))?;
     
@@ -1266,9 +1306,11 @@ async fn search_topics_in_collection(
                                         let distance_f32: f32 = *distance;
                                         let similarity = (1.0_f32 - distance_f32).max(0.0_f32);
                                         
-                                        let meeting_note_id = metadatas
+                                        let metadata = metadatas
                                             .get(i)
-                                            .and_then(|m_opt| m_opt.as_ref())
+                                            .and_then(|m_opt| m_opt.as_ref());
+                                        
+                                        let meeting_note_id = metadata
                                             .and_then(|m| {
                                                 m.get("meetingNoteId")
                                                     .and_then(|v| v.as_str())
@@ -1276,7 +1318,30 @@ async fn search_topics_in_collection(
                                             .unwrap_or("")
                                             .to_string();
                                         
-                                        similar_topics.push((topic_id.clone(), meeting_note_id, similarity));
+                                        // メタデータからtitleとcontentSummaryを取得
+                                        let title = metadata
+                                            .and_then(|m| {
+                                                m.get("title")
+                                                    .and_then(|v| v.as_str())
+                                            })
+                                            .unwrap_or("")
+                                            .to_string();
+                                        
+                                        let content_summary = metadata
+                                            .and_then(|m| {
+                                                m.get("contentSummary")
+                                                    .and_then(|v| v.as_str())
+                                            })
+                                            .unwrap_or("")
+                                            .to_string();
+                                        
+                                        similar_topics.push(TopicSearchResult {
+                                            topic_id: topic_id.clone(),
+                                            meeting_note_id,
+                                            similarity,
+                                            title,
+                                            content_summary,
+                                        });
                                     }
                                 }
                             }
@@ -1290,12 +1355,162 @@ async fn search_topics_in_collection(
     Ok(similar_topics)
 }
 
+/// トピック埋め込みを取得
+pub async fn get_topic_embedding(
+    topic_id: String,
+    organization_id: String,
+) -> Result<Option<HashMap<String, Value>>, String> {
+    // クライアントが初期化されていない場合、自動的に初期化を試みる
+    if CHROMADB_CLIENT.get().is_none() {
+        eprintln!("⚠️ ChromaDBクライアントが初期化されていません。自動初期化を試みます...");
+        
+        // サーバーが起動しているか確認
+        let server_lock = CHROMADB_SERVER.get();
+        let port = if let Some(server_lock) = server_lock {
+            // MutexGuardをスコープ内でドロップしてから.awaitを呼び出す
+            let port_opt = {
+                let server_guard = server_lock.lock().unwrap();
+                server_guard.as_ref().map(|server| server.port())
+            };
+            
+            if let Some(port) = port_opt {
+                // サーバーが起動している場合、ポート番号を取得
+                port
+            } else {
+                // サーバーが起動していない場合、自動的に起動を試みる
+                eprintln!("⚠️ ChromaDBサーバーが起動していません。自動起動を試みます...");
+                
+                // ポート番号を環境変数から取得（デフォルトは8000）
+                let port = std::env::var("CHROMADB_PORT")
+                    .ok()
+                    .and_then(|s| s.parse::<u16>().ok())
+                    .unwrap_or(8000);
+                
+                // データディレクトリを取得
+                let data_dir = get_default_chromadb_data_dir()?;
+                
+                // サーバーを起動
+                match init_chromadb_server(data_dir, port).await {
+                    Ok(_) => {
+                        eprintln!("✅ ChromaDBサーバーの自動起動に成功しました");
+                        port
+                    }
+                    Err(e) => {
+                        eprintln!("❌ ChromaDBサーバーの自動起動に失敗しました: {}", e);
+                        return Err(format!("ChromaDBサーバーの起動に失敗しました: {}。アプリケーションを再起動してください。", e));
+                    }
+                }
+            }
+        } else {
+            // CHROMADB_SERVERが初期化されていない場合、自動的に起動を試みる
+            eprintln!("⚠️ ChromaDBサーバーが初期化されていません。自動起動を試みます...");
+            
+            // ポート番号を環境変数から取得（デフォルトは8000）
+            let port = std::env::var("CHROMADB_PORT")
+                .ok()
+                .and_then(|s| s.parse::<u16>().ok())
+                .unwrap_or(8000);
+            
+            // データディレクトリを取得
+            let data_dir = get_default_chromadb_data_dir()?;
+            
+            // サーバーを起動
+            match init_chromadb_server(data_dir, port).await {
+                Ok(_) => {
+                    eprintln!("✅ ChromaDBサーバーの自動起動に成功しました");
+                    port
+                }
+                Err(e) => {
+                    eprintln!("❌ ChromaDBサーバーの自動起動に失敗しました: {}", e);
+                    return Err(format!("ChromaDBサーバーの起動に失敗しました: {}。アプリケーションを再起動してください。", e));
+                }
+            }
+        };
+        
+        // クライアントを初期化
+        init_chromadb_client(port).await?;
+    }
+    
+    let client_lock = get_chromadb_client()?;
+    // organizationIdが空文字列の場合は"topics_all"を使用（ChromaDBの命名規則に準拠）
+    let collection_name = if organization_id.is_empty() {
+        "topics_all".to_string()
+    } else {
+        format!("topics_{}", organization_id)
+    };
+    
+    // MutexGuardをdropしてから.awaitする必要がある
+    let client = {
+        let client_guard = client_lock.lock().await;
+        client_guard.as_ref()
+            .ok_or("ChromaDBクライアントが初期化されていません")?
+            .clone()
+    };
+    
+    // コレクションを取得
+    let collection = client.get_or_create_collection(&collection_name, None).await
+        .map_err(|e| format!("コレクションの取得に失敗しました: {}", e))?;
+    
+    // IDから直接取得
+    let get_options = GetOptions {
+        ids: vec![topic_id.clone()],
+        where_metadata: None,
+        where_document: None,
+        limit: Some(1),
+        offset: None,
+        include: Some(vec!["embeddings".to_string(), "metadatas".to_string()]),
+    };
+    
+    let results = collection.get(get_options).await
+        .map_err(|e| format!("トピック埋め込みの取得に失敗しました: {}", e))?;
+    
+    // 結果を確認
+    if results.ids.is_empty() {
+        return Ok(None);
+    }
+    
+    // メタデータと埋め込みを取得
+    let mut result_data = HashMap::new();
+    
+    // 埋め込みを取得
+    if let Some(embeddings) = &results.embeddings {
+        if !embeddings.is_empty() {
+            if let Some(embedding_opt) = embeddings.get(0) {
+                if let Some(embedding_vec) = embedding_opt {
+                    result_data.insert("combinedEmbedding".to_string(), Value::Array(
+                        embedding_vec.iter().map(|&v| Value::Number(serde_json::Number::from_f64(v as f64).unwrap())).collect()
+                    ));
+                }
+            }
+        }
+    }
+    
+    // メタデータを取得
+    if let Some(metadatas) = &results.metadatas {
+        if !metadatas.is_empty() {
+            if let Some(metadata_opt) = metadatas.get(0) {
+                if let Some(metadata_map) = metadata_opt {
+                    for (k, v) in metadata_map {
+                        result_data.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+    }
+    
+    if result_data.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(result_data))
+    }
+}
+
 /// 類似トピックを検索（組織横断検索対応）
 pub async fn find_similar_topics(
     query_embedding: Vec<f32>,
     limit: usize,
     organization_id: Option<String>,
-) -> Result<Vec<(String, String, f32)>, String> {
+) -> Result<Vec<TopicSearchResult>, String> {
     eprintln!("[find_similar_topics] 検索開始: organizationId={:?}, limit={}, embedding_dim={}", 
         organization_id, limit, query_embedding.len());
     
@@ -1337,7 +1552,12 @@ pub async fn find_similar_topics(
     let mut search_tasks = Vec::new();
     
     for org_id in org_ids {
-        let collection_name = format!("topics_{}", org_id);
+        // org_idは組織IDのリストから来ているので、空文字列になることはないが、念のためチェック
+        let collection_name = if org_id.is_empty() {
+            "topics_all".to_string()
+        } else {
+            format!("topics_{}", org_id)
+        };
         let client_clone = client.clone();
         let embedding_clone = query_embedding.clone();
         
@@ -1364,8 +1584,8 @@ pub async fn find_similar_topics(
     }
     
     // 結果を類似度でソートして上位limit件を返す
-    all_results.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
-    let final_results: Vec<(String, String, f32)> = all_results.into_iter().take(limit).collect();
+    all_results.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+    let final_results: Vec<TopicSearchResult> = all_results.into_iter().take(limit).collect();
     
     eprintln!("[find_similar_topics] 最終結果: {}件のトピックを返します", final_results.len());
     Ok(final_results)
@@ -1627,7 +1847,12 @@ pub async fn delete_topic_embedding(
     organization_id: String,
 ) -> Result<(), String> {
     let client_lock = get_chromadb_client()?;
-    let collection_name = format!("topics_{}", organization_id);
+    // organizationIdが空文字列の場合は"topics_all"を使用（ChromaDBの命名規則に準拠）
+    let collection_name = if organization_id.is_empty() {
+        "topics_all".to_string()
+    } else {
+        format!("topics_{}", organization_id)
+    };
     
     // MutexGuardをdropしてから.awaitする必要がある
     let client = {
@@ -1658,7 +1883,12 @@ pub async fn delete_entity_embedding(
     organization_id: String,
 ) -> Result<(), String> {
     let client_lock = get_chromadb_client()?;
-    let collection_name = format!("entities_{}", organization_id);
+    // organizationIdが空文字列の場合は"entities_all"を使用（ChromaDBの命名規則に準拠）
+    let collection_name = if organization_id.is_empty() {
+        "entities_all".to_string()
+    } else {
+        format!("entities_{}", organization_id)
+    };
     
     // MutexGuardをdropしてから.awaitする必要がある
     let client = {
@@ -1688,7 +1918,12 @@ pub async fn delete_relation_embedding(
     organization_id: String,
 ) -> Result<(), String> {
     let client_lock = get_chromadb_client()?;
-    let collection_name = format!("relations_{}", organization_id);
+    // organizationIdが空文字列の場合は"relations_all"を使用（ChromaDBの命名規則に準拠）
+    let collection_name = if organization_id.is_empty() {
+        "relations_all".to_string()
+    } else {
+        format!("relations_{}", organization_id)
+    };
     
     // MutexGuardをdropしてから.awaitする必要がある
     let client = {

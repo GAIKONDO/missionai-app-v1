@@ -6,7 +6,7 @@ import ThemeHierarchyEditor from '@/components/ThemeHierarchyEditor';
 import ThemeHierarchyChart from '@/components/ThemeHierarchyChart';
 import InitiativeList from '@/components/InitiativeList';
 import { getThemes, getFocusInitiatives, getOrgTreeFromDb, getAllOrganizationsFromTree, type Theme, type FocusInitiative } from '@/lib/orgApi';
-import { getAllCompanies, getCompanyFocusInitiatives, type Company, type CompanyFocusInitiative } from '@/lib/companiesApi';
+// import { getAllCompanies, getCompanyFocusInitiatives, type Company, type CompanyFocusInitiative } from '@/lib/companiesApi'; // 削除（事業会社ページ削除のため）
 import { loadHierarchyConfig, getDefaultHierarchyConfig, type ThemeHierarchyConfig } from '@/lib/themeHierarchy';
 
 // データ表示モードの型定義
@@ -38,8 +38,10 @@ export default function A2C100Page() {
   const [dataViewMode, setDataViewMode] = useState<DataViewMode>('organization');
   
   // 事業会社関連の状態
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [companyInitiatives, setCompanyInitiatives] = useState<CompanyFocusInitiative[]>([]);
+  // const [companies, setCompanies] = useState<Company[]>([]); // 削除（事業会社ページ削除のため）
+  // const [companyInitiatives, setCompanyInitiatives] = useState<CompanyFocusInitiative[]>([]); // 削除（事業会社ページ削除のため）
+  const [companies, setCompanies] = useState<any[]>([]); // 一時的にany[]に変更
+  const [companyInitiatives, setCompanyInitiatives] = useState<any[]>([]); // 一時的にany[]に変更
 
   // ウィンドウサイズを監視
   useEffect(() => {
@@ -109,29 +111,31 @@ export default function A2C100Page() {
           });
         } else {
           // 事業会社モード: 事業会社の注力施策を取得
-          const allCompanies = await getAllCompanies();
-          setCompanies(allCompanies);
+          // 事業会社機能は削除（事業会社ページ削除のため）
+          // const allCompanies = await getAllCompanies();
+          // setCompanies(allCompanies);
+          setCompanies([]); // 空配列に設定
 
           // 各事業会社の注力施策を取得
-          const initiativePromises = allCompanies.map(company => 
-            getCompanyFocusInitiatives(company.id)
-          );
-          const initiativeResults = await Promise.allSettled(initiativePromises);
+          // const initiativePromises = allCompanies.map(company =>
+          //   getCompanyFocusInitiatives(company.id)
+          // );
+          // const initiativeResults = await Promise.allSettled(initiativePromises);
 
-          const allCompanyInitiatives: CompanyFocusInitiative[] = [];
-          initiativeResults.forEach((result, index) => {
-            if (result.status === 'fulfilled') {
-              allCompanyInitiatives.push(...result.value);
-            } else {
-              devWarn(`⚠️ [A2C100] 事業会社「${allCompanies[index].name}」の施策取得エラー:`, result.reason);
-            }
-          });
+          // const allCompanyInitiatives: CompanyFocusInitiative[] = [];
+          // initiativeResults.forEach((result, index) => {
+          //   if (result.status === 'fulfilled') {
+          //     allCompanyInitiatives.push(...result.value);
+          //   } else {
+          //     devWarn(`⚠️ [A2C100] 事業会社「${allCompanies[index].name}」の施策取得エラー:`, result.reason);
+          //   }
+          // });
 
-          setCompanyInitiatives(allCompanyInitiatives);
+          setCompanyInitiatives([]); // 空配列に設定
           devLog('✅ [A2C100] 事業会社モード データ読み込み完了:', {
             themes: loadedThemes.length,
-            companies: allCompanies.length,
-            companyInitiatives: allCompanyInitiatives.length,
+            companies: 0, // allCompanies.length, // 削除（事業会社ページ削除のため）
+            companyInitiatives: 0, // allCompanyInitiatives.length, // 削除（事業会社ページ削除のため）
           });
         }
       } catch (err: any) {

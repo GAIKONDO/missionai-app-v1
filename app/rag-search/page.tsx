@@ -197,10 +197,91 @@ export default function RAGSearchPage() {
         
         return { useChroma, allEntities, stats };
       };
+      // 埋め込みなしのcompanyIdを持つエンティティを確認・削除
+      (window as any).checkAndDeleteUnsyncedCompanyEntities = async () => {
+        try {
+          const { callTauriCommand } = await import('@/lib/localFirebase');
+          
+          // すべてのエンティティを取得
+          const allEntityDocs = await callTauriCommand('query_get', {
+            collectionName: 'entities',
+            conditions: {},
+          }) as Array<{ id: string; data: any }>;
+          
+          // companyIdを持ち、chromaSyncedが0またはnullのエンティティをフィルタリング
+          const unsyncedCompanyEntities = allEntityDocs.filter(doc => {
+            const entityData = doc.data || doc;
+            const companyId = entityData.companyId;
+            const chromaSyncedValue = entityData.chromaSynced;
+            const hasCompanyId = companyId !== null && companyId !== undefined && companyId !== '' && companyId !== 'null';
+            const isUnsynced = chromaSyncedValue === 0 || chromaSyncedValue === null || chromaSyncedValue === undefined;
+            return hasCompanyId && isUnsynced;
+          });
+          
+          console.log(`📊 埋め込みなしのcompanyIdを持つエンティティ: ${unsyncedCompanyEntities.length}件`);
+          
+          if (unsyncedCompanyEntities.length > 0) {
+            console.log('📋 サンプル（最初の10件）:');
+            unsyncedCompanyEntities.slice(0, 10).forEach((doc, index) => {
+              const entityData = doc.data || doc;
+              console.log(`${index + 1}. ID: ${doc.id || entityData.id}, 名前: ${entityData.name}, companyId: ${entityData.companyId}, chromaSynced: ${entityData.chromaSynced}, createdAt: ${entityData.createdAt}`);
+            });
+            
+            // 削除確認
+            const shouldDelete = confirm(`${unsyncedCompanyEntities.length}件の埋め込みなしのcompanyIdを持つエンティティを削除しますか？`);
+            if (shouldDelete) {
+              console.log('🗑️ 削除を開始します...');
+              let successCount = 0;
+              let errorCount = 0;
+              
+              for (const doc of unsyncedCompanyEntities) {
+                const entityId = doc.id || doc.data?.id;
+                try {
+                  // エンティティを削除
+                  await callTauriCommand('doc_delete', {
+                    collectionName: 'entities',
+                    docId: entityId,
+                  });
+                  successCount++;
+                  if (successCount % 10 === 0) {
+                    console.log(`✅ 削除中: ${successCount}/${unsyncedCompanyEntities.length}件完了`);
+                  }
+                } catch (error: any) {
+                  errorCount++;
+                  console.error(`❌ 削除エラー: ${entityId}`, error);
+                }
+              }
+              
+              console.log(`✅ 削除完了: 成功=${successCount}件, エラー=${errorCount}件`);
+              alert(`削除完了: 成功=${successCount}件, エラー=${errorCount}件`);
+            } else {
+              console.log('❌ 削除をキャンセルしました');
+            }
+          } else {
+            console.log('✅ 埋め込みなしのcompanyIdを持つエンティティは見つかりませんでした');
+          }
+          
+          return {
+            count: unsyncedCompanyEntities.length,
+            entities: unsyncedCompanyEntities.map(doc => ({
+              id: doc.id || doc.data?.id,
+              name: (doc.data || doc).name,
+              companyId: (doc.data || doc).companyId,
+              chromaSynced: (doc.data || doc).chromaSynced,
+              createdAt: (doc.data || doc).createdAt,
+            })),
+          };
+        } catch (error: any) {
+          console.error('❌ エラー:', error);
+          throw error;
+        }
+      };
+      
       devLog('✅ 埋め込みベクトル確認関数が利用可能になりました:');
       devLog('  - window.checkEmbeddings(organizationId?) - 統計情報を取得');
       devLog('  - window.printEmbeddingStats(organizationId?) - 統計情報をコンソールに表示');
       devLog('  - window.diagnoseRAGSearch() - RAG検索の診断を実行');
+      devLog('  - window.checkAndDeleteUnsyncedCompanyEntities() - 埋め込みなしのcompanyIdを持つエンティティを確認・削除');
     }
   }, []);
 
@@ -430,7 +511,8 @@ export default function RAGSearchPage() {
           ...dateFilters,
           filterLogic: filterLogic,
         },
-        useCache
+        useCache,
+        30000 // タイムアウトを30秒に延長
       );
       
       devLog(`[handleSearchWithQuery] 検索結果: ${results.length}件`);
@@ -456,13 +538,20 @@ export default function RAGSearchPage() {
       
       // タイムアウトエラーの場合
       if (error?.message?.includes('タイムアウト') || error?.message?.includes('timeout')) {
-        const timeoutMessage = '検索がタイムアウトしました。時間がかかりすぎたため、検索を中断しました。\n\n再度検索を試してください。';
-        alert(timeoutMessage);
-        // タイムアウトの場合は空の結果を設定して、再度検索できるようにする
-        setSearchResults([]);
+        // タイムアウト時でも部分的な結果があれば表示する
+        // searchKnowledgeGraphが部分的な結果を返している可能性があるため、エラーを無視して続行
+        console.warn('検索がタイムアウトしましたが、部分的な結果があれば表示します');
+        // タイムアウトの場合は空の結果を設定（部分的な結果は既にsetSearchResultsで設定されている可能性がある）
+        if (searchResults.length === 0) {
+          alert('検索がタイムアウトしました（30秒）。\n\nデータ量が多い場合、検索に時間がかかることがあります。\n\n再度検索を試すか、検索条件を絞り込んでください。');
+        } else {
+          // 部分的な結果がある場合は警告のみ
+          console.log(`タイムアウトしましたが、${searchResults.length}件の結果を表示します`);
+        }
       } else {
         // その他のエラー
         alert(`検索エラー: ${error.message || '不明なエラーが発生しました'}`);
+        setSearchResults([]);
       }
     } finally {
       // 確実に検索状態をリセット（タイムアウト時も含む）
@@ -1544,29 +1633,32 @@ export default function RAGSearchPage() {
                         const csvRows = [
                           ['タイプ', 'ID', '名前/説明', 'スコア', '類似度'],
                           ...searchResults.map(result => {
+                            const safeScore = typeof result.score === 'number' && !isNaN(result.score) ? result.score : 0;
+                            const safeSimilarity = typeof result.similarity === 'number' && !isNaN(result.similarity) ? result.similarity : 0;
+                            
                             if (result.entity) {
                               return [
                                 'エンティティ',
                                 result.entity.id,
                                 result.entity.name,
-                                result.score.toFixed(3),
-                                result.similarity.toFixed(3),
+                                safeScore.toFixed(3),
+                                safeSimilarity.toFixed(3),
                               ];
                             } else if (result.relation) {
                               return [
                                 'リレーション',
                                 result.relation.id,
                                 result.relation.description || result.relation.relationType,
-                                result.score.toFixed(3),
-                                result.similarity.toFixed(3),
+                                safeScore.toFixed(3),
+                                safeSimilarity.toFixed(3),
                               ];
                             } else {
                               return [
                                 'トピック',
                                 result.topicId || '',
                                 '',
-                                result.score.toFixed(3),
-                                result.similarity.toFixed(3),
+                                safeScore.toFixed(3),
+                                safeSimilarity.toFixed(3),
                               ];
                             }
                           }),
@@ -1643,7 +1735,9 @@ export default function RAGSearchPage() {
                             {result.type === 'entity' ? 'エンティティ' : result.type === 'relation' ? 'リレーション' : 'トピック'}
                           </span>
                           <span style={{ fontSize: '12px', color: '#6B7280' }}>
-                            スコア: {(result.score * 100).toFixed(1)}%
+                            スコア: {typeof result.score === 'number' && !isNaN(result.score) 
+                              ? (result.score * 100).toFixed(1) + '%'
+                              : '計算中...'}
                           </span>
                         </div>
                         {result.entity && (
@@ -2529,7 +2623,13 @@ export default function RAGSearchPage() {
               </div>
               <div style={{ padding: '8px 12px', backgroundColor: '#F9FAFB', borderRadius: '6px', marginBottom: '8px' }}>
                 <div style={{ fontSize: '12px', color: '#6B7280' }}>
-                  ChromaDB同期状況: <strong>{dataQualityReport.entities.chromaDbSyncStatus === 'synced' ? '✅ 同期済み' : dataQualityReport.entities.chromaDbSyncStatus === 'partial' ? '⚠️ 部分的' : dataQualityReport.entities.chromaDbSyncStatus === 'outdated' ? '❌ 未同期' : 'N/A'}</strong>
+                  ChromaDB同期状況: <strong>
+                    {dataQualityReport.entities.chromaDbSyncStatus === 'synced' ? '✅ 同期済み' : 
+                     dataQualityReport.entities.chromaDbSyncStatus === 'partial' ? '⚠️ 部分的' : 
+                     dataQualityReport.entities.chromaDbSyncStatus === 'outdated' ? '❌ 未同期' : 
+                     dataQualityReport.entities.chromaDbSyncStatus === 'not_used' ? 'N/A (ChromaDB無効)' : 
+                     'N/A'}
+                  </strong>
                 </div>
               </div>
               <div style={{ padding: '8px 12px', backgroundColor: '#F9FAFB', borderRadius: '6px' }}>

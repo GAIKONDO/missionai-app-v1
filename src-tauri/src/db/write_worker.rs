@@ -327,17 +327,13 @@ impl WriteWorker {
 
     fn delete_organization(
         &self,
-        conn: &rusqlite::Connection,
+        _conn: &rusqlite::Connection,
         organization_id: &str,
     ) -> Result<()> {
-        let tx = conn.unchecked_transaction()?;
-        
-        tx.execute(
-            "DELETE FROM organizations WHERE id = ?1",
-            params![organization_id],
-        )?;
-        
-        tx.commit()?;
+        // 専用のdelete_organization関数を使用（関連データも一緒に削除）
+        use crate::database::delete_organization;
+        delete_organization(organization_id)
+            .map_err(|e| anyhow::anyhow!("Failed to delete organization: {}", e))?;
         Ok(())
     }
 

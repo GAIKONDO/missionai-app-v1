@@ -5,10 +5,6 @@ use crate::database::{
     check_duplicate_organizations, delete_duplicate_organizations,
     get_organization_by_id,
     OrganizationWithMembers,
-    import_organization_master_from_csv,
-    get_organization_masters_by_parent_code,
-    OrganizationMaster,
-    build_organization_tree_from_master,
     import_members_from_csv,
     update_theme_positions,
     get_all_themes,
@@ -29,6 +25,7 @@ pub async fn create_org(
     level: i32,
     level_name: String,
     position: i32,
+    org_type: Option<String>,
 ) -> Result<serde_json::Value, String> {
     // UUIDを生成（組織ID）
     let organization_id = uuid::Uuid::new_v4().to_string();
@@ -57,6 +54,11 @@ pub async fn create_org(
     payload.insert("levelName".to_string(), json!(level_name.clone()));
     payload.insert("position".to_string(), json!(position));
     
+    let org_type_clone = org_type.clone();
+    if let Some(ref t) = org_type_clone {
+        payload.insert("type".to_string(), json!(t));
+    }
+    
     // 書き込みキューに送信
     state.tx.send(WriteJob::UpsertOrganization {
         organization_id: organization_id.clone(),
@@ -74,6 +76,7 @@ pub async fn create_org(
         "levelName": level_name,
         "position": position,
         "parentId": parent_id,
+        "type": org_type.unwrap_or_else(|| "organization".to_string()),
     }))
 }
 
@@ -214,19 +217,9 @@ pub fn get_orgs_by_parent(parent_id: Option<String>) -> Result<Vec<serde_json::V
 
 #[tauri::command]
 pub fn get_org_tree(root_id: Option<String>) -> Result<Vec<serde_json::Value>, String> {
-    // まずorganization_masterテーブルから取得を試みる
-    match build_organization_tree_from_master() {
-        Ok(tree) if !tree.is_empty() => {
-            // organization_masterにデータがある場合はそれを使用
-            Ok(tree.into_iter().map(|t| serde_json::to_value(t).unwrap()).collect())
-        },
-        _ => {
-            // organization_masterにデータがない場合は既存のorganizationsテーブルから取得
     match get_organization_tree(root_id.as_deref()) {
         Ok(tree) => Ok(tree.into_iter().map(|t| serde_json::to_value(t).unwrap()).collect()),
         Err(e) => Err(format!("組織ツリーの取得に失敗しました: {}", e)),
-            }
-        }
     }
 }
 
@@ -338,73 +331,7 @@ pub fn delete_org_member(id: String) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
-pub fn export_organizations_and_members_csv(export_path: Option<String>) -> Result<String, String> {
-    match export_organizations_and_members_to_csv() {
-        Ok(csv_content) => {
-            // export_pathが指定されている場合はファイルに保存
-            if let Some(path) = export_path {
-                match fs::write(&path, &csv_content) {
-                    Ok(_) => Ok(path),
-                    Err(e) => Err(format!("CSVファイルの書き込みに失敗しました: {}", e)),
-                }
-            } else {
-                // export_pathが指定されていない場合はCSVコンテンツを直接返す
-                Ok(csv_content)
-            }
-        },
-        Err(e) => Err(format!("CSVエクスポートに失敗しました: {}", e)),
-    }
-}
-
-/// CSVファイルから組織マスターデータをインポート
-#[tauri::command]
-pub fn import_organization_master_csv(csv_path: String) -> Result<usize, String> {
-    match import_organization_master_from_csv(&csv_path) {
-        Ok(count) => {
-            println!("✅ 組織マスターデータのインポートが完了しました: {}件", count);
-            Ok(count)
-        },
-        Err(e) => {
-            let error_msg = format!("CSVインポートエラー: {}", e);
-            eprintln!("❌ {}", error_msg);
-            Err(error_msg)
-        }
-    }
-}
-
-#[tauri::command]
-pub fn import_members_csv(csv_path: String) -> Result<usize, String> {
-    match import_members_from_csv(&csv_path) {
-        Ok(count) => {
-            println!("✅ メンバーデータのインポートが完了しました: {}件", count);
-            Ok(count)
-        },
-        Err(e) => {
-            let error_msg = format!("メンバーCSVインポートエラー: {}", e);
-            eprintln!("❌ {}", error_msg);
-            Err(error_msg)
-        }
-    }
-}
-
-/// 重複している組織を確認
-#[tauri::command]
-pub fn check_duplicate_orgs() -> Result<serde_json::Value, String> {
-    match check_duplicate_organizations() {
-        Ok(duplicates) => Ok(serde_json::to_value(duplicates).unwrap()),
-        Err(e) => Err(format!("重複組織の確認に失敗しました: {}", e)),
-    }
-}
-
-/// 重複している組織を削除
-#[tauri::command]
-pub fn delete_duplicate_orgs() -> Result<Vec<String>, String> {
-    match delete_duplicate_organizations() {
-        Ok(deleted_ids) => Ok(deleted_ids),
-        Err(e) => Err(format!("重複組織の削除に失敗しました: {}", e)),
-    }
-}
+// 注意: import_organization_master_csvコマンドは削除されました（organization_masterテーブルが削除されたため）
 
 /// 複数のテーマのpositionを一括更新
 #[tauri::command]

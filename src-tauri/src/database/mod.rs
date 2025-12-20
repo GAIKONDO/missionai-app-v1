@@ -60,13 +60,7 @@ pub use organization::{
     check_duplicate_organizations, delete_duplicate_organizations,
     DuplicateOrgInfo, OrgDetailInfo,
     Organization, OrganizationMember, OrganizationWithMembers,
-    OrganizationMaster,
-    import_organization_master_from_csv,
-    get_organization_master_by_code,
-    get_organization_masters_by_parent_code,
-    build_organization_tree_from_master,
     import_members_from_csv,
-    get_organization_code_by_name,
 };
 pub use companies::{
     create_company, update_company, get_company_by_id, get_company_by_code,
@@ -270,12 +264,31 @@ impl Database {
                 level INTEGER NOT NULL,
                 levelName TEXT NOT NULL,
                 position INTEGER DEFAULT 0,
+                type TEXT DEFAULT 'organization',
                 createdAt TEXT NOT NULL,
                 updatedAt TEXT NOT NULL,
                 FOREIGN KEY (parentId) REFERENCES organizations(id)
             )",
             [],
         )?;
+
+        // 既存のorganizationsテーブルにtypeカラムを追加（マイグレーション）
+        let _ = (|| -> rusqlite::Result<()> {
+            // typeカラムの存在確認
+            let type_exists = conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('organizations') WHERE name='type'",
+                [],
+                |row| Ok(row.get::<_, i32>(0)? > 0),
+            ).unwrap_or(false);
+
+            if !type_exists {
+                init_log!("📝 organizationsテーブルにtypeカラムを追加します");
+                conn.execute("ALTER TABLE organizations ADD COLUMN type TEXT DEFAULT 'organization'", [])?;
+                init_log!("✅ typeカラムを追加しました");
+            }
+
+            Ok(())
+        })();
 
         // 組織メンバーテーブル（新規追加）
         conn.execute(
@@ -358,94 +371,7 @@ impl Database {
             [],
         )?;
 
-        // 組織マスターテーブル（新規追加）
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS organization_master (
-                id TEXT PRIMARY KEY,
-                code TEXT UNIQUE NOT NULL,
-                parent_code TEXT,
-                hierarchy_level INTEGER NOT NULL,
-                hierarchy_type TEXT NOT NULL,
-                name_kanji TEXT NOT NULL,
-                name_kanji_short TEXT,
-                name_english TEXT,
-                company_code TEXT,
-                company_name TEXT,
-                division_code TEXT,
-                division_name TEXT,
-                department_code TEXT,
-                department_name TEXT,
-                section_code TEXT,
-                section_name TEXT,
-                department_indicator TEXT,
-                section_indicator TEXT,
-                section_indicator_short TEXT,
-                phone TEXT,
-                fax TEXT,
-                accounting_team_code TEXT,
-                accounting_team_name TEXT,
-                accounting_team_phone TEXT,
-                accounting_team_fax TEXT,
-                sales_section_type TEXT,
-                domestic_overseas_type TEXT,
-                consolidated_sales_section_type TEXT,
-                weighted_average_domestic TEXT,
-                weighted_average_import TEXT,
-                weighted_average_export TEXT,
-                weighted_average_three_countries TEXT,
-                store_code TEXT,
-                store_name TEXT,
-                overseas_office_code TEXT,
-                common_log_section_code TEXT,
-                report_distribution_destination_1 TEXT,
-                report_distribution_destination_2 TEXT,
-                billing_not_required TEXT,
-                purchase_billing_not_required TEXT,
-                account_total_display TEXT,
-                is_active INTEGER DEFAULT 1,
-                valid_from_date TEXT,
-                valid_to_date TEXT,
-                is_abolished INTEGER DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY (parent_code) REFERENCES organization_master(code)
-            )",
-            [],
-        )?;
-
-        // 組織マスターテーブルのインデックス
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_org_master_code ON organization_master(code)",
-            [],
-        )?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_org_master_parent_code ON organization_master(parent_code)",
-            [],
-        )?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_org_master_hierarchy_level ON organization_master(hierarchy_level)",
-            [],
-        )?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_org_master_company_code ON organization_master(company_code)",
-            [],
-        )?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_org_master_division_code ON organization_master(division_code)",
-            [],
-        )?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_org_master_department_code ON organization_master(department_code)",
-            [],
-        )?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_org_master_section_code ON organization_master(section_code)",
-            [],
-        )?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_org_master_is_active ON organization_master(is_active)",
-            [],
-        )?;
+        // 注意: organization_masterテーブルは削除されました（organizationsテーブルに統一）
 
         // 注力施策テーブル（新規追加）
         conn.execute(
@@ -922,7 +848,7 @@ impl Database {
             [],
         )?;
 
-        // エンティティテーブル（ナレッジグラフ用、ChromaDB同期状態カラムを含む）
+        // エンティティテーブル（ナレッジグラフ用、ChromaDB同期状態カラムを含む、RAG検索最適化カラム追加）
         conn.execute(
             "CREATE TABLE IF NOT EXISTS entities (
                 id TEXT PRIMARY KEY,
@@ -932,9 +858,13 @@ impl Database {
                 metadata TEXT,
                 organizationId TEXT,
                 companyId TEXT,
+                searchableText TEXT,
+                displayName TEXT,
                 chromaSynced INTEGER DEFAULT 0,
                 chromaSyncError TEXT,
                 lastChromaSyncAttempt TEXT,
+                lastSearchDate TEXT,
+                searchCount INTEGER DEFAULT 0,
                 createdAt TEXT NOT NULL,
                 updatedAt TEXT NOT NULL,
                 FOREIGN KEY (organizationId) REFERENCES organizations(id),
@@ -945,7 +875,7 @@ impl Database {
             [],
         )?;
 
-        // 関係テーブル（ChromaDB同期状態カラムを含む）
+        // 関係テーブル（ChromaDB同期状態カラムを含む、RAG検索最適化カラム追加）
         conn.execute(
             "CREATE TABLE IF NOT EXISTS relations (
                 id TEXT PRIMARY KEY,
@@ -958,9 +888,12 @@ impl Database {
                 metadata TEXT,
                 organizationId TEXT,
                 companyId TEXT,
+                searchableText TEXT,
                 chromaSynced INTEGER DEFAULT 0,
                 chromaSyncError TEXT,
                 lastChromaSyncAttempt TEXT,
+                lastSearchDate TEXT,
+                searchCount INTEGER DEFAULT 0,
                 createdAt TEXT NOT NULL,
                 updatedAt TEXT NOT NULL,
                 FOREIGN KEY (sourceEntityId) REFERENCES entities(id),
@@ -985,14 +918,18 @@ impl Database {
             init_log!("📊 entitiesテーブルの存在確認: {}", entities_table_exists);
             
             if entities_table_exists {
-                // companyIdカラムが存在するかどうかを確認
-                let company_id_exists: bool = conn.query_row(
-                    "SELECT COUNT(*) FROM pragma_table_info('entities') WHERE name='companyId'",
-                    [],
-                    |row| row.get::<_, i32>(0).map(|n| n > 0),
-                ).unwrap_or(false);
+                // カラムの存在確認
+                let mut stmt = conn.prepare("PRAGMA table_info(entities)")?;
+                let columns: Vec<String> = stmt.query_map([], |row| {
+                    Ok(row.get::<_, String>(1)?)
+                })?.collect::<Result<Vec<_>, _>>()?;
                 
-                init_log!("📊 entitiesテーブルのcompanyIdカラムの存在確認: {}", company_id_exists);
+                let company_id_exists = columns.contains(&"companyId".to_string());
+                let last_search_date_exists = columns.contains(&"lastSearchDate".to_string());
+                let search_count_exists = columns.contains(&"searchCount".to_string());
+                
+                init_log!("📊 entitiesテーブルのカラム存在確認: companyId={}, lastSearchDate={}, searchCount={}", 
+                    company_id_exists, last_search_date_exists, search_count_exists);
                 
                 if !company_id_exists {
                     init_log_always!("📝 entitiesテーブルを再作成します（companyIdカラムとCHECK制約を追加）");
@@ -1053,6 +990,19 @@ impl Database {
                 } else {
                     init_log!("ℹ️  entitiesテーブルにcompanyIdカラムは既に存在します");
                 }
+                
+                // 検索頻度追跡カラムの追加（非破壊的マイグレーション）
+                if !last_search_date_exists {
+                    init_log!("📝 entitiesテーブルにlastSearchDateカラムを追加します");
+                    conn.execute("ALTER TABLE entities ADD COLUMN lastSearchDate TEXT", [])?;
+                    init_log!("✅ lastSearchDateカラムを追加しました");
+                }
+                
+                if !search_count_exists {
+                    init_log!("📝 entitiesテーブルにsearchCountカラムを追加します");
+                    conn.execute("ALTER TABLE entities ADD COLUMN searchCount INTEGER DEFAULT 0", [])?;
+                    init_log!("✅ searchCountカラムを追加しました");
+                }
             } else {
                 init_log!("ℹ️  entitiesテーブルが存在しません（新規テーブルの可能性）");
             }
@@ -1073,14 +1023,18 @@ impl Database {
             init_log!("📊 relationsテーブルの存在確認: {}", relations_table_exists);
             
             if relations_table_exists {
-                // companyIdカラムが存在するかどうかを確認
-                let company_id_exists: bool = conn.query_row(
-                    "SELECT COUNT(*) FROM pragma_table_info('relations') WHERE name='companyId'",
-                    [],
-                    |row| row.get::<_, i32>(0).map(|n| n > 0),
-                ).unwrap_or(false);
+                // カラムの存在確認
+                let mut stmt = conn.prepare("PRAGMA table_info(relations)")?;
+                let columns: Vec<String> = stmt.query_map([], |row| {
+                    Ok(row.get::<_, String>(1)?)
+                })?.collect::<Result<Vec<_>, _>>()?;
                 
-                init_log!("📊 relationsテーブルのcompanyIdカラムの存在確認: {}", company_id_exists);
+                let company_id_exists = columns.contains(&"companyId".to_string());
+                let last_search_date_exists = columns.contains(&"lastSearchDate".to_string());
+                let search_count_exists = columns.contains(&"searchCount".to_string());
+                
+                init_log!("📊 relationsテーブルのカラム存在確認: companyId={}, lastSearchDate={}, searchCount={}", 
+                    company_id_exists, last_search_date_exists, search_count_exists);
                 
                 if !company_id_exists {
                     init_log_always!("📝 relationsテーブルを再作成します（companyIdカラムとCHECK制約を追加）");
@@ -1146,6 +1100,19 @@ impl Database {
                 } else {
                     init_log!("ℹ️  relationsテーブルにcompanyIdカラムは既に存在します");
                 }
+                
+                // 検索頻度追跡カラムの追加（非破壊的マイグレーション）
+                if !last_search_date_exists {
+                    init_log!("📝 relationsテーブルにlastSearchDateカラムを追加します");
+                    conn.execute("ALTER TABLE relations ADD COLUMN lastSearchDate TEXT", [])?;
+                    init_log!("✅ lastSearchDateカラムを追加しました");
+                }
+                
+                if !search_count_exists {
+                    init_log!("📝 relationsテーブルにsearchCountカラムを追加します");
+                    conn.execute("ALTER TABLE relations ADD COLUMN searchCount INTEGER DEFAULT 0", [])?;
+                    init_log!("✅ searchCountカラムを追加しました");
+                }
             } else {
                 init_log!("ℹ️  relationsテーブルが存在しません（新規テーブルの可能性）");
             }
@@ -1168,9 +1135,13 @@ impl Database {
                 semanticCategory TEXT,
                 keywords TEXT,
                 tags TEXT,
+                contentSummary TEXT,
+                searchableText TEXT,
                 chromaSynced INTEGER DEFAULT 0,
                 chromaSyncError TEXT,
                 lastChromaSyncAttempt TEXT,
+                lastSearchDate TEXT,
+                searchCount INTEGER DEFAULT 0,
                 createdAt TEXT NOT NULL,
                 updatedAt TEXT NOT NULL,
                 FOREIGN KEY (meetingNoteId) REFERENCES meetingNotes(id),
@@ -1182,7 +1153,7 @@ impl Database {
             [],
         )?;
         
-        // topicsテーブルのマイグレーション（companyIdカラムとCHECK制約を追加）
+        // topicsテーブルのマイグレーション（companyIdカラム、CHECK制約、検索頻度追跡カラムを追加）
         init_log!("🔍 topicsテーブルのマイグレーションを開始します...");
         if let Err(e) = (|| -> SqlResult<()> {
             let topics_table_exists: bool = conn.query_row(
@@ -1194,14 +1165,18 @@ impl Database {
             init_log!("📊 topicsテーブルの存在確認: {}", topics_table_exists);
             
             if topics_table_exists {
-                // companyIdカラムが存在するかどうかを確認
-                let company_id_exists: bool = conn.query_row(
-                    "SELECT COUNT(*) FROM pragma_table_info('topics') WHERE name='companyId'",
-                    [],
-                    |row| row.get::<_, i32>(0).map(|n| n > 0),
-                ).unwrap_or(false);
+                // カラムの存在確認
+                let mut stmt = conn.prepare("PRAGMA table_info(topics)")?;
+                let columns: Vec<String> = stmt.query_map([], |row| {
+                    Ok(row.get::<_, String>(1)?)
+                })?.collect::<Result<Vec<_>, _>>()?;
                 
-                init_log!("📊 topicsテーブルのcompanyIdカラムの存在確認: {}", company_id_exists);
+                let company_id_exists = columns.contains(&"companyId".to_string());
+                let last_search_date_exists = columns.contains(&"lastSearchDate".to_string());
+                let search_count_exists = columns.contains(&"searchCount".to_string());
+                
+                init_log!("📊 topicsテーブルのカラム存在確認: companyId={}, lastSearchDate={}, searchCount={}", 
+                    company_id_exists, last_search_date_exists, search_count_exists);
                 
                 if !company_id_exists {
                     init_log_always!("📝 topicsテーブルを再作成します（companyIdカラムとCHECK制約を追加）");
@@ -1265,6 +1240,19 @@ impl Database {
                 } else {
                     init_log!("ℹ️  topicsテーブルにcompanyIdカラムは既に存在します");
                 }
+                
+                // 検索頻度追跡カラムの追加（非破壊的マイグレーション）
+                if !last_search_date_exists {
+                    init_log!("📝 topicsテーブルにlastSearchDateカラムを追加します");
+                    conn.execute("ALTER TABLE topics ADD COLUMN lastSearchDate TEXT", [])?;
+                    init_log!("✅ lastSearchDateカラムを追加しました");
+                }
+                
+                if !search_count_exists {
+                    init_log!("📝 topicsテーブルにsearchCountカラムを追加します");
+                    conn.execute("ALTER TABLE topics ADD COLUMN searchCount INTEGER DEFAULT 0", [])?;
+                    init_log!("✅ searchCountカラムを追加しました");
+                }
             }
             Ok(())
         })() {
@@ -1326,6 +1314,8 @@ impl Database {
         conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_chromaSynced ON entities(chromaSynced)", [])?;
+        // RAG検索最適化: searchableTextインデックス
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_searchable_text ON entities(searchableText)", [])?;
         // 複合インデックス: organizationId + chromaSynced（RAG検索のパフォーマンス向上）
         conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_org_chroma ON entities(organizationId, chromaSynced)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_topicId ON relations(topicId)", [])?;
@@ -1335,12 +1325,17 @@ impl Database {
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_relationType ON relations(relationType)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_organizationId ON relations(organizationId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_chromaSynced ON relations(chromaSynced)", [])?;
+        // RAG検索最適化: searchableTextインデックス
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_searchable_text ON relations(searchableText)", [])?;
         // 複合インデックス: organizationId + chromaSynced（RAG検索のパフォーマンス向上）
         conn.execute("CREATE INDEX IF NOT EXISTS idx_relations_org_chroma ON relations(organizationId, chromaSynced)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_meetingNoteId ON topics(meetingNoteId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_organizationId ON topics(organizationId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_companyId ON topics(companyId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_chromaSynced ON topics(chromaSynced)", [])?;
+        // RAG検索最適化: searchableTextとsemanticCategoryインデックス
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_searchable_text ON topics(searchableText)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_semanticCategory ON topics(semanticCategory)", [])?;
         // 複合インデックス: organizationId + chromaSynced（RAG検索のパフォーマンス向上）
         conn.execute("CREATE INDEX IF NOT EXISTS idx_topics_org_chroma ON topics(organizationId, chromaSynced)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_meetingNotes_chromaSynced ON meetingNotes(chromaSynced)", [])?;
@@ -1358,7 +1353,149 @@ impl Database {
         conn.execute("CREATE INDEX IF NOT EXISTS idx_organizations_levelName ON organizations(levelName)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_organizationMembers_organizationId ON organizationMembers(organizationId)", [])?;
 
+        // RAG検索最適化: 自動更新トリガーを作成
+        // topicsテーブルのcontentSummaryとsearchableTextを自動生成
+        conn.execute(
+            r#"
+            CREATE TRIGGER IF NOT EXISTS update_topics_searchable_fields
+            AFTER INSERT ON topics
+            BEGIN
+                UPDATE topics SET
+                    contentSummary = CASE
+                        WHEN content IS NOT NULL AND LENGTH(content) > 0
+                        THEN SUBSTR(content, 1, 200)
+                        ELSE NULL
+                    END,
+                    searchableText = TRIM(
+                        COALESCE(title, '') || ' ' ||
+                        COALESCE(description, '') || ' ' ||
+                        COALESCE(SUBSTR(content, 1, 200), '')
+                    )
+                WHERE id = NEW.id;
+            END
+            "#,
+            [],
+        )?;
 
+        conn.execute(
+            r#"
+            CREATE TRIGGER IF NOT EXISTS update_topics_searchable_fields_on_update
+            AFTER UPDATE ON topics
+            BEGIN
+                UPDATE topics SET
+                    contentSummary = CASE
+                        WHEN NEW.content IS NOT NULL AND LENGTH(NEW.content) > 0
+                        THEN SUBSTR(NEW.content, 1, 200)
+                        ELSE NULL
+                    END,
+                    searchableText = TRIM(
+                        COALESCE(NEW.title, '') || ' ' ||
+                        COALESCE(NEW.description, '') || ' ' ||
+                        COALESCE(SUBSTR(NEW.content, 1, 200), '')
+                    )
+                WHERE id = NEW.id;
+            END
+            "#,
+            [],
+        )?;
+
+        // entitiesテーブルのsearchableTextとdisplayNameを自動生成
+        conn.execute(
+            r#"
+            CREATE TRIGGER IF NOT EXISTS update_entities_searchable_fields
+            AFTER INSERT ON entities
+            BEGIN
+                UPDATE entities SET
+                    searchableText = TRIM(
+                        COALESCE(name, '') || ' ' ||
+                        COALESCE(aliases, '') || ' ' ||
+                        CASE
+                            WHEN metadata IS NOT NULL AND json_extract(metadata, '$.role') IS NOT NULL
+                            THEN json_extract(metadata, '$.role') || ' '
+                            ELSE ''
+                        END ||
+                        CASE
+                            WHEN metadata IS NOT NULL AND json_extract(metadata, '$.department') IS NOT NULL
+                            THEN json_extract(metadata, '$.department')
+                            ELSE ''
+                        END
+                    ),
+                    displayName = name ||
+                        CASE
+                            WHEN metadata IS NOT NULL AND json_extract(metadata, '$.role') IS NOT NULL
+                            THEN ' (' || json_extract(metadata, '$.role') || ')'
+                            ELSE ''
+                        END
+                WHERE id = NEW.id;
+            END
+            "#,
+            [],
+        )?;
+
+        conn.execute(
+            r#"
+            CREATE TRIGGER IF NOT EXISTS update_entities_searchable_fields_on_update
+            AFTER UPDATE ON entities
+            BEGIN
+                UPDATE entities SET
+                    searchableText = TRIM(
+                        COALESCE(NEW.name, '') || ' ' ||
+                        COALESCE(NEW.aliases, '') || ' ' ||
+                        CASE
+                            WHEN NEW.metadata IS NOT NULL AND json_extract(NEW.metadata, '$.role') IS NOT NULL
+                            THEN json_extract(NEW.metadata, '$.role') || ' '
+                            ELSE ''
+                        END ||
+                        CASE
+                            WHEN NEW.metadata IS NOT NULL AND json_extract(NEW.metadata, '$.department') IS NOT NULL
+                            THEN json_extract(NEW.metadata, '$.department')
+                            ELSE ''
+                        END
+                    ),
+                    displayName = NEW.name ||
+                        CASE
+                            WHEN NEW.metadata IS NOT NULL AND json_extract(NEW.metadata, '$.role') IS NOT NULL
+                            THEN ' (' || json_extract(NEW.metadata, '$.role') || ')'
+                            ELSE ''
+                        END
+                WHERE id = NEW.id;
+            END
+            "#,
+            [],
+        )?;
+
+        // relationsテーブルのsearchableTextを自動生成
+        conn.execute(
+            r#"
+            CREATE TRIGGER IF NOT EXISTS update_relations_searchable_fields
+            AFTER INSERT ON relations
+            BEGIN
+                UPDATE relations SET
+                    searchableText = TRIM(
+                        COALESCE(relationType, '') || ' ' ||
+                        COALESCE(description, '')
+                    )
+                WHERE id = NEW.id;
+            END
+            "#,
+            [],
+        )?;
+
+        conn.execute(
+            r#"
+            CREATE TRIGGER IF NOT EXISTS update_relations_searchable_fields_on_update
+            AFTER UPDATE ON relations
+            BEGIN
+                UPDATE relations SET
+                    searchableText = TRIM(
+                        COALESCE(NEW.relationType, '') || ' ' ||
+                        COALESCE(NEW.description, '')
+                    )
+                WHERE id = NEW.id;
+            END
+            "#,
+            [],
+        )?;
 
         // システム設計ドキュメントセクションテーブル（新規追加）
         conn.execute(

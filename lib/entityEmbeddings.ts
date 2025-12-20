@@ -332,11 +332,13 @@ export async function getEntityEmbedding(
   if (shouldUseChroma()) {
     try {
       // organizationIdが必要な場合は、エンティティから取得を試みる
+      // companyIdも考慮する（companyIdがある場合はそれを使用）
       let orgId = organizationId;
       if (!orgId) {
         try {
           const entity = await getEntityById(entityId);
-          orgId = entity?.organizationId;
+          // companyIdがある場合はそれを使用、なければorganizationIdを使用
+          orgId = entity?.companyId || entity?.organizationId;
         } catch (e) {
           // エンティティの取得に失敗した場合は続行
         }
@@ -362,6 +364,9 @@ export async function getEntityEmbedding(
           // その他のエラーも無視（埋め込みが存在しない可能性）
           console.debug(`ChromaDBからの埋め込み取得エラー（無視）: ${entityId}`, errorMessage);
         }
+      } else {
+        // orgIdが取得できない場合、デバッグログを出力
+        console.debug(`⚠️ [getEntityEmbedding] organizationIdまたはcompanyIdが取得できません: ${entityId}`);
       }
       // 埋め込みが見つからない場合はnullを返す
       return null;
@@ -717,8 +722,25 @@ export async function findSimilarEntitiesHybrid(
     const vectorMap = new Map<string, number>();
     const keywordMap = new Map<string, number>();
     
+    // ベクトル検索結果のデバッグログ
+    if (vectorResults.length > 0) {
+      console.log(`[findSimilarEntitiesHybrid] 📊 ベクトル検索結果のサンプル（最初の5件）:`, vectorResults.slice(0, 5).map(r => ({
+        entityId: r.entityId,
+        similarity: typeof r.similarity === 'number' ? r.similarity.toFixed(4) : String(r.similarity),
+        similarityType: typeof r.similarity,
+        isNaN: typeof r.similarity === 'number' ? isNaN(r.similarity) : 'N/A',
+      })));
+    } else {
+      console.warn(`[findSimilarEntitiesHybrid] ⚠️ ベクトル検索結果が空です。ChromaDBに埋め込みが存在しない可能性があります。`);
+    }
+    
     for (const result of vectorResults) {
-      vectorMap.set(result.entityId, result.similarity);
+      // similarityが有効な数値であることを確認
+      if (typeof result.similarity === 'number' && !isNaN(result.similarity)) {
+        vectorMap.set(result.entityId, result.similarity);
+      } else {
+        console.warn(`[findSimilarEntitiesHybrid] ⚠️ エンティティ ${result.entityId} のsimilarityが無効です:`, result.similarity);
+      }
     }
     
     for (const result of keywordResults) {
@@ -777,6 +799,11 @@ export async function findSimilarEntitiesHybrid(
         const vectorSim = vectorMap.get(entityId) || 0;
         const keywordScore = keywordMap.get(entityId) || calculateKeywordMatchScore(queryText, entity);
         
+        // デバッグログ: ベクトル類似度が0の場合に警告
+        if (vectorSim === 0 && vectorMap.size > 0) {
+          console.warn(`[findSimilarEntitiesHybrid] ⚠️ エンティティ ${entityId} (${entity.name}) のベクトル類似度が0です。ベクトル検索結果に含まれていない可能性があります。`);
+        }
+        
         // キーワード完全一致または高スコアの場合は、ベクトル類似度よりも優先
         let score: number;
         if (keywordScore >= 0.9) {
@@ -799,10 +826,19 @@ export async function findSimilarEntitiesHybrid(
         if (filters?.entityType && entity.type === filters.entityType) {
           score = Math.min(1.0, score + 0.1);
         }
+        
+        // NaNチェック: スコアがNaNの場合は0に設定
+        if (typeof score !== 'number' || isNaN(score)) {
+          console.warn(`[findSimilarEntitiesHybrid] エンティティ ${entityId} のスコアがNaNです。0に設定します。`);
+          score = 0;
+        }
+        
+        // NaNチェック: 類似度がNaNの場合は0に設定
+        const safeSimilarity = (typeof vectorSim === 'number' && !isNaN(vectorSim)) ? vectorSim : 0;
 
         enhancedResults.push({
           entityId,
-          similarity: vectorSim,
+          similarity: safeSimilarity,
           score,
         });
       } catch (error) {
@@ -887,6 +923,10 @@ export async function batchUpdateEntityEmbeddings(
       }
       
       try {
+        // エンティティを取得してorganizationIdまたはcompanyIdを取得
+        const entity = await getEntityById(entityId);
+        const orgOrCompanyId = entity?.companyId || entity?.organizationId || organizationId || '';
+        
         // SQLiteのchromaSyncedフラグをチェック（高速）
         if (!forceRegenerate) {
           try {
@@ -898,11 +938,50 @@ export async function batchUpdateEntityEmbeddings(
             if (entityDoc?.exists && entityDoc?.data) {
               const chromaSynced = entityDoc.data.chromaSynced;
               if (chromaSynced === 1) {
-                console.log(`⏭️  エンティティ ${entityId} は既に埋め込みが存在するためスキップ（SQLiteフラグ確認）`);
-                const current = ++processedCount;
-                skippedCount++;
-                onProgress?.(current, entityIds.length, entityId, 'skipped');
-                return { status: 'skipped' as const };
+                // SQLiteフラグが1の場合、ChromaDBに実際に存在するかを確認
+                try {
+                  const existing = await getEntityEmbedding(entityId, orgOrCompanyId);
+                  // 埋め込みが存在するか、かつcombinedEmbeddingが有効な配列であるかを厳密にチェック
+                  if (existing && existing.combinedEmbedding && Array.isArray(existing.combinedEmbedding) && existing.combinedEmbedding.length > 0) {
+                    console.log(`⏭️  エンティティ ${entityId} は既に埋め込みが存在するためスキップ（SQLiteフラグ + ChromaDB確認）`);
+                    const current = ++processedCount;
+                    skippedCount++;
+                    onProgress?.(current, entityIds.length, entityId, 'skipped');
+                    return { status: 'skipped' as const };
+                  } else {
+                    // SQLiteフラグは1だが、ChromaDBに存在しない、または埋め込みが無効 → 不整合を検出
+                    console.warn(`⚠️  エンティティ ${entityId} はSQLiteでchromaSynced=1ですが、ChromaDBに有効な埋め込みが存在しません。再生成します。`, {
+                      existing: existing ? '存在するが無効' : '存在しない',
+                      hasCombinedEmbedding: existing?.combinedEmbedding ? 'あり' : 'なし',
+                      embeddingLength: existing?.combinedEmbedding?.length || 0,
+                    });
+                    // フラグをリセットして再生成
+                    try {
+                      await callTauriCommand('update_chroma_sync_status', {
+                        entityType: 'entity',
+                        entityId: entityId,
+                        synced: false,
+                        error: existing ? 'ChromaDBに埋め込みが存在するが無効（再生成が必要）' : 'ChromaDBに存在しないため再生成',
+                      });
+                    } catch (resetError) {
+                      console.warn(`chromaSyncedフラグのリセットエラー:`, resetError);
+                    }
+                  }
+                } catch (chromaCheckError) {
+                  // ChromaDB確認エラーは無視して続行（再生成を試みる）
+                  console.warn(`⚠️  ChromaDB確認エラー（続行）: ${entityId}`, chromaCheckError);
+                  // エラーが発生した場合も、フラグをリセットして再生成を試みる
+                  try {
+                    await callTauriCommand('update_chroma_sync_status', {
+                      entityType: 'entity',
+                      entityId: entityId,
+                      synced: false,
+                      error: `ChromaDB確認エラー: ${chromaCheckError instanceof Error ? chromaCheckError.message : String(chromaCheckError)}`,
+                    });
+                  } catch (resetError) {
+                    console.warn(`chromaSyncedフラグのリセットエラー:`, resetError);
+                  }
+                }
               }
             }
           } catch (sqliteError: any) {
@@ -911,19 +990,27 @@ export async function batchUpdateEntityEmbeddings(
           }
         }
         
-        // エンティティを取得してorganizationIdまたはcompanyIdを取得
-        const entity = await getEntityById(entityId);
-        const orgOrCompanyId = entity?.companyId || entity?.organizationId || organizationId || '';
-        
         // SQLiteで確認できない場合、ChromaDBから確認（フォールバック）
         if (!forceRegenerate) {
-          const existing = await getEntityEmbedding(entityId, orgOrCompanyId);
-          if (existing) {
-            console.log(`⏭️  エンティティ ${entityId} は既に埋め込みが存在するためスキップ（ChromaDB確認）`);
-            const current = ++processedCount;
-            skippedCount++;
-            onProgress?.(current, entityIds.length, entityId, 'skipped');
-            return { status: 'skipped' as const };
+          try {
+            const existing = await getEntityEmbedding(entityId, orgOrCompanyId);
+            // 埋め込みが存在するか、かつcombinedEmbeddingが有効な配列であるかを厳密にチェック
+            if (existing && existing.combinedEmbedding && Array.isArray(existing.combinedEmbedding) && existing.combinedEmbedding.length > 0) {
+              console.log(`⏭️  エンティティ ${entityId} は既に埋め込みが存在するためスキップ（ChromaDB確認）`);
+              const current = ++processedCount;
+              skippedCount++;
+              onProgress?.(current, entityIds.length, entityId, 'skipped');
+              return { status: 'skipped' as const };
+            } else if (existing) {
+              // 埋め込みオブジェクトは存在するが、combinedEmbeddingが無効
+              console.warn(`⚠️  エンティティ ${entityId} の埋め込みが無効です。再生成します。`, {
+                hasCombinedEmbedding: existing.combinedEmbedding ? 'あり' : 'なし',
+                embeddingLength: existing.combinedEmbedding?.length || 0,
+              });
+            }
+          } catch (chromaCheckError) {
+            // ChromaDB確認エラーは無視して続行（再生成を試みる）
+            console.debug(`ChromaDB確認エラー（続行）: ${entityId}`, chromaCheckError);
           }
         }
 
@@ -936,14 +1023,72 @@ export async function batchUpdateEntityEmbeddings(
           return { status: 'success' as const };
         } else {
           // saveEntityEmbeddingAsyncがfalseを返した場合（エンティティが見つからない、既に生成中など）
+          // エラーメッセージを取得するために、エンティティ情報を確認
+          let errorMessage = '埋め込み生成がスキップされました（原因不明）';
+          try {
+            const entity = await getEntityById(entityId);
+            if (!entity) {
+              errorMessage = 'エンティティが見つかりません';
+            } else if (!entity.name || entity.name.trim() === '') {
+              errorMessage = 'エンティティ名が空です';
+            } else if (!orgOrCompanyId) {
+              errorMessage = 'organizationIdまたはcompanyIdが設定されていません';
+            } else {
+              errorMessage = '埋め込み生成が失敗しました（詳細不明）';
+            }
+          } catch (checkError) {
+            errorMessage = `エンティティ情報の確認中にエラーが発生しました: ${checkError instanceof Error ? checkError.message : String(checkError)}`;
+          }
+          
+          // エラーメッセージをchromaSyncedフラグに保存
+          try {
+            await callTauriCommand('update_chroma_sync_status', {
+              entityType: 'entity',
+              entityId: entityId,
+              synced: false,
+              error: errorMessage,
+            });
+            console.warn(`⚠️ エンティティ ${entityId} の埋め込み生成がスキップされました: ${errorMessage}`);
+          } catch (syncStatusError) {
+            console.warn(`⚠️ エラーメッセージの保存に失敗しました: ${entityId}`, syncStatusError);
+          }
+          
           errorCount++;
           onProgress?.(current, entityIds.length, entityId, 'error');
-          console.warn(`⚠️ エンティティ ${entityId} の埋め込み生成がスキップされました`);
           return { status: 'error' as const };
         }
       } catch (error) {
         const current = ++processedCount;
-        console.error(`エンティティ ${entityId} の埋め込み生成エラー:`, error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorStack = error instanceof Error ? error.stack : '';
+        // catchブロック内でorgOrCompanyIdを再取得
+        let orgOrCompanyIdForError = '';
+        try {
+          const entity = await getEntityById(entityId);
+          orgOrCompanyIdForError = entity?.companyId || entity?.organizationId || organizationId || '';
+        } catch {
+          // エンティティ取得エラーは無視
+        }
+        console.error(`❌ エンティティ ${entityId} の埋め込み生成エラー:`, {
+          error: errorMessage,
+          stack: errorStack,
+          entityId,
+          orgOrCompanyId: orgOrCompanyIdForError,
+        });
+        
+        // エラーメッセージをchromaSyncedフラグに保存
+        try {
+          await callTauriCommand('update_chroma_sync_status', {
+            entityType: 'entity',
+            entityId: entityId,
+            synced: false,
+            error: errorMessage,
+          });
+          console.log(`✅ エラーメッセージを保存しました: ${entityId} - ${errorMessage}`);
+        } catch (syncStatusError) {
+          console.warn(`⚠️ エラーメッセージの保存に失敗しました: ${entityId}`, syncStatusError);
+        }
+        
         errorCount++;
         onProgress?.(current, entityIds.length, entityId, 'error');
         return { status: 'error' as const };

@@ -621,6 +621,19 @@ pub fn delete_doc(collection_name: &str, doc_id: &str) -> SqlResult<()> {
     // テーブル名の検証（SQLインジェクション対策）
     validate_table_name(collection_name)?;
     
+    // organizationsテーブルの場合は、専用の削除関数を使用（関連データも一緒に削除）
+    if collection_name == "organizations" {
+        eprintln!("🔧 [delete_doc] organizationsテーブルのため、専用の削除関数を使用します");
+        use crate::database::organization::delete_organization;
+        return delete_organization(doc_id);
+    }
+    
+    // meetingNotesテーブルの場合は、関連データも一緒に削除
+    if collection_name == "meetingNotes" {
+        eprintln!("🔧 [delete_doc] meetingNotesテーブルのため、関連データも一緒に削除します");
+        return delete_meeting_note_with_relations(doc_id);
+    }
+    
     let db = get_db().ok_or_else(|| {
         eprintln!("❌ [delete_doc] データベースが初期化されていません");
         rusqlite::Error::SqliteFailure(
@@ -818,7 +831,14 @@ pub fn get_collection(collection_name: &str, conditions: Option<HashMap<String, 
                     }
                 }
                 Ok(None) => Value::Null,
-                Err(_) => Value::Null,
+                Err(_) => {
+                    // 数値やNULLの処理（INTEGER型のフィールドに対応）
+                    match row.get::<_, Option<i64>>(i) {
+                        Ok(Some(v)) => json!(v),
+                        Ok(None) => Value::Null,
+                        Err(_) => Value::Null,
+                    }
+                }
             };
             map.insert(col_name.to_string(), value);
         }

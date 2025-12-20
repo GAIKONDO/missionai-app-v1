@@ -90,8 +90,9 @@ pub async fn create_organization(
     let position = payload.get("position")
         .and_then(|v| v.as_i64().map(|i| i as i32))
         .unwrap_or(0);
+    let org_type = payload.get("type").and_then(|v| v.as_str().map(|s| s.to_string()));
     
-    match db_create_organization(parent_id, name, title, description, level, level_name, position) {
+    match db_create_organization(parent_id, name, title, description, level, level_name, position, org_type) {
         Ok(org) => Ok(Json(serde_json::to_value(org).unwrap())),
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,

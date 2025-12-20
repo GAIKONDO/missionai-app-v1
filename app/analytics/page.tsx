@@ -22,7 +22,7 @@ import { CSS } from '@dnd-kit/utilities';
 import RelationshipDiagram2D, { type RelationshipNode, type RelationshipLink } from '@/components/RelationshipDiagram2D';
 import { getThemes, getFocusInitiatives, deleteTheme, saveTheme, updateThemePositions, type Theme, type FocusInitiative, getAllTopics, type TopicInfo } from '@/lib/orgApi';
 import { getOrgTreeFromDb, type OrgNodeData } from '@/lib/orgApi';
-import { getAllCompanies, getCompanyFocusInitiatives, type Company, type CompanyFocusInitiative } from '@/lib/companiesApi';
+// import { getAllCompanies, getCompanyFocusInitiatives, type Company, type CompanyFocusInitiative } from '@/lib/companiesApi'; // 削除（事業会社ページ削除のため）
 import dynamic from 'next/dynamic';
 
 // RelationshipDiagram2Dを動的インポート（SSRを回避）
@@ -360,8 +360,10 @@ export default function AnalyticsPage() {
   const [orderedThemes, setOrderedThemes] = useState<Theme[]>([]);
   
   // 事業会社関連の状態
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [companyInitiatives, setCompanyInitiatives] = useState<CompanyFocusInitiative[]>([]);
+  // const [companies, setCompanies] = useState<Company[]>([]); // 削除（Companiesページ削除のため）
+  // const [companyInitiatives, setCompanyInitiatives] = useState<CompanyFocusInitiative[]>([]); // 削除（Companiesページ削除のため）
+  const [companies, setCompanies] = useState<any[]>([]); // 一時的にany[]に変更
+  const [companyInitiatives, setCompanyInitiatives] = useState<any[]>([]); // 一時的にany[]に変更
 
   // テーマリストを再読み込みする関数（先に定義）
   const refreshThemes = useCallback(async () => {
@@ -622,25 +624,25 @@ export default function AnalyticsPage() {
           }
         } else {
           // 事業会社モード: 事業会社の注力施策を取得
-          const allCompanies = await getAllCompanies();
-          setCompanies(allCompanies);
           
-          // 各事業会社の注力施策を取得
-          const initiativePromises = allCompanies.map(company => 
-            getCompanyFocusInitiatives(company.id)
-          );
-          const initiativeResults = await Promise.allSettled(initiativePromises);
+          // 各事業会社の注力施策を取得（事業会社ページ削除のため一時的に無効化）
+          // const initiativePromises = allCompanies.map(company => 
+          //   getCompanyFocusInitiatives(company.id)
+          // );
+          // const initiativeResults = await Promise.allSettled(initiativePromises);
           
-          const allCompanyInitiatives: CompanyFocusInitiative[] = [];
-          initiativeResults.forEach((result, index) => {
-            if (result.status === 'fulfilled') {
-              allCompanyInitiatives.push(...result.value);
-            } else {
-              devWarn(`⚠️ [Analytics] 事業会社「${allCompanies[index].name}」の施策取得エラー:`, result.reason);
-            }
-          });
+          // const allCompanyInitiatives: CompanyFocusInitiative[] = [];
+          // initiativeResults.forEach((result, index) => {
+          //   if (result.status === 'fulfilled') {
+          //     allCompanyInitiatives.push(...result.value);
+          //   } else {
+          //     devWarn(`⚠️ [Analytics] 事業会社「${allCompanies[index].name}」の施策取得エラー:`, result.reason);
+          //   }
+          // });
           
-          setCompanyInitiatives(allCompanyInitiatives);
+          setCompanyInitiatives([]); // 空配列に設定
+          
+          // 事業会社モードでもトピックを取得（組織ツリーから）
           
           // 事業会社モードでもトピックを取得（組織ツリーから）
           if (orgTree) {
@@ -668,8 +670,8 @@ export default function AnalyticsPage() {
           }
           
           devLog('🔍 [Analytics] 事業会社モード データ読み込み完了:', {
-            companies: allCompanies.length,
-            companyInitiatives: allCompanyInitiatives.length,
+            companies: 0, // allCompanies.length, // 削除（事業会社ページ削除のため）
+            companyInitiatives: 0, // allCompanyInitiatives.length, // 削除（事業会社ページ削除のため）
           });
         }
       } catch (error: any) {
@@ -690,7 +692,7 @@ export default function AnalyticsPage() {
       dataViewMode,
       hasOrgData: !!orgData,
       themesCount: themes.length,
-      initiativesCount: dataViewMode === 'organization' ? initiatives.length : companyInitiatives.length,
+      initiativesCount: dataViewMode === 'organization' ? initiatives.length : 0, // companyInitiatives.length, // 削除（事業会社ページ削除のため）
       topicsCount: topics.length,
     });
 
@@ -747,7 +749,7 @@ export default function AnalyticsPage() {
       }
 
       // テーマに関連する注力施策を取得（データ表示モードに応じて）
-      let relatedInitiatives: Array<FocusInitiative | CompanyFocusInitiative> = [];
+      let relatedInitiatives: Array<FocusInitiative | any> = [];
       if (dataViewMode === 'organization') {
         relatedInitiatives = initiatives.filter((init) => 
           theme.initiativeIds?.includes(init.id) || 
@@ -832,7 +834,7 @@ export default function AnalyticsPage() {
         // 事業会社モード: このテーマに関連する事業会社を収集（注力施策から事業会社IDを取得）
         const companyIds = new Set<string>();
         relatedInitiatives.forEach((init) => {
-          const companyInit = init as CompanyFocusInitiative;
+          const companyInit = init as any; // CompanyFocusInitiative から any に変更
           if (companyInit.companyId) {
             companyIds.add(companyInit.companyId);
           }
@@ -895,7 +897,7 @@ export default function AnalyticsPage() {
             }
           }
         } else {
-          const companyInit = initiative as CompanyFocusInitiative;
+          const companyInit = initiative as any; // CompanyFocusInitiative から any に変更
           if (companyInit.companyId) {
             // このテーマ用の事業会社ノードIDを作成
             const companyNodeId = `${theme.id}_${companyInit.companyId}`;

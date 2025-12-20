@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import type { Entity } from '@/types/entity';
 import type { Relation } from '@/types/relation';
 import dynamic from 'next/dynamic';
@@ -30,6 +30,12 @@ interface KnowledgeGraph3DProps {
 
 export default function KnowledgeGraph3D({ entities, relations, isLoading, onEntityClick, maxNodes = 1000, highlightedEntityId, highlightedRelationId }: KnowledgeGraph3DProps) {
   const [graphData, setGraphData] = useState<{ nodes: any[]; links: any[] }>({ nodes: [], links: [] });
+  
+  // 前回のエンティティIDとリレーションIDを保存（無限ループ防止）
+  const prevEntityIdsRef = useRef<string>('');
+  const prevRelationIdsRef = useRef<string>('');
+  const prevHighlightedEntityIdRef = useRef<string | null | undefined>(undefined);
+  const prevHighlightedRelationIdRef = useRef<string | null | undefined>(undefined);
 
   // エンティティタイプに応じた色
   const getEntityColor = (type: string): string => {
@@ -46,10 +52,34 @@ export default function KnowledgeGraph3D({ entities, relations, isLoading, onEnt
     return colors[type] || colors['other'];
   };
 
+  // エンティティIDとリレーションIDの文字列を生成（変更検知用）
+  const entityIdsString = useMemo(() => {
+    return entities.map(e => e.id).sort().join(',');
+  }, [entities]);
+  
+  const relationIdsString = useMemo(() => {
+    return relations.map(r => r.id).sort().join(',');
+  }, [relations]);
+
   // グラフデータの準備（パフォーマンス最適化）
   useEffect(() => {
     if (isLoading || entities.length === 0) {
       setGraphData({ nodes: [], links: [] });
+      prevEntityIdsRef.current = '';
+      prevRelationIdsRef.current = '';
+      prevHighlightedEntityIdRef.current = highlightedEntityId;
+      prevHighlightedRelationIdRef.current = highlightedRelationId;
+      return;
+    }
+
+    // 変更検知：ID文字列とハイライトIDが同じ場合はスキップ
+    const entityIdsChanged = prevEntityIdsRef.current !== entityIdsString;
+    const relationIdsChanged = prevRelationIdsRef.current !== relationIdsString;
+    const highlightedEntityChanged = prevHighlightedEntityIdRef.current !== highlightedEntityId;
+    const highlightedRelationChanged = prevHighlightedRelationIdRef.current !== highlightedRelationId;
+    
+    if (!entityIdsChanged && !relationIdsChanged && !highlightedEntityChanged && !highlightedRelationChanged) {
+      // 変更がない場合はスキップ
       return;
     }
 
@@ -97,19 +127,15 @@ export default function KnowledgeGraph3D({ entities, relations, isLoading, onEnt
       });
     }
 
-    // 無限ループを防ぐため、前回のデータと比較して変更がある場合のみ更新
-    setGraphData(prev => {
-      const newData = { nodes, links };
-      // 簡易的な比較（ノード数とリンク数が同じで、IDが同じなら変更なしと判断）
-      if (prev.nodes.length === newData.nodes.length && 
-          prev.links.length === newData.links.length &&
-          prev.nodes.every((n, i) => n.id === newData.nodes[i]?.id) &&
-          prev.links.every((l, i) => l.source?.id === newData.links[i]?.source?.id && l.target?.id === newData.links[i]?.target?.id)) {
-        return prev; // 変更がない場合は前回のデータを返す
-      }
-      return newData;
-    });
-  }, [entities, relations, isLoading, maxNodes, highlightedEntityId, highlightedRelationId]);
+    // グラフデータを更新
+    setGraphData({ nodes, links });
+    
+    // 参照を更新
+    prevEntityIdsRef.current = entityIdsString;
+    prevRelationIdsRef.current = relationIdsString;
+    prevHighlightedEntityIdRef.current = highlightedEntityId;
+    prevHighlightedRelationIdRef.current = highlightedRelationId;
+  }, [entityIdsString, relationIdsString, isLoading, maxNodes, highlightedEntityId, highlightedRelationId]);
 
   // ノード数制限の警告表示
   const nodeCount = entities.length;

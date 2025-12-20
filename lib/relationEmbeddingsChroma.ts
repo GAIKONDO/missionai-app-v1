@@ -118,20 +118,22 @@ export async function saveRelationEmbeddingToChroma(
       throw new Error(errorMessage);
     }
 
-    // メタデータを準備
+    // メタデータを準備（検索に必要な情報のみを保存、メタデータサイズを削減）
     const metadata: Record<string, any> = {
-      topicId,
+      relationId, // SQLite参照用
+      topicId, // トピックID
+      organizationId, // 組織ID
+      companyId: relation.companyId || '', // 事業会社ID（あれば）
       relationType: relation.relationType,
       sourceEntityId: relation.sourceEntityId || '',
       targetEntityId: relation.targetEntityId || '',
-      sourceEntityName,
-      targetEntityName,
+      sourceEntityName, // エンティティ名（検索結果に直接含めるため）
+      targetEntityName, // エンティティ名（検索結果に直接含めるため）
       description: descriptionText,
       metadata: relation.metadata ? JSON.stringify(relation.metadata) : '',
-      descriptionEmbedding: descriptionEmbedding ? JSON.stringify(descriptionEmbedding) : '',
-      relationTypeEmbedding: JSON.stringify(relationTypeEmbedding),
-      embeddingModel: 'text-embedding-3-small',
-      embeddingVersion: '1.0',
+      // 不要なフィールドを削除（メタデータサイズ削減）:
+      // - descriptionEmbedding, relationTypeEmbedding（未使用の埋め込みベクトル）
+      // - embeddingModel, embeddingVersion（検索に不要な管理用情報）
       createdAt: now,
       updatedAt: now,
     };
@@ -251,17 +253,44 @@ export async function findSimilarRelationsChroma(
 
     // Rust側のTauriコマンドを呼び出し（パラメータ名はcamelCase）
     // organizationIdが未指定の場合はundefinedを渡して組織横断検索を実行
+    console.log(`[findSimilarRelationsChroma] ChromaDB検索を実行中... (organizationId: ${organizationId || 'undefined'})`);
     const results = await callTauriCommand('chromadb_find_similar_relations', {
       queryEmbedding,
       limit,
       organizationId: organizationId || undefined, // undefinedの場合は組織横断検索
     }) as Array<[string, number]>;
 
+    console.log(`[findSimilarRelationsChroma] ChromaDB検索完了: ${results.length}件の結果を取得`);
+    if (results.length > 0) {
+      console.log(`[findSimilarRelationsChroma] 検索結果トップ5:`, results.slice(0, 5).map(([id, sim]) => ({
+        relationId: id,
+        similarity: typeof sim === 'number' ? sim.toFixed(4) : String(sim),
+        similarityType: typeof sim,
+        isNaN: typeof sim === 'number' ? isNaN(sim) : 'N/A',
+      })));
+    } else {
+      if (organizationId) {
+        console.warn(`[findSimilarRelationsChroma] 検索結果が空です。コレクション relations_${organizationId} にデータが存在しない可能性があります。`);
+      } else {
+        console.warn(`[findSimilarRelationsChroma] 検索結果が空です。すべての組織のコレクションを検索しましたが、データが見つかりませんでした。`);
+      }
+    }
+
     // 結果を変換
-    let similarities = results.map(([relationId, similarity]) => ({
-      relationId,
-      similarity,
-    }));
+    let similarities = results.map(([relationId, similarity]) => {
+      // similarityが有効な数値であることを確認
+      if (typeof similarity !== 'number' || isNaN(similarity)) {
+        console.warn(`[findSimilarRelationsChroma] ⚠️ リレーション ${relationId} のsimilarityが無効です:`, similarity);
+        return {
+          relationId,
+          similarity: 0, // 無効な場合は0に設定
+        };
+      }
+      return {
+        relationId,
+        similarity,
+      };
+    });
 
     // relationTypeでフィルタリング（Rust側で未対応のため、JavaScript側でフィルタリング）
     if (relationType) {

@@ -138,6 +138,8 @@ export default function OrganizationPage() {
   const [minMembers, setMinMembers] = useState<number>(0);
   const [selectedRootOrgId, setSelectedRootOrgId] = useState<string | null>(null); // 選択されたルート組織のID
   const [isFilterExpanded, setIsFilterExpanded] = useState(false); // フィルターUIの展開状態
+  const [showCompanyDisplay, setShowCompanyDisplay] = useState(false); // 事業会社表示の切り替え
+  const [showPersonDisplay, setShowPersonDisplay] = useState(false); // 個人表示の切り替え
 
   // ルート組織のリストを取得する関数
   const getRootOrganizations = (): OrgNodeData[] => {
@@ -220,7 +222,7 @@ export default function OrganizationPage() {
 
   // 選択されたルート組織の傘下を取得し、フィルターを適用
   const selectedRootOrgTree = useMemo(() => getSelectedRootOrgTree(), [orgData, selectedRootOrgId]);
-  const filteredOrgData = useMemo(() => filterOrgTree(selectedRootOrgTree), [selectedRootOrgTree, searchQuery, levelFilter, minMembers]);
+  const filteredOrgData = useMemo(() => filterOrgTree(selectedRootOrgTree), [selectedRootOrgTree, searchQuery, levelFilter, minMembers, showCompanyDisplay, showPersonDisplay]);
 
   // 検索候補を計算する関数
   const calculateSearchCandidates = useCallback((query: string, tree: OrgNodeData | null) => {
@@ -615,7 +617,53 @@ export default function OrganizationPage() {
       <div className="card" style={{ marginBottom: '20px' }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-            <h2 style={{ marginBottom: 0 }}>組織</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <h2 style={{ marginBottom: 0 }}>組織</h2>
+              <button
+                onClick={() => setShowCompanyDisplay(!showCompanyDisplay)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  border: '1px solid #BAE6FD',
+                  backgroundColor: showCompanyDisplay ? '#E0F2FE' : '#fff',
+                  color: '#0369A1',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: '500',
+                  whiteSpace: 'nowrap',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#E0F2FE';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = showCompanyDisplay ? '#E0F2FE' : '#fff';
+                }}
+              >
+                事業会社表示
+              </button>
+              <button
+                onClick={() => setShowPersonDisplay(!showPersonDisplay)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  border: '1px solid #BAE6FD',
+                  backgroundColor: showPersonDisplay ? '#E0F2FE' : '#fff',
+                  color: '#0369A1',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: '500',
+                  whiteSpace: 'nowrap',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#E0F2FE';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = showPersonDisplay ? '#E0F2FE' : '#fff';
+                }}
+              >
+                個人表示
+              </button>
+            </div>
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
                 onClick={() => setViewMode('hierarchy')}
@@ -1205,31 +1253,51 @@ export default function OrganizationPage() {
         flexDirection: 'row',
       }}>
         {viewMode === 'hierarchy' ? (
-          <HierarchyView
-            orgData={orgData}
-            filteredOrgData={filteredOrgData}
-            selectedNode={selectedNode}
-            expandedMembers={expandedMembers}
-            setExpandedMembers={setExpandedMembers}
-            onNodeClick={handleNodeClick}
-            onEditClick={() => setShowEditModal(true)}
-            onNavigateToDetail={handleNavigateToDetail}
-            onAddOrg={handleAddOrg}
-            error={error}
-          />
+          <>
+            <HierarchyView
+              orgData={orgData}
+              filteredOrgData={filteredOrgData}
+              selectedNode={selectedNode}
+              expandedMembers={expandedMembers}
+              setExpandedMembers={setExpandedMembers}
+              onNodeClick={handleNodeClick}
+              onEditClick={() => setShowEditModal(true)}
+              onNavigateToDetail={handleNavigateToDetail}
+              onAddOrg={handleAddOrg}
+              error={error}
+            />
+            <SelectedOrganizationPanel
+              selectedNode={selectedNode}
+              expandedMembers={expandedMembers}
+              setExpandedMembers={setExpandedMembers}
+              onEditClick={() => setShowEditModal(true)}
+              onNavigateToDetail={handleNavigateToDetail}
+              showCompanyDisplay={showCompanyDisplay}
+            />
+          </>
         ) : viewMode === 'bubble' ? (
-          <BubbleView
-            orgData={orgData}
-            filteredOrgData={filteredOrgData}
-            selectedNode={selectedNode}
-            expandedMembers={expandedMembers}
-            setExpandedMembers={setExpandedMembers}
-            onNodeClick={handleNodeClick}
-            onEditClick={() => setShowEditModal(true)}
-            onNavigateToDetail={handleNavigateToDetail}
-            onAddOrg={handleAddOrg}
-            error={error}
-          />
+          <>
+            <BubbleView
+              orgData={orgData}
+              filteredOrgData={filteredOrgData}
+              selectedNode={selectedNode}
+              expandedMembers={expandedMembers}
+              setExpandedMembers={setExpandedMembers}
+              onNodeClick={handleNodeClick}
+              onEditClick={() => setShowEditModal(true)}
+              onNavigateToDetail={handleNavigateToDetail}
+              onAddOrg={handleAddOrg}
+              error={error}
+            />
+            <SelectedOrganizationPanel
+              selectedNode={selectedNode}
+              expandedMembers={expandedMembers}
+              setExpandedMembers={setExpandedMembers}
+              onEditClick={() => setShowEditModal(true)}
+              onNavigateToDetail={handleNavigateToDetail}
+              showCompanyDisplay={showCompanyDisplay}
+            />
+          </>
         ) : (
           <FinderView
                 orgData={orgData}

@@ -5,7 +5,6 @@ import QueryProvider from '@/components/QueryProvider';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import TauriTestHelper from '@/components/TauriTestHelper';
 import TestOrgDataHelper from '@/components/TestOrgDataHelper';
-import ImportOrganizationsHelper from '@/components/ImportOrganizationsHelper';
 import { EmbeddingRegenerationProvider } from '@/components/EmbeddingRegenerationContext';
 
 const inter = Inter({
@@ -15,12 +14,13 @@ const inter = Inter({
 });
 
 const notoSansJP = Noto_Sans_JP({
-  weight: ['300', '400', '500', '600', '700'],
+  weight: ['400', '500', '600'],
   subsets: ['latin'],
   display: 'swap',
   variable: '--font-noto',
-  preload: true,
+  preload: false,
   adjustFontFallback: true,
+  fallback: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
 });
 
 export const metadata: Metadata = {
@@ -73,7 +73,6 @@ export default function RootLayout({
       <body className={`${inter.variable} ${notoSansJP.variable} ${notoSansJP.className}`} suppressHydrationWarning>
         <TauriTestHelper />
         <TestOrgDataHelper />
-        <ImportOrganizationsHelper />
         <ErrorBoundary>
           <QueryProvider>
             <EmbeddingRegenerationProvider>

@@ -361,8 +361,10 @@ export async function getRelationEmbedding(
       if (!orgId) {
         try {
           const relation = await getRelationById(relationId);
-          orgId = relation?.organizationId;
-        } catch (e) {}
+          orgId = relation?.companyId || relation?.organizationId; // companyIdも考慮
+        } catch (e) {
+          console.debug(`⚠️ [getRelationEmbedding] リレーション取得エラー: ${relationId}`, e);
+        }
       }
 
       if (orgId) {
@@ -381,6 +383,8 @@ export async function getRelationEmbedding(
           }
           console.debug(`ChromaDBからの埋め込み取得エラー（無視）: ${relationId}`, errorMessage);
         }
+      } else {
+        console.debug(`⚠️ [getRelationEmbedding] organizationIdまたはcompanyIdが取得できません: ${relationId}`);
       }
       return null;
     } catch (chromaError: any) {
@@ -590,8 +594,25 @@ export async function findSimilarRelationsHybrid(
     const vectorMap = new Map<string, number>();
     const keywordMap = new Map<string, number>();
     
+    // ベクトル検索結果のデバッグログ
+    if (vectorResults.length > 0) {
+      console.log(`[findSimilarRelationsHybrid] 📊 ベクトル検索結果のサンプル（最初の5件）:`, vectorResults.slice(0, 5).map(r => ({
+        relationId: r.relationId,
+        similarity: typeof r.similarity === 'number' ? r.similarity.toFixed(4) : String(r.similarity),
+        similarityType: typeof r.similarity,
+        isNaN: typeof r.similarity === 'number' ? isNaN(r.similarity) : 'N/A',
+      })));
+    } else {
+      console.warn(`[findSimilarRelationsHybrid] ⚠️ ベクトル検索結果が空です。ChromaDBに埋め込みが存在しない可能性があります。`);
+    }
+    
     for (const result of vectorResults) {
-      vectorMap.set(result.relationId, result.similarity);
+      // similarityが有効な数値であることを確認
+      if (typeof result.similarity === 'number' && !isNaN(result.similarity)) {
+        vectorMap.set(result.relationId, result.similarity);
+      } else {
+        console.warn(`[findSimilarRelationsHybrid] ⚠️ リレーション ${result.relationId} のsimilarityが無効です:`, result.similarity);
+      }
     }
     
     for (const result of keywordResults) {
@@ -641,6 +662,11 @@ export async function findSimilarRelationsHybrid(
         const vectorSim = vectorMap.get(relationId) || 0;
         const keywordScore = keywordMap.get(relationId) || calculateRelationKeywordMatchScore(queryText, relation);
         
+        // デバッグログ: ベクトル類似度が0の場合に警告
+        if (vectorSim === 0 && vectorMap.size > 0) {
+          console.warn(`[findSimilarRelationsHybrid] ⚠️ リレーション ${relationId} (${relation.relationType}) のベクトル類似度が0です。ベクトル検索結果に含まれていない可能性があります。`);
+        }
+        
         // ベーススコア: ベクトル類似度とキーワードスコアの重み付け平均
         let score = vectorSim * VECTOR_WEIGHT + keywordScore * KEYWORD_WEIGHT;
         
@@ -663,10 +689,19 @@ export async function findSimilarRelationsHybrid(
         if (filters?.topicId && relation.topicId === filters.topicId) {
           score = Math.min(1.0, score + 0.08);
         }
+        
+        // NaNチェック: スコアがNaNの場合は0に設定
+        if (typeof score !== 'number' || isNaN(score)) {
+          console.warn(`[findSimilarRelationsHybrid] リレーション ${relationId} のスコアがNaNです。0に設定します。`);
+          score = 0;
+        }
+        
+        // NaNチェック: 類似度がNaNの場合は0に設定
+        const safeSimilarity = (typeof vectorSim === 'number' && !isNaN(vectorSim)) ? vectorSim : 0;
 
         enhancedResults.push({
           relationId,
-          similarity: vectorSim,
+          similarity: safeSimilarity,
           score,
         });
       } catch (error) {
@@ -743,30 +778,6 @@ export async function batchUpdateRelationEmbeddings(
       }
       
       try {
-        // SQLiteのchromaSyncedフラグをチェック（高速）
-        if (!forceRegenerate) {
-          try {
-            const relationDoc = await callTauriCommand('doc_get', {
-              collectionName: 'relations',
-              docId: relationId,
-            });
-            
-            if (relationDoc?.exists && relationDoc?.data) {
-              const chromaSynced = relationDoc.data.chromaSynced;
-              if (chromaSynced === 1) {
-                console.log(`⏭️  リレーション ${relationId} は既に埋め込みが存在するためスキップ（SQLiteフラグ確認）`);
-                const current = ++processedCount;
-                skippedCount++;
-                onProgress?.(current, relationIds.length, relationId, 'skipped');
-                return { status: 'skipped' as const };
-              }
-            }
-          } catch (sqliteError: any) {
-            // SQLiteからの取得に失敗した場合は続行（ChromaDBから確認を試みる）
-            console.debug(`SQLiteからのフラグ取得エラー（続行）: ${relationId}`, sqliteError?.message || sqliteError);
-          }
-        }
-        
         // リレーションを取得してtopicIdとorganizationIdまたはcompanyIdを取得
         const relation = await getRelationById(relationId);
         if (!relation) {
@@ -779,15 +790,67 @@ export async function batchUpdateRelationEmbeddings(
         
         const orgOrCompanyId = relation.companyId || relation.organizationId || organizationId || '';
         
+        // SQLiteのchromaSyncedフラグをチェック（高速）
+        if (!forceRegenerate) {
+          try {
+            const relationDoc = await callTauriCommand('doc_get', {
+              collectionName: 'relations',
+              docId: relationId,
+            });
+            
+            if (relationDoc?.exists && relationDoc?.data) {
+              const chromaSynced = relationDoc.data.chromaSynced;
+              if (chromaSynced === 1) {
+                // SQLiteフラグが1の場合、ChromaDBに実際に存在するかを確認
+                try {
+                  const existing = await getRelationEmbedding(relationId);
+                  if (existing) {
+                    console.log(`⏭️  リレーション ${relationId} は既に埋め込みが存在するためスキップ（SQLiteフラグ + ChromaDB確認）`);
+                    const current = ++processedCount;
+                    skippedCount++;
+                    onProgress?.(current, relationIds.length, relationId, 'skipped');
+                    return { status: 'skipped' as const };
+                  } else {
+                    // SQLiteフラグは1だが、ChromaDBに存在しない → 不整合を検出
+                    console.warn(`⚠️  リレーション ${relationId} はSQLiteでchromaSynced=1ですが、ChromaDBに存在しません。再生成します。`);
+                    // フラグをリセットして再生成
+                    try {
+                      await callTauriCommand('update_chroma_sync_status', {
+                        entityType: 'relation',
+                        entityId: relationId,
+                        synced: false,
+                        error: 'ChromaDBに存在しないため再生成',
+                      });
+                    } catch (resetError) {
+                      console.warn(`chromaSyncedフラグのリセットエラー:`, resetError);
+                    }
+                  }
+                } catch (chromaCheckError) {
+                  // ChromaDB確認エラーは無視して続行（再生成を試みる）
+                  console.warn(`ChromaDB確認エラー（続行）: ${relationId}`, chromaCheckError);
+                }
+              }
+            }
+          } catch (sqliteError: any) {
+            // SQLiteからの取得に失敗した場合は続行（ChromaDBから確認を試みる）
+            console.debug(`SQLiteからのフラグ取得エラー（続行）: ${relationId}`, sqliteError?.message || sqliteError);
+          }
+        }
+        
         // SQLiteで確認できない場合、ChromaDBから確認（フォールバック）
         if (!forceRegenerate) {
-          const existing = await getRelationEmbedding(relationId);
-          if (existing) {
-            console.log(`⏭️  リレーション ${relationId} は既に埋め込みが存在するためスキップ（ChromaDB確認）`);
-            const current = ++processedCount;
-            skippedCount++;
-            onProgress?.(current, relationIds.length, relationId, 'skipped');
-            return { status: 'skipped' as const };
+          try {
+            const existing = await getRelationEmbedding(relationId);
+            if (existing) {
+              console.log(`⏭️  リレーション ${relationId} は既に埋め込みが存在するためスキップ（ChromaDB確認）`);
+              const current = ++processedCount;
+              skippedCount++;
+              onProgress?.(current, relationIds.length, relationId, 'skipped');
+              return { status: 'skipped' as const };
+            }
+          } catch (chromaCheckError) {
+            // ChromaDB確認エラーは無視して続行（再生成を試みる）
+            console.debug(`ChromaDB確認エラー（続行）: ${relationId}`, chromaCheckError);
           }
         }
 

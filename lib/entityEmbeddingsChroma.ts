@@ -65,16 +65,18 @@ export async function saveEntityEmbeddingToChroma(
       }
     }
 
-    // メタデータを準備
+    // メタデータを準備（検索に必要な情報のみを保存、メタデータサイズを削減）
     const metadata: Record<string, any> = {
+      entityId, // SQLite参照用
+      organizationId, // 組織ID
+      companyId: entity.companyId || '', // 事業会社ID（あれば）
       name: entity.name,
       type: entity.type,
       aliases: entity.aliases ? JSON.stringify(entity.aliases) : '',
       metadata: entity.metadata ? JSON.stringify(entity.metadata) : '',
-      nameEmbedding: JSON.stringify(nameEmbedding),
-      metadataEmbedding: metadataEmbedding ? JSON.stringify(metadataEmbedding) : '',
-      embeddingModel: 'text-embedding-3-small',
-      embeddingVersion: '1.0',
+      // 不要なフィールドを削除（メタデータサイズ削減）:
+      // - nameEmbedding, metadataEmbedding（未使用の埋め込みベクトル）
+      // - embeddingModel, embeddingVersion（検索に不要な管理用情報）
       createdAt: now,
       updatedAt: now,
     };

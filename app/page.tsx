@@ -6,7 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getOrgTreeFromDb, getAllOrganizationsFromTree, type OrgNodeData } from '@/lib/orgApi';
 import { getThemes, getFocusInitiatives, type Theme, type FocusInitiative } from '@/lib/orgApi';
-import { getAllCompanies, getCompanyFocusInitiatives, updateCompany, type Company, type CompanyFocusInitiative } from '@/lib/companiesApi';
+// import { getAllCompanies, getCompanyFocusInitiatives, updateCompany, type Company, type CompanyFocusInitiative } from '@/lib/companiesApi'; // 削除（事業会社ページ削除のため）
 import dynamic from 'next/dynamic';
 import html2canvas from 'html2canvas';
 
@@ -141,9 +141,10 @@ function getOrgIdsWithDescendants(
 /**
  * 事業会社を組織の階層レベルごとにグループ化
  */
+// 事業会社機能は一時的に無効化（Typeで管理するため）
 function extractCompaniesByOrganizationDepth(
   orgTree: OrgNodeData | null,
-  companies: Company[]
+  companies: any[] // Company[] から any[] に変更（Typeで管理するため）
 ): HierarchyLevel[] {
   if (!orgTree) return [];
 
@@ -160,7 +161,7 @@ function extractCompaniesByOrganizationDepth(
   }
 
   // 事業会社を階層レベルごとにグループ化
-  const companiesByDepth = new Map<number, Array<{ company: Company; orgDepth: number }>>();
+
 
   companies.forEach(company => {
     const orgDepth = getOrgDepth(company.organizationId, orgTree, 0);
@@ -199,10 +200,11 @@ export default function DashboardPage() {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [filteredOrgIds, setFilteredOrgIds] = useState<Set<string>>(new Set());
   const [filteredThemeIds, setFilteredThemeIds] = useState<Set<string>>(new Set());
-  
   // 事業会社関連の状態
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [companyInitiatives, setCompanyInitiatives] = useState<CompanyFocusInitiative[]>([]);
+  // const [companies, setCompanies] = useState<Company[]>([]); // 削除（事業会社ページ削除のため）
+  // const [companyInitiatives, setCompanyInitiatives] = useState<CompanyFocusInitiative[]>([]); // 削除（事業会社ページ削除のため）
+  const [companies, setCompanies] = useState<any[]>([]); // 一時的にany[]に変更
+  const [companyInitiatives, setCompanyInitiatives] = useState<any[]>([]); // 一時的にany[]に変更
   const [companyHierarchyLevels, setCompanyHierarchyLevels] = useState<HierarchyLevel[]>([]);
   const [filteredCompanyIds, setFilteredCompanyIds] = useState<Set<string>>(new Set());
 
@@ -407,7 +409,8 @@ export default function DashboardPage() {
             try {
               devLog(`🔄 修正中: ${company.name} (ID: ${company.id})`);
               
-              await updateCompany(company.id, undefined, undefined, undefined, undefined, correctOrgId);
+              // await updateCompany(company.id, undefined, undefined, undefined, undefined, correctOrgId); // 削除（事業会社ページ削除のため）
+              devLog(`   ⚠️ 事業会社更新機能は削除されました（事業会社ページ削除のため）`);
               
               devLog(`   ✅ 修正完了: ${company.name}\n`);
               successCount++;
@@ -524,9 +527,10 @@ export default function DashboardPage() {
             org.name.includes('通信') && 
             (org.name.includes('モバイル') || org.name.includes('ビジネス'))
           );
-          const tsujimotoCompany = allCompanies.find(c => 
-            c.name.includes('辻本') || c.name.includes('コンサルティング')
-          );
+          // const tsujimotoCompany = allCompanies.find(c => // 削除（事業会社ページ削除のため）
+          //   c.name.includes('辻本') || c.name.includes('コンサルティング')
+          // );
+          const tsujimotoCompany = null; // 一時的に無効化
           
           devLog('🔍 [デバッグ] 通信関連組織数:', communicationsOrgs.length);
           
@@ -558,8 +562,8 @@ export default function DashboardPage() {
 
         devLog('✅ [ダッシュボード] 事業会社モード データ読み込み完了:', {
           themes: themesData.length,
-          companies: allCompanies.length,
-          companyInitiatives: allCompanyInitiatives.length,
+          companies: 0, // allCompanies.length, // 削除（事業会社ページ削除のため）
+          companyInitiatives: 0, // allCompanyInitiatives.length, // 削除（事業会社ページ削除のため）
           hierarchyLevels: levels.length,
         });
       }
@@ -610,6 +614,7 @@ export default function DashboardPage() {
     // すべての事業会社を取得
     const allCompaniesAtLevel = companyHierarchyLevels.flatMap(level => level.orgs);
     
+    // フィルター適用
     // フィルター適用
     let filtered = allCompaniesAtLevel;
     

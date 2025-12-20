@@ -8,10 +8,12 @@ import KnowledgeGraph3D from '@/components/KnowledgeGraph3D';
 import { getAllEntities, getEntityById, deleteEntity } from '@/lib/entityApi';
 import { getAllRelations, getRelationById, getRelationsByEntityId, deleteRelation } from '@/lib/relationApi';
 import { getAllTopicsBatch, getAllMembersBatch, getOrgTreeFromDb, getAllOrganizationsFromTree } from '@/lib/orgApi';
-import { getAllCompanies, type Company } from '@/lib/companiesApi';
+// import { getAllCompanies, type Company } from '@/lib/companiesApi'; // 削除（事業会社ページ削除のため）
 import { batchUpdateEntityEmbeddings, findOutdatedEntityEmbeddings, CURRENT_EMBEDDING_VERSION as ENTITY_EMBEDDING_VERSION, CURRENT_EMBEDDING_MODEL as ENTITY_EMBEDDING_MODEL } from '@/lib/entityEmbeddings';
 import { batchUpdateRelationEmbeddings, findOutdatedRelationEmbeddings, CURRENT_EMBEDDING_VERSION as RELATION_EMBEDDING_VERSION, CURRENT_EMBEDDING_MODEL as RELATION_EMBEDDING_MODEL } from '@/lib/relationEmbeddings';
 import { batchUpdateTopicEmbeddings } from '@/lib/topicEmbeddings';
+import { cleanupMissingTopicIds, checkDataIntegrity } from '@/lib/dataIntegrityCleanup';
+import { repairEntitySyncStatus, repairRelationSyncStatus, repairTopicSyncStatus } from '@/lib/chromaSyncRepair';
 import { useEmbeddingRegeneration } from '@/components/EmbeddingRegenerationContext';
 import type { Entity } from '@/types/entity';
 import type { Relation } from '@/types/relation';
@@ -108,17 +110,26 @@ function KnowledgeGraphPageContent() {
   useEffect(() => {
     if (isRegeneratingEmbeddings && regenerationProgress.status === 'processing') {
       updateProgress(regenerationProgress);
-    } else if (regenerationProgress.status === 'completed') {
+    } else if (regenerationProgress.status === 'completed' && isRegeneratingEmbeddings) {
+      // 完了時のみcompleteRegenerationを呼び出す（無限ループを防ぐため、isRegeneratingEmbeddingsもチェック）
+      setIsRegeneratingEmbeddings(false);
       completeRegeneration();
-    } else if (regenerationProgress.status === 'cancelled') {
+    } else if (regenerationProgress.status === 'cancelled' && isRegeneratingEmbeddings) {
+      // キャンセル時のみcancelRegenerationを呼び出す（無限ループを防ぐため、isRegeneratingEmbeddingsもチェック）
+      setIsRegeneratingEmbeddings(false);
       cancelRegeneration();
     }
-  }, [isRegeneratingEmbeddings, regenerationProgress, updateProgress, completeRegeneration, cancelRegeneration]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRegeneratingEmbeddings, regenerationProgress.status]);
   const [showRegenerationModal, setShowRegenerationModal] = useState(false);
   const [regenerationMode, setRegenerationMode] = useState<'organization' | 'company'>('organization'); // 再生成対象（組織 or 事業会社）
   const [regenerationType, setRegenerationType] = useState<'missing' | 'all'>('missing'); // 再生成モード
   const [missingCounts, setMissingCounts] = useState<{ entities: number; relations: number; topics: number; total: number }>({ entities: 0, relations: 0, topics: 0, total: 0 });
   const [isCountingMissing, setIsCountingMissing] = useState(false);
+  const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
+  const [showRepairEntityConfirm, setShowRepairEntityConfirm] = useState(false);
+  const [showRepairRelationConfirm, setShowRepairRelationConfirm] = useState(false);
+  const [showRepairTopicConfirm, setShowRepairTopicConfirm] = useState(false);
   // 停止フラグ（useRefで管理して、非同期処理中でも最新の値を参照できるようにする）
   const isCancelledRef = useRef<boolean>(false);
   const [showVersionCheck, setShowVersionCheck] = useState(false);
@@ -147,13 +158,15 @@ function KnowledgeGraphPageContent() {
           getAllEntities(),
           getAllRelations(),
           getAllTopicsBatch(),
-          getAllCompanies(),
+          // getAllCompanies(), // 削除（事業会社ページ削除のため）
+          Promise.resolve([]), // 空配列を返す
         ]);
         
         const allEntities = results[0].status === 'fulfilled' ? results[0].value : [];
         const allRelations = results[1].status === 'fulfilled' ? results[1].value : [];
         const allTopics = results[2].status === 'fulfilled' ? results[2].value : [];
-        const allCompanies = results[3].status === 'fulfilled' ? results[3].value : [];
+        // const allCompanies = results[3].status === 'fulfilled' ? results[3].value : []; // 削除（事業会社ページ削除のため）
+        const allCompanies: any[] = []; // 空配列に設定
         
         // エラーがあった場合はログに出力（エラーログは残す）
         if (results[0].status === 'rejected') {
@@ -291,6 +304,104 @@ function KnowledgeGraphPageContent() {
 
     loadData();
   }, [searchParams]);
+  
+  // コンソールコマンド: 埋め込みなしのcompanyIdを持つエンティティを確認・削除
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).checkAndDeleteUnsyncedCompanyEntities = async () => {
+        try {
+          const { callTauriCommand } = await import('@/lib/localFirebase');
+          
+          // すべてのエンティティを取得
+          const allEntityDocs = await callTauriCommand('query_get', {
+            collectionName: 'entities',
+            conditions: {},
+          }) as Array<{ id: string; data: any }>;
+          
+          // companyIdを持ち、chromaSyncedが0またはnullのエンティティをフィルタリング
+          const unsyncedCompanyEntities = allEntityDocs.filter(doc => {
+            const entityData = doc.data || doc;
+            const companyId = entityData.companyId;
+            const chromaSyncedValue = entityData.chromaSynced;
+            const hasCompanyId = companyId !== null && companyId !== undefined && companyId !== '' && companyId !== 'null';
+            const isUnsynced = chromaSyncedValue === 0 || chromaSyncedValue === null || chromaSyncedValue === undefined;
+            return hasCompanyId && isUnsynced;
+          });
+          
+          console.log(`📊 埋め込みなしのcompanyIdを持つエンティティ: ${unsyncedCompanyEntities.length}件`);
+          
+          if (unsyncedCompanyEntities.length > 0) {
+            console.log('📋 サンプル（最初の10件）:');
+            unsyncedCompanyEntities.slice(0, 10).forEach((doc, index) => {
+              const entityData = doc.data || doc;
+              console.log(`${index + 1}. ID: ${doc.id || entityData.id}, 名前: ${entityData.name}, companyId: ${entityData.companyId}, chromaSynced: ${entityData.chromaSynced}, createdAt: ${entityData.createdAt}`);
+            });
+            
+            // 削除確認
+            const shouldDelete = confirm(`${unsyncedCompanyEntities.length}件の埋め込みなしのcompanyIdを持つエンティティを削除しますか？`);
+            if (shouldDelete) {
+              console.log('🗑️ 削除を開始します...');
+              let successCount = 0;
+              let errorCount = 0;
+              
+              for (const doc of unsyncedCompanyEntities) {
+                const entityId = doc.id || doc.data?.id;
+                try {
+                  // エンティティを削除
+                  await callTauriCommand('doc_delete', {
+                    collectionName: 'entities',
+                    docId: entityId,
+                  });
+                  successCount++;
+                  if (successCount % 10 === 0) {
+                    console.log(`✅ 削除中: ${successCount}/${unsyncedCompanyEntities.length}件完了`);
+                  }
+                } catch (error: any) {
+                  errorCount++;
+                  console.error(`❌ 削除エラー: ${entityId}`, error);
+                }
+              }
+              
+              console.log(`✅ 削除完了: 成功=${successCount}件, エラー=${errorCount}件`);
+              alert(`削除完了: 成功=${successCount}件, エラー=${errorCount}件`);
+              
+              // データを再読み込み
+              const loadData = async () => {
+                const [allEntities, allRelations] = await Promise.all([
+                  getAllEntities(),
+                  getAllRelations(),
+                ]);
+                setEntities(allEntities);
+                setRelations(allRelations);
+              };
+              await loadData();
+            } else {
+              console.log('❌ 削除をキャンセルしました');
+            }
+          } else {
+            console.log('✅ 埋め込みなしのcompanyIdを持つエンティティは見つかりませんでした');
+          }
+          
+          return {
+            count: unsyncedCompanyEntities.length,
+            entities: unsyncedCompanyEntities.map(doc => ({
+              id: doc.id || doc.data?.id,
+              name: (doc.data || doc).name,
+              companyId: (doc.data || doc).companyId,
+              chromaSynced: (doc.data || doc).chromaSynced,
+              createdAt: (doc.data || doc).createdAt,
+            })),
+          };
+        } catch (error: any) {
+          console.error('❌ エラー:', error);
+          throw error;
+        }
+      };
+      
+      console.log('✅ 埋め込みなしのcompanyIdを持つエンティティ確認・削除関数が利用可能になりました:');
+      console.log('   - window.checkAndDeleteUnsyncedCompanyEntities()');
+    }
+  }, []);
 
   // 未生成件数を計算する関数（組織用）
   const updateMissingCountsOrganization = useCallback(async (selectedOrgId: string, selectedType: string) => {
@@ -328,19 +439,55 @@ function KnowledgeGraphPageContent() {
       if (selectedType === 'all' || selectedType === 'entities') {
         try {
           const { callTauriCommand } = await import('@/lib/localFirebase');
-          // chromaSynced = 0 のエンティティを一括取得（companyIdを持つものも含めるため、条件を指定せずに取得）
-          const missingEntityDocs = await callTauriCommand('query_get', {
+          // すべてのエンティティを取得してから、chromaSyncedが0またはnullのものをフィルタリング
+          const allEntityDocs = await callTauriCommand('query_get', {
             collectionName: 'entities',
-            conditions: {
-              chromaSynced: 0,
-            },
+            conditions: selectedOrgId !== 'all' ? { organizationId: selectedOrgId } : {},
           }) as Array<{ id: string; data: any }>;
+          
+          console.log(`📊 [未生成件数計算] 全エンティティ数: ${allEntityDocs.length}件`);
+          
+          // chromaSyncedが0またはnullのエンティティをフィルタリング
+          let sampleCount = 0;
+          const missingEntityDocs = allEntityDocs.filter(doc => {
+            const entityData = doc.data || doc;
+            const chromaSyncedValue = entityData.chromaSynced;
+            const isMissing = chromaSyncedValue === 0 || chromaSyncedValue === null || chromaSyncedValue === undefined;
+            if (isMissing && sampleCount < 3) {
+              console.log(`🔍 [未生成件数計算] 未生成エンティティのサンプル:`, {
+                id: doc.id || entityData.id,
+                name: entityData.name,
+                chromaSynced: chromaSyncedValue,
+                organizationId: entityData.organizationId,
+                companyId: entityData.companyId,
+              });
+              sampleCount++;
+            }
+            return isMissing;
+          });
+          
+          console.log(`📊 [未生成件数計算] chromaSynced=0またはnullのエンティティ: ${missingEntityDocs.length}件`);
+          console.log(`📊 [未生成件数計算] targetEntities数: ${targetEntities.length}件`);
           
           // 取得したIDがtargetEntitiesに含まれているか確認（targetEntitiesは既にcompanyIdを持つものを含む）
           const missingEntityIds = new Set(missingEntityDocs.map(doc => doc.id || doc.data?.id));
           entityCount = targetEntities.filter(entity => missingEntityIds.has(entity.id)).length;
+          
+          // targetEntitiesが空の場合は、データベースから取得した件数を直接使用
+          if (targetEntities.length === 0 && missingEntityDocs.length > 0) {
+            // organizationIdでフィルタリング（companyIdは除外）
+            const filteredMissing = missingEntityDocs.filter(doc => {
+              const entityData = doc.data || doc;
+              return entityData.organizationId && !entityData.companyId;
+            });
+            entityCount = filteredMissing.length;
+            console.log(`📊 [未生成件数計算] targetEntitiesが空のため、データベースから直接カウント: ${entityCount}件`);
+          }
+          
+          console.log(`📊 [未生成件数計算] 最終エンティティ未生成件数: ${entityCount}件`);
         } catch (error) {
           devWarn(`⚠️ [未生成件数計算] エンティティの一括取得エラー:`, error);
+          console.error('詳細エラー:', error);
           // エラーが発生した場合は0として扱う（計算をスキップ）
           entityCount = 0;
         }
@@ -350,19 +497,54 @@ function KnowledgeGraphPageContent() {
       if (selectedType === 'all' || selectedType === 'relations') {
         try {
           const { callTauriCommand } = await import('@/lib/localFirebase');
-          // chromaSynced = 0 のリレーションを一括取得（companyIdを持つものも含めるため、条件を指定せずに取得）
-          const missingRelationDocs = await callTauriCommand('query_get', {
+          // すべてのリレーションを取得してから、chromaSyncedが0またはnullのものをフィルタリング
+          const allRelationDocs = await callTauriCommand('query_get', {
             collectionName: 'relations',
-            conditions: {
-              chromaSynced: 0,
-            },
+            conditions: {},
           }) as Array<{ id: string; data: any }>;
+          
+          console.log(`📊 [未生成件数計算] 全リレーション数: ${allRelationDocs.length}件`);
+          
+          // chromaSyncedが0またはnullのリレーションをフィルタリング
+          let sampleCount = 0;
+          const missingRelationDocs = allRelationDocs.filter(doc => {
+            const relationData = doc.data || doc;
+            const chromaSyncedValue = relationData.chromaSynced;
+            const isMissing = chromaSyncedValue === 0 || chromaSyncedValue === null || chromaSyncedValue === undefined;
+            if (isMissing && sampleCount < 3) {
+              console.log(`🔍 [未生成件数計算] 未生成リレーションのサンプル:`, {
+                id: doc.id || relationData.id,
+                chromaSynced: chromaSyncedValue,
+                organizationId: relationData.organizationId,
+                companyId: relationData.companyId,
+              });
+              sampleCount++;
+            }
+            return isMissing;
+          });
+          
+          console.log(`📊 [未生成件数計算] chromaSynced=0またはnullのリレーション: ${missingRelationDocs.length}件`);
+          console.log(`📊 [未生成件数計算] targetRelations数: ${targetRelations.length}件`);
           
           // 取得したIDがtargetRelationsに含まれているか確認（targetRelationsは既にcompanyIdを持つものを含む）
           const missingRelationIds = new Set(missingRelationDocs.map(doc => doc.id || doc.data?.id));
           relationCount = targetRelations.filter(relation => missingRelationIds.has(relation.id)).length;
+          
+          // targetRelationsが空の場合は、データベースから取得した件数を直接使用（organizationIdでフィルタリング、companyIdは除外）
+          if (targetRelations.length === 0 && missingRelationDocs.length > 0) {
+            const filteredMissing = missingRelationDocs.filter(doc => {
+              const relationData = doc.data || doc;
+              // organizationIdがあり、companyIdがなく、topicIdがあるリレーション
+              return relationData.organizationId && !relationData.companyId && relationData.topicId;
+            });
+            relationCount = filteredMissing.length;
+            console.log(`📊 [未生成件数計算] targetRelationsが空のため、データベースから直接カウント: ${relationCount}件`);
+          }
+          
+          console.log(`📊 [未生成件数計算] 最終リレーション未生成件数: ${relationCount}件`);
         } catch (error) {
           devWarn(`⚠️ [未生成件数計算] リレーションの一括取得エラー:`, error);
+          console.error('詳細エラー:', error);
           // エラーが発生した場合は0として扱う（計算をスキップ）
           relationCount = 0;
         }
@@ -372,20 +554,76 @@ function KnowledgeGraphPageContent() {
       if (selectedType === 'all' || selectedType === 'topics') {
         try {
           const { callTauriCommand } = await import('@/lib/localFirebase');
-          // chromaSynced = 0 のトピックを一括取得
-          const missingTopicDocs = await callTauriCommand('query_get', {
+          // すべてのトピックを取得してから、chromaSyncedが0またはnullのものをフィルタリング
+          const allTopicDocs = await callTauriCommand('query_get', {
             collectionName: 'topics',
-            conditions: {
-              chromaSynced: 0,
-              ...(selectedOrgId !== 'all' ? { organizationId: selectedOrgId } : {}),
-            },
+            conditions: selectedOrgId !== 'all' ? { organizationId: selectedOrgId } : {},
           }) as Array<{ id: string; data: any }>;
           
-          // 取得したIDがtargetTopicsに含まれているか確認
-          const missingTopicIds = new Set(missingTopicDocs.map(doc => doc.id));
-          topicCount = targetTopics.filter(topic => missingTopicIds.has(topic.id)).length;
+          console.log(`📊 [未生成件数計算] 全トピック数: ${allTopicDocs.length}件`);
+          
+          // chromaSyncedが0またはnullのトピックをフィルタリング
+          let sampleCount = 0;
+          const missingTopicDocs = allTopicDocs.filter(doc => {
+            const topicData = doc.data || doc;
+            const chromaSyncedValue = topicData.chromaSynced;
+            const isMissing = chromaSyncedValue === 0 || chromaSyncedValue === null || chromaSyncedValue === undefined;
+            if (isMissing && sampleCount < 3) {
+              console.log(`🔍 [未生成件数計算] 未生成トピックのサンプル:`, {
+                id: doc.id || topicData.id,
+                chromaSynced: chromaSyncedValue,
+                organizationId: topicData.organizationId,
+              });
+              sampleCount++;
+            }
+            return isMissing;
+          });
+          
+          console.log(`📊 [未生成件数計算] chromaSynced=0またはnullのトピック: ${missingTopicDocs.length}件`);
+          console.log(`📊 [未生成件数計算] targetTopics数: ${targetTopics.length}件`);
+          
+          // SQLiteのtopicsテーブルのIDは`${meetingNoteId}-topic-${topicId}`形式
+          // TopicInfoのIDは`topicId`のみなので、missingTopicDocsのIDからtopicIdを抽出して比較
+          const missingTopicIdSet = new Set<string>();
+          for (const doc of missingTopicDocs) {
+            const topicId = doc.id || doc.data?.id;
+            if (topicId) {
+              // ID形式が`${meetingNoteId}-topic-${topicId}`の場合、topicIdを抽出
+              const idMatch = topicId.match(/^(.+)-topic-(.+)$/);
+              if (idMatch) {
+                const extractedTopicId = idMatch[2];
+                missingTopicIdSet.add(extractedTopicId);
+                missingTopicIdSet.add(topicId); // 完全なIDも追加（念のため）
+              } else {
+                // 既にtopicIdのみの形式の場合
+                missingTopicIdSet.add(topicId);
+              }
+            }
+          }
+          
+          console.log(`📊 [未生成件数計算] missingTopicIdSetサイズ: ${missingTopicIdSet.size}`);
+          
+          // targetTopicsのIDと比較
+          topicCount = targetTopics.filter(topic => missingTopicIdSet.has(topic.id)).length;
+          
+          // targetTopicsが空の場合は、データベースから取得した件数を直接使用
+          if (targetTopics.length === 0 && missingTopicDocs.length > 0) {
+            topicCount = missingTopicDocs.length;
+            console.log(`📊 [未生成件数計算] targetTopicsが空のため、データベースから直接カウント: ${topicCount}件`);
+          } else if (targetTopics.length > 0 && topicCount === 0 && missingTopicDocs.length > 0) {
+            // targetTopicsがあるが一致しない場合、データベースから取得した件数を直接使用（組織IDでフィルタリング）
+            const filteredMissing = missingTopicDocs.filter(doc => {
+              const topicData = doc.data || doc;
+              return topicData.organizationId && (!selectedOrgId || selectedOrgId === 'all' || topicData.organizationId === selectedOrgId);
+            });
+            topicCount = filteredMissing.length;
+            console.log(`📊 [未生成件数計算] IDが一致しないため、データベースから直接カウント: ${topicCount}件`);
+          }
+          
+          console.log(`📊 [未生成件数計算] 最終トピック未生成件数: ${topicCount}件`);
         } catch (error) {
           devWarn(`⚠️ [未生成件数計算] トピックの一括取得エラー:`, error);
+          console.error('詳細エラー:', error);
           // エラーが発生した場合は0として扱う（計算をスキップ）
           topicCount = 0;
         }
@@ -422,18 +660,23 @@ function KnowledgeGraphPageContent() {
       devLog(`📊 [事業会社未生成件数計算] entities総数=${entities.length}, companyIdあり=${entitiesWithCompanyId.length}`);
       
       // データベースから直接companyIdを持つエンティティをクエリ
-      // 効率化のため、chromaSynced=0のエンティティのみを取得してからcompanyIdでフィルタリング
+      // すべてのエンティティを取得してから、chromaSyncedが0またはnullかつcompanyIdを持つものをフィルタリング
       let targetEntitiesFromDb: Array<{ id: string; data: any }> = [];
       try {
-        // まず、chromaSynced=0のエンティティを取得（これが未生成のエンティティ）
-        const missingEntityDocs = await callTauriCommand('query_get', {
+        // すべてのエンティティを取得
+        const allEntityDocs = await callTauriCommand('query_get', {
           collectionName: 'entities',
-          conditions: {
-            chromaSynced: 0,
-          },
+          conditions: {},
         }) as Array<{ id: string; data: any }>;
         
-        devLog(`📊 [事業会社未生成件数計算] chromaSynced=0のエンティティ: ${missingEntityDocs.length}件`);
+        // chromaSyncedが0またはnullのエンティティをフィルタリング
+        const missingEntityDocs = allEntityDocs.filter(doc => {
+          const entityData = doc.data || doc;
+          const chromaSyncedValue = entityData.chromaSynced;
+          return chromaSyncedValue === 0 || chromaSyncedValue === null || chromaSyncedValue === undefined;
+        });
+        
+        devLog(`📊 [事業会社未生成件数計算] chromaSynced=0またはnullのエンティティ: ${missingEntityDocs.length}件`);
         
         // companyIdでフィルタリング
         if (selectedCompanyId === 'all') {
@@ -465,18 +708,23 @@ function KnowledgeGraphPageContent() {
       }
       
       // データベースから直接companyIdを持つリレーションを取得
-      // 効率化のため、chromaSynced=0のリレーションのみを取得してからcompanyIdでフィルタリング
+      // すべてのリレーションを取得してから、chromaSyncedが0またはnullかつcompanyIdを持つものをフィルタリング
       let targetRelationsFromDb: Array<{ id: string; data: any }> = [];
       try {
-        // まず、chromaSynced=0のリレーションを取得（これが未生成のリレーション）
-        const missingRelationDocs = await callTauriCommand('query_get', {
+        // すべてのリレーションを取得
+        const allRelationDocs = await callTauriCommand('query_get', {
           collectionName: 'relations',
-          conditions: {
-            chromaSynced: 0,
-          },
+          conditions: {},
         }) as Array<{ id: string; data: any }>;
         
-        devLog(`📊 [事業会社未生成件数計算] chromaSynced=0のリレーション: ${missingRelationDocs.length}件`);
+        // chromaSyncedが0またはnullのリレーションをフィルタリング
+        const missingRelationDocs = allRelationDocs.filter(doc => {
+          const relationData = doc.data || doc;
+          const chromaSyncedValue = relationData.chromaSynced;
+          return chromaSyncedValue === 0 || chromaSyncedValue === null || chromaSyncedValue === undefined;
+        });
+        
+        devLog(`📊 [事業会社未生成件数計算] chromaSynced=0またはnullのリレーション: ${missingRelationDocs.length}件`);
         
         // companyIdでフィルタリング
         if (selectedCompanyId === 'all') {
@@ -2597,7 +2845,578 @@ function KnowledgeGraphPageContent() {
                       )}
                     </div>
                   )}
+                  
+                  {/* データ整合性クリーンアップ */}
+                  <div style={{
+                    padding: '12px',
+                    backgroundColor: '#FEF3C7',
+                    borderRadius: '6px',
+                    border: '1px solid #FCD34D',
+                    marginTop: '12px',
+                    pointerEvents: 'auto',
+                  }}>
+                    <div style={{ fontSize: '12px', color: '#92400E', marginBottom: '8px', fontWeight: 500 }}>
+                      🧹 データ整合性クリーンアップ
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#78350F', marginBottom: '8px' }}>
+                      注力施策のtopicIds配列から、存在しないトピックIDを自動的に削除します。
+                      <br />
+                      （コンソールに「トピックが見つかりませんでした」という警告が表示される場合に実行してください）
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        console.log('🔘 [データ整合性クリーンアップ] ボタンがクリックされました');
+                        setShowCleanupConfirm(true);
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        backgroundColor: '#F59E0B',
+                        color: '#FFFFFF',
+                        border: 'none',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        cursor: 'pointer',
+                        fontWeight: 500,
+                        marginRight: '8px',
+                        position: 'relative',
+                        zIndex: 10,
+                        pointerEvents: 'auto',
+                      }}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        console.log('🔘 [データ整合性クリーンアップ] ボタンがmousedownされました');
+                      }}
+                    >
+                      クリーンアップを実行
+                    </button>
+                  </div>
+                  
+                  {/* 同期状態修復 */}
+                  <div style={{
+                    padding: '12px',
+                    backgroundColor: '#DBEAFE',
+                    borderRadius: '6px',
+                    border: '1px solid #60A5FA',
+                    marginTop: '12px',
+                    pointerEvents: 'auto',
+                  }}>
+                    <div style={{ fontSize: '12px', color: '#1E40AF', marginBottom: '8px', fontWeight: 500 }}>
+                      🔧 同期状態修復
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#1E3A8A', marginBottom: '12px' }}>
+                      SQLiteのchromaSyncedフラグとChromaDBの実際のデータを比較して、不整合を自動修復します。
+                      <br />
+                      （「スキップ: 24件」と表示される場合に実行してください）
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log('🔘 [同期状態修復] エンティティ修復ボタンがクリックされました');
+                          setShowRepairEntityConfirm(true);
+                        }}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: '#3B82F6',
+                          color: '#FFFFFF',
+                          border: 'none',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                          cursor: 'pointer',
+                          fontWeight: 500,
+                          position: 'relative',
+                          zIndex: 10,
+                          pointerEvents: 'auto',
+                        }}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log('🔘 [同期状態修復] エンティティ修復ボタンがmousedownされました');
+                        }}
+                      >
+                        エンティティ修復
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log('🔘 [同期状態修復] リレーション修復ボタンがクリックされました');
+                          setShowRepairRelationConfirm(true);
+                        }}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: '#3B82F6',
+                          color: '#FFFFFF',
+                          border: 'none',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                          cursor: 'pointer',
+                          fontWeight: 500,
+                          position: 'relative',
+                          zIndex: 10,
+                          pointerEvents: 'auto',
+                        }}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log('🔘 [同期状態修復] リレーション修復ボタンがmousedownされました');
+                        }}
+                      >
+                        リレーション修復
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log('🔘 [同期状態修復] トピック修復ボタンがクリックされました');
+                          setShowRepairTopicConfirm(true);
+                        }}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: '#3B82F6',
+                          color: '#FFFFFF',
+                          border: 'none',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                          cursor: 'pointer',
+                          fontWeight: 500,
+                          position: 'relative',
+                          zIndex: 10,
+                          pointerEvents: 'auto',
+                        }}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log('🔘 [同期状態修復] トピック修復ボタンがmousedownされました');
+                        }}
+                      >
+                        トピック修復
+                      </button>
+                    </div>
+                  </div>
                 </div>
+                
+                {/* データ整合性クリーンアップ確認ダイアログ */}
+                {showCleanupConfirm && (
+                  <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 2000,
+                  }}
+                  onClick={() => setShowCleanupConfirm(false)}
+                  >
+                    <div style={{
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: '12px',
+                      padding: '24px',
+                      maxWidth: '500px',
+                      width: '90%',
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    >
+                      <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '12px' }}>
+                        データ整合性クリーンアップ
+                      </h3>
+                      <p style={{ marginBottom: '20px', color: '#6B7280' }}>
+                        データ整合性クリーンアップを実行しますか？
+                        <br /><br />
+                        注力施策のtopicIds配列から、存在しないトピックIDが削除されます。
+                      </p>
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        <button
+                          type="button"
+                          onClick={() => setShowCleanupConfirm(false)}
+                          style={{
+                            padding: '8px 16px',
+                            backgroundColor: '#F3F4F6',
+                            color: '#6B7280',
+                            border: 'none',
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          キャンセル
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setShowCleanupConfirm(false);
+                            console.log('🔘 [データ整合性クリーンアップ] 確認ダイアログでOKがクリックされました');
+                            
+                            try {
+                              const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
+                              const selectedOrgId = regenerationMode === 'organization' && orgSelect?.value && orgSelect.value !== 'all' ? orgSelect.value : undefined;
+                              
+                              console.log('🧹 [データ整合性クリーンアップ] 開始...', { organizationId: selectedOrgId, regenerationMode });
+                              
+                              // cleanupMissingTopicIds関数がインポートされているか確認
+                              if (typeof cleanupMissingTopicIds !== 'function') {
+                                throw new Error('cleanupMissingTopicIds関数がインポートされていません');
+                              }
+                              
+                              const result = await cleanupMissingTopicIds(selectedOrgId);
+                              
+                              alert(`✅ データ整合性クリーンアップが完了しました。\n\nクリーンアップした注力施策: ${result.cleanedInitiatives}件\n削除した無効なトピックID: ${result.removedTopicIds}件\nエラー: ${result.errors.length}件`);
+                              
+                              console.log('✅ [データ整合性クリーンアップ] 完了:', result);
+                              
+                              // 未生成件数を再計算
+                              if (regenerationType === 'missing') {
+                                if (regenerationMode === 'organization') {
+                                  const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement | null;
+                                  await updateMissingCountsOrganization(selectedOrgId || 'all', typeSelect?.value || 'all');
+                                } else {
+                                  const companySelect = document.getElementById('regeneration-company-select') as HTMLSelectElement | null;
+                                  const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement | null;
+                                  await updateMissingCountsCompany(companySelect?.value || 'all', typeSelect?.value || 'all');
+                                }
+                              }
+                            } catch (error: any) {
+                              console.error('❌ [データ整合性クリーンアップ] エラー:', error);
+                              console.error('❌ [データ整合性クリーンアップ] エラースタック:', error?.stack);
+                              alert(`❌ データ整合性クリーンアップに失敗しました。\n\nエラー: ${error?.message || String(error)}\n\n詳細はコンソールを確認してください。`);
+                            }
+                          }}
+                          style={{
+                            padding: '8px 16px',
+                            backgroundColor: '#F59E0B',
+                            color: '#FFFFFF',
+                            border: 'none',
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                            cursor: 'pointer',
+                            fontWeight: 500,
+                          }}
+                        >
+                          実行
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* エンティティ同期状態修復確認ダイアログ */}
+                {showRepairEntityConfirm && (
+                  <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 2000,
+                  }}
+                  onClick={() => setShowRepairEntityConfirm(false)}
+                  >
+                    <div style={{
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: '12px',
+                      padding: '24px',
+                      maxWidth: '500px',
+                      width: '90%',
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    >
+                      <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '12px' }}>
+                        エンティティ同期状態修復
+                      </h3>
+                      <p style={{ marginBottom: '20px', color: '#6B7280' }}>
+                        エンティティの同期状態修復を実行しますか？
+                        <br /><br />
+                        SQLiteのchromaSynced=1だが、ChromaDBに実際の埋め込みが存在しない場合、フラグをリセットします。
+                      </p>
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        <button
+                          type="button"
+                          onClick={() => setShowRepairEntityConfirm(false)}
+                          style={{
+                            padding: '8px 16px',
+                            backgroundColor: '#F3F4F6',
+                            color: '#6B7280',
+                            border: 'none',
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          キャンセル
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setShowRepairEntityConfirm(false);
+                            console.log('🔘 [同期状態修復] エンティティ修復確認ダイアログでOKがクリックされました');
+                            
+                            try {
+                              const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
+                              const selectedOrgId = regenerationMode === 'organization' && orgSelect?.value && orgSelect.value !== 'all' ? orgSelect.value : undefined;
+                              
+                              console.log('🔧 [同期状態修復] エンティティ修復開始...', { organizationId: selectedOrgId, regenerationMode });
+                              
+                              const result = await repairEntitySyncStatus(selectedOrgId);
+                              
+                              alert(`✅ エンティティ同期状態修復が完了しました。\n\n修復したエンティティ: ${result.repaired}件\nエラー: ${result.errors.length}件`);
+                              
+                              console.log('✅ [同期状態修復] エンティティ修復完了:', result);
+                              
+                              // 未生成件数を再計算
+                              if (regenerationType === 'missing') {
+                                if (regenerationMode === 'organization') {
+                                  const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement | null;
+                                  await updateMissingCountsOrganization(selectedOrgId || 'all', typeSelect?.value || 'all');
+                                } else {
+                                  const companySelect = document.getElementById('regeneration-company-select') as HTMLSelectElement | null;
+                                  const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement | null;
+                                  await updateMissingCountsCompany(companySelect?.value || 'all', typeSelect?.value || 'all');
+                                }
+                              }
+                            } catch (error: any) {
+                              console.error('❌ [同期状態修復] エンティティ修復エラー:', error);
+                              console.error('❌ [同期状態修復] エンティティ修復エラースタック:', error?.stack);
+                              alert(`❌ エンティティ同期状態修復に失敗しました。\n\nエラー: ${error?.message || String(error)}\n\n詳細はコンソールを確認してください。`);
+                            }
+                          }}
+                          style={{
+                            padding: '8px 16px',
+                            backgroundColor: '#3B82F6',
+                            color: '#FFFFFF',
+                            border: 'none',
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                            cursor: 'pointer',
+                            fontWeight: 500,
+                          }}
+                        >
+                          実行
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* リレーション同期状態修復確認ダイアログ */}
+                {showRepairRelationConfirm && (
+                  <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 2000,
+                  }}
+                  onClick={() => setShowRepairRelationConfirm(false)}
+                  >
+                    <div style={{
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: '12px',
+                      padding: '24px',
+                      maxWidth: '500px',
+                      width: '90%',
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    >
+                      <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '12px' }}>
+                        リレーション同期状態修復
+                      </h3>
+                      <p style={{ marginBottom: '20px', color: '#6B7280' }}>
+                        リレーションの同期状態修復を実行しますか？
+                        <br /><br />
+                        SQLiteのchromaSynced=1だが、ChromaDBに実際の埋め込みが存在しない場合、フラグをリセットします。
+                      </p>
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        <button
+                          type="button"
+                          onClick={() => setShowRepairRelationConfirm(false)}
+                          style={{
+                            padding: '8px 16px',
+                            backgroundColor: '#F3F4F6',
+                            color: '#6B7280',
+                            border: 'none',
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          キャンセル
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setShowRepairRelationConfirm(false);
+                            console.log('🔘 [同期状態修復] リレーション修復確認ダイアログでOKがクリックされました');
+                            
+                            try {
+                              const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
+                              const selectedOrgId = regenerationMode === 'organization' && orgSelect?.value && orgSelect.value !== 'all' ? orgSelect.value : undefined;
+                              
+                              console.log('🔧 [同期状態修復] リレーション修復開始...', { organizationId: selectedOrgId, regenerationMode });
+                              
+                              const result = await repairRelationSyncStatus(selectedOrgId);
+                              
+                              alert(`✅ リレーション同期状態修復が完了しました。\n\n修復したリレーション: ${result.repaired}件\nエラー: ${result.errors.length}件`);
+                              
+                              console.log('✅ [同期状態修復] リレーション修復完了:', result);
+                              
+                              // 未生成件数を再計算
+                              if (regenerationType === 'missing') {
+                                if (regenerationMode === 'organization') {
+                                  const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement | null;
+                                  await updateMissingCountsOrganization(selectedOrgId || 'all', typeSelect?.value || 'all');
+                                } else {
+                                  const companySelect = document.getElementById('regeneration-company-select') as HTMLSelectElement | null;
+                                  const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement | null;
+                                  await updateMissingCountsCompany(companySelect?.value || 'all', typeSelect?.value || 'all');
+                                }
+                              }
+                            } catch (error: any) {
+                              console.error('❌ [同期状態修復] リレーション修復エラー:', error);
+                              console.error('❌ [同期状態修復] リレーション修復エラースタック:', error?.stack);
+                              alert(`❌ リレーション同期状態修復に失敗しました。\n\nエラー: ${error?.message || String(error)}\n\n詳細はコンソールを確認してください。`);
+                            }
+                          }}
+                          style={{
+                            padding: '8px 16px',
+                            backgroundColor: '#3B82F6',
+                            color: '#FFFFFF',
+                            border: 'none',
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                            cursor: 'pointer',
+                            fontWeight: 500,
+                          }}
+                        >
+                          実行
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* トピック同期状態修復確認ダイアログ */}
+                {showRepairTopicConfirm && (
+                  <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 2000,
+                  }}
+                  onClick={() => setShowRepairTopicConfirm(false)}
+                  >
+                    <div style={{
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: '12px',
+                      padding: '24px',
+                      maxWidth: '500px',
+                      width: '90%',
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    >
+                      <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '12px' }}>
+                        トピック同期状態修復
+                      </h3>
+                      <p style={{ marginBottom: '20px', color: '#6B7280' }}>
+                        トピックの同期状態修復を実行しますか？
+                        <br /><br />
+                        SQLiteのchromaSynced=1だが、ChromaDBに実際の埋め込みが存在しない場合、フラグをリセットします。
+                      </p>
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        <button
+                          type="button"
+                          onClick={() => setShowRepairTopicConfirm(false)}
+                          style={{
+                            padding: '8px 16px',
+                            backgroundColor: '#F3F4F6',
+                            color: '#6B7280',
+                            border: 'none',
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          キャンセル
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setShowRepairTopicConfirm(false);
+                            console.log('🔘 [同期状態修復] トピック修復確認ダイアログでOKがクリックされました');
+                            
+                            try {
+                              const orgSelect = document.getElementById('regeneration-org-select') as HTMLSelectElement;
+                              const selectedOrgId = regenerationMode === 'organization' && orgSelect?.value && orgSelect.value !== 'all' ? orgSelect.value : undefined;
+                              
+                              console.log('🔧 [同期状態修復] トピック修復開始...', { organizationId: selectedOrgId, regenerationMode });
+                              
+                              const result = await repairTopicSyncStatus(selectedOrgId);
+                              
+                              alert(`✅ トピック同期状態修復が完了しました。\n\n修復したトピック: ${result.repaired}件\nエラー: ${result.errors.length}件`);
+                              
+                              console.log('✅ [同期状態修復] トピック修復完了:', result);
+                              
+                              // 未生成件数を再計算
+                              if (regenerationType === 'missing') {
+                                if (regenerationMode === 'organization') {
+                                  const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement | null;
+                                  await updateMissingCountsOrganization(selectedOrgId || 'all', typeSelect?.value || 'all');
+                                } else {
+                                  const companySelect = document.getElementById('regeneration-company-select') as HTMLSelectElement | null;
+                                  const typeSelect = document.getElementById('regeneration-type-select') as HTMLSelectElement | null;
+                                  await updateMissingCountsCompany(companySelect?.value || 'all', typeSelect?.value || 'all');
+                                }
+                              }
+                            } catch (error: any) {
+                              console.error('❌ [同期状態修復] トピック修復エラー:', error);
+                              console.error('❌ [同期状態修復] トピック修復エラースタック:', error?.stack);
+                              alert(`❌ トピック同期状態修復に失敗しました。\n\nエラー: ${error?.message || String(error)}\n\n詳細はコンソールを確認してください。`);
+                            }
+                          }}
+                          style={{
+                            padding: '8px 16px',
+                            backgroundColor: '#3B82F6',
+                            color: '#FFFFFF',
+                            border: 'none',
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                            cursor: 'pointer',
+                            fontWeight: 500,
+                          }}
+                        >
+                          実行
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
                 <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                   <button
                     onClick={() => setShowRegenerationModal(false)}
@@ -2705,13 +3524,18 @@ function KnowledgeGraphPageContent() {
                           // エンティティのフィルタリング（query_getで一括取得）
                           if (selectedType === 'all' || selectedType === 'entities') {
                             try {
-                              // chromaSynced = 0 のエンティティを一括取得（companyIdを持つものも含めるため、条件を指定せずに取得）
-                              const missingEntityDocs = await callTauriCommand('query_get', {
+                              // すべてのエンティティを取得してから、chromaSyncedが0またはnullのものをフィルタリング
+                              const allEntityDocs = await callTauriCommand('query_get', {
                                 collectionName: 'entities',
-                                conditions: {
-                                  chromaSynced: 0,
-                                },
+                                conditions: {},
                               }) as Array<{ id: string; data: any }>;
+                              
+                              // chromaSyncedが0またはnullのエンティティをフィルタリング
+                              const missingEntityDocs = allEntityDocs.filter(doc => {
+                                const entityData = doc.data || doc;
+                                const chromaSyncedValue = entityData.chromaSynced;
+                                return chromaSyncedValue === 0 || chromaSyncedValue === null || chromaSyncedValue === undefined;
+                              });
                               
                               // query_getの結果は[{id: string, data: any}]の形式
                               const missingEntityIds = new Set(missingEntityDocs.map(doc => doc.id || doc.data?.id));
@@ -2752,13 +3576,18 @@ function KnowledgeGraphPageContent() {
                           // リレーションのフィルタリング（query_getで一括取得）
                           if (selectedType === 'all' || selectedType === 'relations') {
                             try {
-                              // chromaSynced = 0 のリレーションを一括取得（companyIdを持つものも含めるため、条件を指定せずに取得）
-                              const missingRelationDocs = await callTauriCommand('query_get', {
+                              // すべてのリレーションを取得してから、chromaSyncedが0またはnullのものをフィルタリング
+                              const allRelationDocs = await callTauriCommand('query_get', {
                                 collectionName: 'relations',
-                                conditions: {
-                                  chromaSynced: 0,
-                                },
+                                conditions: {},
                               }) as Array<{ id: string; data: any }>;
+                              
+                              // chromaSyncedが0またはnullのリレーションをフィルタリング
+                              const missingRelationDocs = allRelationDocs.filter(doc => {
+                                const relationData = doc.data || doc;
+                                const chromaSyncedValue = relationData.chromaSynced;
+                                return chromaSyncedValue === 0 || chromaSyncedValue === null || chromaSyncedValue === undefined;
+                              });
                               
                               // query_getの結果は[{id: string, data: any}]の形式
                               const missingRelationIds = new Set(missingRelationDocs.map(doc => doc.id || doc.data?.id));
@@ -2799,18 +3628,40 @@ function KnowledgeGraphPageContent() {
                           // トピックのフィルタリング（組織用のみ、query_getで一括取得）
                           if (regenerationMode === 'organization' && (selectedType === 'all' || selectedType === 'topics')) {
                             try {
-                              // chromaSynced = 0 のトピックを一括取得
-                              const missingTopicDocs = await callTauriCommand('query_get', {
+                              // すべてのトピックを取得してから、chromaSyncedが0またはnullのものをフィルタリング
+                              const allTopicDocs = await callTauriCommand('query_get', {
                                 collectionName: 'topics',
-                                conditions: {
-                                  chromaSynced: 0,
-                                  ...(selectedId !== 'all' ? { organizationId: selectedId } : {}),
-                                },
+                                conditions: selectedId !== 'all' ? { organizationId: selectedId } : {},
                               }) as Array<{ id: string; data: any }>;
                               
-                              // query_getの結果は[{id: string, data: any}]の形式
-                              const missingTopicIds = new Set(missingTopicDocs.map(doc => doc.id || doc.data?.id));
-                              const missingTopics = targetTopics.filter(topic => missingTopicIds.has(topic.id));
+                              // chromaSyncedが0またはnullのトピックをフィルタリング
+                              const missingTopicDocs = allTopicDocs.filter(doc => {
+                                const topicData = doc.data || doc;
+                                const chromaSyncedValue = topicData.chromaSynced;
+                                return chromaSyncedValue === 0 || chromaSyncedValue === null || chromaSyncedValue === undefined;
+                              });
+                              
+                              // SQLiteのtopicsテーブルのIDは`${meetingNoteId}-topic-${topicId}`形式
+                              // TopicInfoのIDは`topicId`のみなので、missingTopicDocsのIDからtopicIdを抽出して比較
+                              const missingTopicIdSet = new Set<string>();
+                              for (const doc of missingTopicDocs) {
+                                const topicId = doc.id || doc.data?.id;
+                                if (topicId) {
+                                  // ID形式が`${meetingNoteId}-topic-${topicId}`の場合、topicIdを抽出
+                                  const idMatch = topicId.match(/^(.+)-topic-(.+)$/);
+                                  if (idMatch) {
+                                    const extractedTopicId = idMatch[2];
+                                    missingTopicIdSet.add(extractedTopicId);
+                                    missingTopicIdSet.add(topicId); // 完全なIDも追加（念のため）
+                                  } else {
+                                    // 既にtopicIdのみの形式の場合
+                                    missingTopicIdSet.add(topicId);
+                                  }
+                                }
+                              }
+                              
+                              // targetTopicsのIDと比較
+                              const missingTopics = targetTopics.filter(topic => missingTopicIdSet.has(topic.id));
                               
                               // ループ内のログを簡略化（パフォーマンス最適化）
                               devLog(`📊 [埋め込み再生成] トピックフィルタリング後: ${missingTopics.length}件`);
@@ -2822,14 +3673,17 @@ function KnowledgeGraphPageContent() {
                               for (const topic of targetTopics) {
                                 if (!topic.meetingNoteId || !topic.organizationId) continue;
                                 try {
+                                  // SQLiteのtopicsテーブルのIDは`${meetingNoteId}-topic-${topicId}`形式
+                                  const topicEmbeddingId = `${topic.meetingNoteId}-topic-${topic.id}`;
                                   const topicDoc = await callTauriCommand('doc_get', {
                                     collectionName: 'topics',
-                                    docId: topic.id,
+                                    docId: topicEmbeddingId,
                                   }) as any;
                                   
                                   let chromaSynced = false;
                                   if (topicDoc?.exists && topicDoc?.data) {
-                                    chromaSynced = topicDoc.data.chromaSynced === 1 || topicDoc.data.chromaSynced === true;
+                                    const chromaSyncedValue = topicDoc.data.chromaSynced;
+                                    chromaSynced = chromaSyncedValue === 1 || chromaSyncedValue === true || chromaSyncedValue === '1';
                                   }
                                   
                                   if (!chromaSynced) {

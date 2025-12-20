@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 
 /**
  * 埋め込み再生成の進捗情報
@@ -42,7 +42,7 @@ export function EmbeddingRegenerationProvider({ children }: { children: ReactNod
   });
   const [shouldOpenModal, setShouldOpenModal] = useState(false);
 
-  const startRegeneration = () => {
+  const startRegeneration = useCallback(() => {
     setIsRegenerating(true);
     setProgress({
       current: 0,
@@ -51,9 +51,9 @@ export function EmbeddingRegenerationProvider({ children }: { children: ReactNod
       logs: [],
       stats: { success: 0, skipped: 0, errors: 0 },
     });
-  };
+  }, []);
 
-  const updateProgress = (updates: Partial<EmbeddingRegenerationProgress>) => {
+  const updateProgress = useCallback((updates: Partial<EmbeddingRegenerationProgress>) => {
     setProgress((prev) => ({
       ...prev,
       ...updates,
@@ -61,23 +61,35 @@ export function EmbeddingRegenerationProvider({ children }: { children: ReactNod
       logs: updates.logs !== undefined ? updates.logs : prev.logs,
       stats: updates.stats !== undefined ? updates.stats : prev.stats,
     }));
-  };
+  }, []);
 
-  const completeRegeneration = () => {
+  const completeRegeneration = useCallback(() => {
     setIsRegenerating(false);
-    setProgress((prev) => ({
-      ...prev,
-      status: 'completed',
-    }));
-  };
+    setProgress((prev) => {
+      // 既にcompletedの場合は更新しない（無限ループを防ぐ）
+      if (prev.status === 'completed') {
+        return prev;
+      }
+      return {
+        ...prev,
+        status: 'completed',
+      };
+    });
+  }, []);
 
-  const cancelRegeneration = () => {
+  const cancelRegeneration = useCallback(() => {
     setIsRegenerating(false);
-    setProgress((prev) => ({
-      ...prev,
-      status: 'cancelled',
-    }));
-  };
+    setProgress((prev) => {
+      // 既にcancelledの場合は更新しない（無限ループを防ぐ）
+      if (prev.status === 'cancelled') {
+        return prev;
+      }
+      return {
+        ...prev,
+        status: 'cancelled',
+      };
+    });
+  }, []);
 
   const openModal = () => {
     setShouldOpenModal(true);

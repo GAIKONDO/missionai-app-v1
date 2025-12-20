@@ -392,6 +392,7 @@ function convertToOrgNodeData(dbOrg: any): OrgNodeData {
     level: org.level !== undefined ? org.level : (org.levelName ? parseInt(org.levelName.replace('階層レベル ', '')) || 0 : 0),
     levelName: org.levelName || undefined,
     position: org.position !== undefined ? org.position : 0,
+    type: org.org_type || org.type || 'organization', // type情報を追加
     members: sortedMembers.length > 0 ? sortedMembers : undefined,
     children: children.length > 0 ? children : undefined,
   };
@@ -407,11 +408,12 @@ export async function createOrg(
   description: string | null,
   level: number,
   levelName: string,
-  position: number
+  position: number,
+  orgType?: string
 ): Promise<any> {
   try {
     // Rust API経由で作成
-    return await apiPost<any>('/api/organizations', {
+    const payload: any = {
       parent_id: parentId,
       name,
       title: title || null,
@@ -419,7 +421,11 @@ export async function createOrg(
       level,
       level_name: levelName,
       position,
-    });
+    };
+    if (orgType) {
+      payload.type = orgType;
+    }
+    return await apiPost<any>('/api/organizations', payload);
   } catch (error) {
     // フォールバック: Tauriコマンド経由
     console.warn('Rust API経由の作成に失敗、Tauriコマンドにフォールバック:', error);
@@ -431,6 +437,7 @@ export async function createOrg(
       level,
       levelName,
       position,
+      orgType: orgType || null,
     });
   }
 }

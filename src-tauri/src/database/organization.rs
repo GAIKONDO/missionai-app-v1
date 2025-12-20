@@ -66,8 +66,16 @@ pub struct Organization {
     pub level: i32,
     pub level_name: String, // "部門", "部", "課", "チーム" など
     pub position: i32,
+    #[serde(default = "default_org_type")]
+    pub org_type: String, // "organization" または "company"
+    #[serde(rename = "createdAt")]
     pub created_at: String,
+    #[serde(rename = "updatedAt")]
     pub updated_at: String,
+}
+
+fn default_org_type() -> String {
+    "organization".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +130,7 @@ pub fn create_organization(
     level: i32,
     level_name: String,
     position: i32,
+    org_type: Option<String>,
 ) -> SqlResult<Organization> {
     let db = get_db().ok_or_else(|| {
         rusqlite::Error::SqliteFailure(
@@ -134,13 +143,14 @@ pub fn create_organization(
     let id = Uuid::new_v4().to_string();
     let now = get_timestamp();
     let now_clone = now.clone();
+    let org_type = org_type.unwrap_or_else(|| "organization".to_string());
 
     // トランザクションを開始（データベースロックを最小化）
     let tx = conn.unchecked_transaction()?;
     
     tx.execute(
-        "INSERT INTO organizations (id, parentId, name, title, description, level, levelName, position, createdAt, updatedAt)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO organizations (id, parentId, name, title, description, level, levelName, position, type, createdAt, updatedAt)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             id.clone(),
             parent_id.clone(),
@@ -149,6 +159,8 @@ pub fn create_organization(
             description.clone(),
             level,
             level_name.clone(),
+            position,
+            org_type.clone(),
             now,
             now_clone
         ],
@@ -165,6 +177,7 @@ pub fn create_organization(
         level,
         level_name,
         position,
+        org_type,
         created_at: get_timestamp(),
         updated_at: get_timestamp(),
     })
@@ -266,7 +279,7 @@ pub fn get_organization_by_id(id: &str) -> SqlResult<Organization> {
     let conn = db.get_connection()?;
 
     conn.query_row(
-        "SELECT id, parentId, name, title, description, level, levelName, position, createdAt, updatedAt
+        "SELECT id, parentId, name, title, description, level, levelName, position, type, createdAt, updatedAt
          FROM organizations WHERE id = ?1",
         params![id],
         |row| {
@@ -279,8 +292,9 @@ pub fn get_organization_by_id(id: &str) -> SqlResult<Organization> {
                 level: row.get(5)?,
                 level_name: row.get(6)?,
                 position: row.get(7)?,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
+                org_type: row.get(8).unwrap_or_else(|_| "organization".to_string()),
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
             })
         },
     )
@@ -299,7 +313,7 @@ pub fn search_organizations_by_name(name_pattern: &str) -> SqlResult<Vec<Organiz
     let pattern = format!("%{}%", name_pattern);
 
     let mut stmt = conn.prepare(
-        "SELECT id, parentId, name, title, description, level, levelName, position, createdAt, updatedAt
+        "SELECT id, parentId, name, title, description, level, levelName, position, type, createdAt, updatedAt
          FROM organizations WHERE name LIKE ?1 ORDER BY name ASC",
     )?;
     let rows = stmt.query_map(params![pattern], |row| {
@@ -312,8 +326,9 @@ pub fn search_organizations_by_name(name_pattern: &str) -> SqlResult<Vec<Organiz
             level: row.get(5)?,
             level_name: row.get(6)?,
             position: row.get(7)?,
-            created_at: row.get(8)?,
-            updated_at: row.get(9)?,
+            org_type: row.get(8).unwrap_or_else(|_| "organization".to_string()),
+            created_at: row.get(9)?,
+            updated_at: row.get(10)?,
         })
     })?;
     let orgs: Vec<Organization> = rows.collect::<Result<Vec<_>, _>>()?;
@@ -335,7 +350,7 @@ pub fn get_organizations_by_parent_id(parent_id: Option<&str>) -> SqlResult<Vec<
     let orgs: Vec<Organization> = if let Some(parent_id) = parent_id {
         println!("🔍 [get_organizations_by_parent_id] 親IDで検索: parentId={}", parent_id);
         let mut stmt = conn.prepare(
-            "SELECT id, parentId, name, title, description, level, levelName, position, createdAt, updatedAt
+            "SELECT id, parentId, name, title, description, level, levelName, position, type, createdAt, updatedAt
              FROM organizations WHERE parentId = ?1 ORDER BY position ASC, name ASC",
         )?;
         let rows = stmt.query_map(params![parent_id], |row| {
@@ -348,8 +363,9 @@ pub fn get_organizations_by_parent_id(parent_id: Option<&str>) -> SqlResult<Vec<
                 level: row.get(5)?,
                 level_name: row.get(6)?,
                 position: row.get(7)?,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
+                org_type: row.get(8).unwrap_or_else(|_| "organization".to_string()),
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
             })
         })?;
         let result: Vec<Organization> = rows.collect::<Result<Vec<_>, _>>()?;
@@ -358,7 +374,7 @@ pub fn get_organizations_by_parent_id(parent_id: Option<&str>) -> SqlResult<Vec<
     } else {
         println!("🔍 [get_organizations_by_parent_id] parentId IS NULLで検索");
         let mut stmt = conn.prepare(
-            "SELECT id, parentId, name, title, description, level, levelName, position, createdAt, updatedAt
+            "SELECT id, parentId, name, title, description, level, levelName, position, type, createdAt, updatedAt
              FROM organizations WHERE parentId IS NULL ORDER BY position ASC, name ASC",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -371,8 +387,9 @@ pub fn get_organizations_by_parent_id(parent_id: Option<&str>) -> SqlResult<Vec<
                 level: row.get(5)?,
                 level_name: row.get(6)?,
                 position: row.get(7)?,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
+                org_type: row.get(8).unwrap_or_else(|_| "organization".to_string()),
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
             })
         })?;
         let result: Vec<Organization> = rows.collect::<Result<Vec<_>, _>>()?;
@@ -886,7 +903,7 @@ pub fn get_all_organizations() -> SqlResult<Vec<Organization>> {
     let conn = db.get_connection()?;
 
     let mut stmt = conn.prepare(
-        "SELECT id, parentId, name, title, description, level, levelName, position, createdAt, updatedAt
+        "SELECT id, parentId, name, title, description, level, levelName, position, type, createdAt, updatedAt
          FROM organizations ORDER BY level ASC, position ASC, name ASC",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -899,8 +916,9 @@ pub fn get_all_organizations() -> SqlResult<Vec<Organization>> {
             level: row.get(5)?,
             level_name: row.get(6)?,
             position: row.get(7)?,
-            created_at: row.get(8)?,
-            updated_at: row.get(9)?,
+            org_type: row.get(8).unwrap_or_else(|_| "organization".to_string()),
+            created_at: row.get(9)?,
+            updated_at: row.get(10)?,
         })
     })?;
     let orgs: Vec<Organization> = rows.collect::<Result<Vec<_>, _>>()?;
@@ -1846,6 +1864,7 @@ fn build_org_tree_from_master_recursive(master: &OrganizationMaster) -> SqlResul
             _ => "その他",
         }.to_string(),
         position: 0,
+        org_type: "organization".to_string(),
         created_at: master.created_at.clone(),
         updated_at: master.updated_at.clone(),
     };

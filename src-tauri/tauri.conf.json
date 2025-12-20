@@ -17,11 +17,12 @@
         "height": 900,
         "resizable": true,
         "fullscreen": false,
-        "devtools": true
+        "devtools": true,
+        "url": "http://localhost:3010"
       }
     ],
     "security": {
-      "csp": "default-src 'self' tauri://localhost; connect-src 'self' tauri://localhost ipc://localhost http://localhost:3011 http://127.0.0.1:3011 ws://localhost:* ws://127.0.0.1:* https://api.openai.com https://api.anthropic.com https://*.ollama.ai https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: https: file: tauri://localhost; font-src 'self' data: tauri://localhost https://cdn.jsdelivr.net;"
+      "csp": "default-src 'self' tauri://localhost http://localhost:3010 http://127.0.0.1:3010; connect-src 'self' tauri://localhost ipc://localhost http://localhost:3010 http://localhost:3011 http://127.0.0.1:3010 http://127.0.0.1:3011 ws://localhost:* ws://127.0.0.1:* https://api.openai.com https://api.anthropic.com https://*.ollama.ai https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:3010 http://127.0.0.1:3010 https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' http://localhost:3010 http://127.0.0.1:3010 https://cdn.jsdelivr.net; img-src 'self' data: https: file: tauri://localhost http://localhost:3010 http://127.0.0.1:3010; font-src 'self' data: tauri://localhost http://localhost:3010 http://127.0.0.1:3010 https://cdn.jsdelivr.net;"
     }
   },
   "bundle": {

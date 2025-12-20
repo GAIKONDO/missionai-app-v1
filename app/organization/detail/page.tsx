@@ -7,10 +7,10 @@ import { getOrgTreeFromDb, findOrganizationById, getOrgMembers, getFocusInitiati
 import type { OrgNodeData } from '@/components/OrgChart';
 import type { FocusInitiative, MeetingNote, OrganizationContent } from '@/lib/orgApi';
 import { sortMembersByPosition } from '@/lib/memberSort';
-import { getCompaniesByOrganizationId, getCompanyById } from '@/lib/companiesApi';
-import type { Company } from '@/lib/companiesApi';
-import { getCompaniesByOrganizationDisplay } from '@/lib/organizationCompanyDisplayApi';
-import type { OrganizationCompanyDisplay } from '@/lib/organizationCompanyDisplayApi';
+// import { getCompaniesByOrganizationId, getCompanyById } from '@/lib/companiesApi';
+// import type { Company } from '@/lib/companiesApi';
+// import { getCompaniesByOrganizationDisplay } from '@/lib/organizationCompanyDisplayApi';
+// import type { OrganizationCompanyDisplay } from '@/lib/organizationCompanyDisplayApi';
 import html2canvas from 'html2canvas';
 
 // 開発環境でのみログを有効化するヘルパー関数（パフォーマンス最適化）
@@ -40,7 +40,7 @@ function OrganizationDetailPageContent() {
   const [initiativesByOrg, setInitiativesByOrg] = useState<Map<string, { orgName: string; initiatives: FocusInitiative[] }>>(new Map()); // 組織ごとの注力施策
   const [expandedOrgIds, setExpandedOrgIds] = useState<Set<string>>(new Set()); // 開いている子組織のID
   const [meetingNotes, setMeetingNotes] = useState<MeetingNote[]>([]);
-  const [companies, setCompanies] = useState<Company[]>([]);
+  const [companies, setCompanies] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<TabType>(tabParam || 'introduction');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -469,47 +469,49 @@ function OrganizationDetailPageContent() {
               devWarn('議事録の取得に失敗しました:', noteError);
             }
             
-            try {
-              // 新しいテーブル（organizationCompanyDisplay）から表示関係を取得
-              const displays = await getCompaniesByOrganizationDisplay(validOrganizationId);
-              devLog('🔍 [loadOrganizationData] 表示関係を取得:', {
-                organizationId: validOrganizationId,
-                displaysCount: displays?.length || 0,
-              });
-              
-              if (displays && displays.length > 0) {
-                // 表示関係から会社IDのリストを取得し、表示順序でソート
-                const sortedDisplays = [...displays].sort((a, b) => a.displayOrder - b.displayOrder);
-                
-                // 各会社IDで会社情報を取得
-                const companiesPromises = sortedDisplays.map(display => {
-                  const companyId = display.companyId;
-                  if (!companyId) {
-                    devWarn('⚠️ [loadOrganizationData] companyIdが取得できません:', display);
-                    return Promise.resolve(null);
-                  }
-                  return getCompanyById(companyId).catch(err => {
-                    devWarn(`事業会社の取得に失敗しました (ID: ${companyId}):`, err);
-                    return null;
-                  });
-                });
-                
-                const companiesData = await Promise.all(companiesPromises);
-                // nullを除外してCompany[]に変換
-                const validCompanies = companiesData.filter((c): c is Company => c !== null);
-                devLog('✅ [loadOrganizationData] 事業会社を取得:', {
-                  count: validCompanies.length,
-                });
-                setCompanies(validCompanies);
-              } else {
-                // 表示関係がない場合は空配列を設定
-                devLog('⚠️ [loadOrganizationData] 表示関係がありません');
-                setCompanies([]);
-              }
-            } catch (companyError: any) {
-              devWarn('事業会社の取得に失敗しました:', companyError);
-              setCompanies([]);
-            }
+            // try {
+            //   // 新しいテーブル（organizationCompanyDisplay）から表示関係を取得
+            //   const displays = await getCompaniesByOrganizationDisplay(validOrganizationId);
+            //   devLog('🔍 [loadOrganizationData] 表示関係を取得:', {
+            //     organizationId: validOrganizationId,
+            //     displaysCount: displays?.length || 0,
+            //   });
+            //   
+            //   if (displays && displays.length > 0) {
+            //     // 表示関係から会社IDのリストを取得し、表示順序でソート
+            //     const sortedDisplays = [...displays].sort((a, b) => a.displayOrder - b.displayOrder);
+            //     
+            //     // 各会社IDで会社情報を取得
+            //     const companiesPromises = sortedDisplays.map(display => {
+            //       const companyId = display.companyId;
+            //       if (!companyId) {
+            //         devWarn('⚠️ [loadOrganizationData] companyIdが取得できません:', display);
+            //         return Promise.resolve(null);
+            //       }
+            //       return getCompanyById(companyId).catch(err => {
+            //         devWarn(`事業会社の取得に失敗しました (ID: ${companyId}):`, err);
+            //         return null;
+            //       });
+            //     });
+            //     
+            //     const companiesData = await Promise.all(companiesPromises);
+            //     // nullを除外してCompany[]に変換
+            //     const validCompanies = companiesData.filter((c): c is Company => c !== null);
+            //     devLog('✅ [loadOrganizationData] 事業会社を取得:', {
+            //       count: validCompanies.length,
+            //     });
+            //     setCompanies(validCompanies);
+            //   } else {
+            //     // 表示関係がない場合は空配列を設定
+            //     devLog('⚠️ [loadOrganizationData] 表示関係がありません');
+            //     setCompanies([]);
+            //   }
+            // } catch (companyError: any) {
+            //   devWarn('事業会社の取得に失敗しました:', companyError);
+            //   setCompanies([]);
+            // }
+            // 事業会社の管理はorganizationsテーブルのtypeカラムで行うため、この処理は不要
+            setCompanies([]);
           } catch (memberError: any) {
             devWarn('メンバー情報の取得に失敗しました:', memberError);
             // 正しいIDを確実に設定
@@ -1312,7 +1314,7 @@ function OrganizationDetailPageContent() {
           </div>
         )}
 
-        {companies && companies.length > 0 && (
+        {/* {companies && companies.length > 0 && (
           <div>
             <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--color-text)' }}>
               事業会社 ({companies.length}社)
@@ -1375,7 +1377,8 @@ function OrganizationDetailPageContent() {
               ))}
             </div>
           </div>
-        )}
+        )} */}
+        {/* 事業会社の管理はorganizationsテーブルのtypeカラムで行うため、この表示は不要 */}
           </>
           </div>
         )}

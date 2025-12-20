@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3010",
-    "build": "next build",
+    "build": "NPM_CONFIG_SIGNAL=false next build",
+    "build:direct": "./node_modules/.bin/next build",
     "start": "next start -p 3010",
     "lint": "next lint",
     "tauri": "tauri",

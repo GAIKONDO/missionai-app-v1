@@ -73,10 +73,21 @@ export function convertOrgToPlantUML(orgData: OrgNodeData): string {
     // PlantUMLの特殊文字をエスケープ
     displayName = displayName.replace(/[<>{}|]/g, '');
     
-    // 階層に応じた背景色を取得
-    const backgroundColor = getColorByDepth(depth);
+    // typeに応じた背景色を取得
+    const orgType = (node as any).type || 'organization';
+    let backgroundColor: string;
+    if (orgType === 'company') {
+      // 事業会社は薄い緑色（Finderの背景色を参考）
+      backgroundColor = '#D1FAE5';
+    } else if (orgType === 'person') {
+      // 個人は薄い紫色（Finderの背景色を参考）
+      backgroundColor = '#C4B5FD';
+    } else {
+      // 組織は階層に応じた色
+      backgroundColor = getColorByDepth(depth);
+    }
     
-    // ノード定義（階層に応じた背景色を指定: +[#色]の形式、スペースなし）
+    // ノード定義（typeに応じた背景色を指定: +[#色]の形式）
     lines.push(`${prefix}[${backgroundColor}] ${displayName}`);
 
     // 子組織を処理
@@ -106,7 +117,19 @@ export function convertOrgToPlantUML(orgData: OrgNodeData): string {
     // 通常のルート組織の場合、ルートノードを特別に処理
     const rootDisplayName = orgData.name || '組織名なし';
     const safeRootName = rootDisplayName.replace(/[<>{}|]/g, '');
-    const rootColor = getColorByDepth(0);
+    // ルートノードのtypeに応じた色を取得
+    const rootOrgType = (orgData as any).type || 'organization';
+    let rootColor: string;
+    if (rootOrgType === 'company') {
+      // 事業会社は薄い緑色（Finderの背景色を参考）
+      rootColor = '#D1FAE5';
+    } else if (rootOrgType === 'person') {
+      // 個人は薄い紫色（Finderの背景色を参考）
+      rootColor = '#DDD6FE';
+    } else {
+      // 組織は階層に応じた色
+      rootColor = getColorByDepth(0);
+    }
     lines.push(`+[${rootColor}] ${safeRootName} <<rootNode>>`);
     // 子組織を処理（depth=1から開始）
     if (orgData.children && orgData.children.length > 0) {
