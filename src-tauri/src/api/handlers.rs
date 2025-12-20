@@ -5,7 +5,6 @@ use axum::{
 };
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use uuid::Uuid;
 
 use crate::database::{
     get_organization_by_id, create_organization as db_create_organization, 

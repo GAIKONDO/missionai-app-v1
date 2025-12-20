@@ -2,7 +2,6 @@ use crate::database::{get_db, get_timestamp, get_current_user};
 use rusqlite::Result as SqlResult;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use uuid::Uuid;
 
 /// コンテナデータ構造
 #[derive(Debug, Clone)]

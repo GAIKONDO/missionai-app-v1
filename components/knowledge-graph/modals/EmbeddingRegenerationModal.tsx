@@ -952,9 +952,52 @@ export default function EmbeddingRegenerationModal({
                           const orgId = r.organizationId || entities.find(e => e.id === r.sourceEntityId || e.id === r.targetEntityId)?.organizationId;
                           return orgId === selectedId && r.topicId;
                         });
-                    let targetTopics = selectedId === 'all'
-                      ? topics.filter(t => t.organizationId)
-                      : topics.filter(t => t.organizationId === selectedId);
+                    // topicsプロップが空の場合、query_getで直接取得
+                    let targetTopics: TopicInfo[] = [];
+                    if (topics.length === 0) {
+                      try {
+                        devLog(`📊 [埋め込み再生成] topicsプロップが空のため、query_getで直接取得します`);
+                        const allTopicDocs = await callTauriCommand('query_get', {
+                          collectionName: 'topics',
+                          conditions: selectedId !== 'all' ? { organizationId: selectedId } : {},
+                        }) as Array<{ id: string; data: any }>;
+                        
+                        // TopicInfo形式に変換
+                        for (const doc of allTopicDocs) {
+                          const topicData = doc.data || doc;
+                          const topicId = doc.id || topicData.id;
+                          
+                          // ID形式が`${meetingNoteId}-topic-${topicId}`の場合、topicIdを抽出
+                          const idMatch = topicId.match(/^(.+)-topic-(.+)$/);
+                          const extractedTopicId = idMatch ? idMatch[2] : topicId;
+                          const meetingNoteId = idMatch ? idMatch[1] : topicData.meetingNoteId;
+                          
+                          targetTopics.push({
+                            id: extractedTopicId,
+                            title: topicData.title || '',
+                            content: topicData.content || '',
+                            meetingNoteId: meetingNoteId || topicData.meetingNoteId || '',
+                            meetingNoteTitle: topicData.meetingNoteTitle || '',
+                            organizationId: topicData.organizationId || '',
+                            semanticCategory: topicData.semanticCategory,
+                            importance: topicData.importance,
+                            keywords: topicData.keywords ? (Array.isArray(topicData.keywords) ? topicData.keywords : JSON.parse(topicData.keywords)) : undefined,
+                            summary: topicData.summary,
+                          });
+                        }
+                        devLog(`📊 [埋め込み再生成] query_getで取得したトピック数: ${targetTopics.length}件`);
+                      } catch (error) {
+                        devWarn(`⚠️ [埋め込み再生成] query_getでのトピック取得エラー:`, error);
+                        // フォールバック: topicsプロップを使用
+                        targetTopics = selectedId === 'all'
+                          ? topics.filter(t => t.organizationId)
+                          : topics.filter(t => t.organizationId === selectedId);
+                      }
+                    } else {
+                      targetTopics = selectedId === 'all'
+                        ? topics.filter(t => t.organizationId)
+                        : topics.filter(t => t.organizationId === selectedId);
+                    }
 
                     // 未生成のみの場合は、SQLiteのchromaSyncedフラグでフィルタリング
                     if (!forceRegenerate && regenerationType === 'missing') {

@@ -1,8 +1,6 @@
 /**
  * リレーション埋め込みのChromaDB管理
  * ChromaDBを使用した高速ベクトル検索
- * 
- * Rust側のChromaDB Serverを使用（Tauriコマンド経由）
  */
 
 import { callTauriCommand } from './localFirebase';
@@ -20,7 +18,6 @@ export async function saveRelationEmbeddingToChroma(
   organizationId: string,
   relation: Relation
 ): Promise<void> {
-  // クライアント側でのみ実行
   if (typeof window === 'undefined') {
     throw new Error('リレーション埋め込みの保存はクライアント側でのみ実行可能です');
   }
@@ -35,14 +32,8 @@ export async function saveRelationEmbeddingToChroma(
     if (relation.sourceEntityId) {
       try {
         const sourceEntity = await getEntityById(relation.sourceEntityId);
-        if (sourceEntity) {
-          sourceEntityName = sourceEntity.name;
-        } else {
-          // エンティティが見つからない場合は、エンティティIDを使用（警告は出力しない）
-          sourceEntityName = relation.sourceEntityId;
-        }
+        sourceEntityName = sourceEntity?.name || relation.sourceEntityId;
       } catch (error) {
-        // エンティティ取得に失敗した場合は、エンティティIDを使用（警告は出力しない）
         sourceEntityName = relation.sourceEntityId;
       }
     }
@@ -50,14 +41,8 @@ export async function saveRelationEmbeddingToChroma(
     if (relation.targetEntityId) {
       try {
         const targetEntity = await getEntityById(relation.targetEntityId);
-        if (targetEntity) {
-          targetEntityName = targetEntity.name;
-        } else {
-          // エンティティが見つからない場合は、エンティティIDを使用（警告は出力しない）
-          targetEntityName = relation.targetEntityId;
-        }
+        targetEntityName = targetEntity?.name || relation.targetEntityId;
       } catch (error) {
-        // エンティティ取得に失敗した場合は、エンティティIDを使用（警告は出力しない）
         targetEntityName = relation.targetEntityId;
       }
     }
@@ -74,17 +59,10 @@ export async function saveRelationEmbeddingToChroma(
     }
     const metadataText = metadataParts.join(', ');
 
-    // 埋め込みを生成
+    // 統合埋め込みを生成
     const descriptionText = relation.description || '';
     const relationTypeText = relation.relationType;
 
-    // 説明の埋め込み
-    const descriptionEmbedding = descriptionText ? await generateEmbedding(descriptionText) : undefined;
-    
-    // リレーションタイプの埋め込み
-    const relationTypeEmbedding = await generateEmbedding(relationTypeText);
-    
-    // 統合埋め込みを生成（説明+リレーションタイプ+関連エンティティ名+メタデータ）
     const combinedParts: string[] = [];
     
     // リレーションタイプを3回繰り返して重要度を上げる
@@ -111,42 +89,40 @@ export async function saveRelationEmbeddingToChroma(
     const combinedText = combinedParts.join('\n\n');
     const combinedEmbedding = await generateEmbedding(combinedText);
 
-    // 埋め込みベクトルの次元数をチェック（text-embedding-3-smallは1536次元）
+    // 埋め込みベクトルの次元数をチェック
     if (combinedEmbedding.length !== 1536) {
-      const errorMessage = `埋め込みベクトルの次元数が一致しません。期待値: 1536, 実際: ${combinedEmbedding.length}。OpenAIのtext-embedding-3-smallモデルを使用してください。`;
-      console.error(errorMessage);
-      throw new Error(errorMessage);
+      throw new Error(`埋め込みベクトルの次元数が一致しません。期待値: 1536, 実際: ${combinedEmbedding.length}`);
     }
 
-    // メタデータを準備（検索に必要な情報のみを保存、メタデータサイズを削減）
+    // メタデータを準備
     const metadata: Record<string, any> = {
-      relationId, // SQLite参照用
-      topicId, // トピックID
-      organizationId, // 組織ID
-      companyId: relation.companyId || '', // 事業会社ID（あれば）
+      relationId,
+      topicId,
+      organizationId,
+      companyId: relation.companyId || '',
       relationType: relation.relationType,
       sourceEntityId: relation.sourceEntityId || '',
       targetEntityId: relation.targetEntityId || '',
-      sourceEntityName, // エンティティ名（検索結果に直接含めるため）
-      targetEntityName, // エンティティ名（検索結果に直接含めるため）
+      sourceEntityName,
+      targetEntityName,
       description: descriptionText,
       metadata: relation.metadata ? JSON.stringify(relation.metadata) : '',
-      // 不要なフィールドを削除（メタデータサイズ削減）:
-      // - descriptionEmbedding, relationTypeEmbedding（未使用の埋め込みベクトル）
-      // - embeddingModel, embeddingVersion（検索に不要な管理用情報）
       createdAt: now,
       updatedAt: now,
     };
 
-    // Rust側のTauriコマンドを呼び出し（パラメータ名はcamelCase）
-    await callTauriCommand('chromadb_save_relation_embedding', {
-      relationId,
-      organizationId,
-      combinedEmbedding,
-      metadata,
-    });
-
-    console.log(`✅ ChromaDBにリレーション埋め込みを保存しました: ${relationId}`);
+    // Rust側のTauriコマンドを呼び出し
+    await Promise.race([
+      callTauriCommand('chromadb_save_relation_embedding', {
+        relationId,
+        organizationId,
+        combinedEmbedding,
+        metadata,
+      }),
+      new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error('ChromaDBへの埋め込み保存がタイムアウトしました（60秒）')), 60000)
+      )
+    ]);
   } catch (error) {
     console.error('ChromaDBへのリレーション埋め込み保存エラー:', error);
     throw error;
@@ -165,23 +141,25 @@ export async function getRelationEmbeddingFromChroma(
   }
 
   try {
-    // Rust側のTauriコマンドを呼び出し
-    const result = await callTauriCommand('chromadb_get_relation_embedding', {
-      relationId,
-      organizationId,
-    }) as Record<string, any> | null;
+    const result = await Promise.race([
+      callTauriCommand('chromadb_get_relation_embedding', {
+        relationId,
+        organizationId,
+      }) as Promise<Record<string, any> | null>,
+      new Promise<null>((_, reject) => 
+        setTimeout(() => reject(new Error('ChromaDBからの埋め込み取得がタイムアウトしました（30秒）')), 30000)
+      )
+    ]) as Record<string, any> | null;
 
     if (!result) {
       return null;
     }
 
-    // 埋め込みベクトルを取得
     const combinedEmbedding = result.combinedEmbedding as number[] | undefined;
     if (!combinedEmbedding || !Array.isArray(combinedEmbedding) || combinedEmbedding.length === 0) {
       return null;
     }
 
-    // メタデータから情報を取得
     const topicId = result.topicId as string | undefined;
     const descriptionEmbeddingStr = result.descriptionEmbedding as string | undefined;
     const relationTypeEmbeddingStr = result.relationTypeEmbedding as string | undefined;
@@ -205,7 +183,6 @@ export async function getRelationEmbeddingFromChroma(
       }
     }
     
-    // RelationEmbeddingオブジェクトを構築
     const embedding: RelationEmbedding = {
       id: relationId,
       relationId,
@@ -221,14 +198,19 @@ export async function getRelationEmbeddingFromChroma(
     };
 
     return embedding;
-  } catch (error) {
-    console.error('ChromaDBからのリレーション埋め込み取得エラー:', error);
+  } catch (error: any) {
+    const errorMessage = error?.message || String(error);
+    if (errorMessage.includes('タイムアウト') || errorMessage.includes('timeout')) {
+      console.warn(`ChromaDBからの埋め込み取得がタイムアウトしました: ${relationId}`);
+    } else {
+      console.error('ChromaDBからのリレーション埋め込み取得エラー:', error);
+    }
     return null;
   }
 }
 
 /**
- * ChromaDBを使用した類似リレーション検索（Rust側経由）
+ * ChromaDBを使用した類似リレーション検索
  */
 export async function findSimilarRelationsChroma(
   queryText: string,
@@ -244,46 +226,25 @@ export async function findSimilarRelationsChroma(
     // クエリの埋め込みを生成
     const queryEmbedding = await generateEmbedding(queryText);
 
-    // 埋め込みベクトルの次元数をチェック（text-embedding-3-smallは1536次元）
+    // 埋め込みベクトルの次元数をチェック
     if (queryEmbedding.length !== 1536) {
-      const errorMessage = `埋め込みベクトルの次元数が一致しません。期待値: 1536, 実際: ${queryEmbedding.length}。OpenAIのtext-embedding-3-smallモデルを使用してください。`;
-      console.error(errorMessage);
-      throw new Error(errorMessage);
+      throw new Error(`埋め込みベクトルの次元数が一致しません。期待値: 1536, 実際: ${queryEmbedding.length}`);
     }
 
-    // Rust側のTauriコマンドを呼び出し（パラメータ名はcamelCase）
-    // organizationIdが未指定の場合はundefinedを渡して組織横断検索を実行
-    console.log(`[findSimilarRelationsChroma] ChromaDB検索を実行中... (organizationId: ${organizationId || 'undefined'})`);
+    // Rust側のTauriコマンドを呼び出し
     const results = await callTauriCommand('chromadb_find_similar_relations', {
       queryEmbedding,
       limit,
-      organizationId: organizationId || undefined, // undefinedの場合は組織横断検索
+      organizationId: organizationId || undefined,
     }) as Array<[string, number]>;
-
-    console.log(`[findSimilarRelationsChroma] ChromaDB検索完了: ${results.length}件の結果を取得`);
-    if (results.length > 0) {
-      console.log(`[findSimilarRelationsChroma] 検索結果トップ5:`, results.slice(0, 5).map(([id, sim]) => ({
-        relationId: id,
-        similarity: typeof sim === 'number' ? sim.toFixed(4) : String(sim),
-        similarityType: typeof sim,
-        isNaN: typeof sim === 'number' ? isNaN(sim) : 'N/A',
-      })));
-    } else {
-      if (organizationId) {
-        console.warn(`[findSimilarRelationsChroma] 検索結果が空です。コレクション relations_${organizationId} にデータが存在しない可能性があります。`);
-      } else {
-        console.warn(`[findSimilarRelationsChroma] 検索結果が空です。すべての組織のコレクションを検索しましたが、データが見つかりませんでした。`);
-      }
-    }
 
     // 結果を変換
     let similarities = results.map(([relationId, similarity]) => {
-      // similarityが有効な数値であることを確認
       if (typeof similarity !== 'number' || isNaN(similarity)) {
-        console.warn(`[findSimilarRelationsChroma] ⚠️ リレーション ${relationId} のsimilarityが無効です:`, similarity);
+        console.warn(`リレーション ${relationId} のsimilarityが無効です:`, similarity);
         return {
           relationId,
-          similarity: 0, // 無効な場合は0に設定
+          similarity: 0,
         };
       }
       return {
@@ -294,8 +255,6 @@ export async function findSimilarRelationsChroma(
 
     // relationTypeでフィルタリング（Rust側で未対応のため、JavaScript側でフィルタリング）
     if (relationType) {
-      // 注意: Rust側の実装ではrelationTypeでのフィルタリングは未対応のため、
-      // ここでは全ての結果を返す（将来的にRust側で実装予定）
       console.warn('relationTypeでのフィルタリングはRust側で未対応のため、全ての結果を返します');
     }
 
@@ -308,11 +267,19 @@ export async function findSimilarRelationsChroma(
 
 /**
  * ChromaDBからリレーション埋め込みを削除
- * 注意: Rust側の実装では、削除機能は未実装のため、
- * SQLiteフォールバックを使用することを推奨
  */
-export async function deleteRelationEmbeddingFromChroma(relationId: string): Promise<void> {
-  // Rust側のChromaDB実装では、削除機能が未実装のため、
-  // SQLiteフォールバックを使用
-  console.warn('deleteRelationEmbeddingFromChroma: Rust側のChromaDB実装では未対応。SQLiteフォールバックを使用してください。');
+export async function deleteRelationEmbeddingFromChroma(relationId: string, organizationId: string): Promise<void> {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    await callTauriCommand('chromadb_delete_relation_embedding', {
+      relationId,
+      organizationId,
+    });
+  } catch (error) {
+    console.error('ChromaDBからのリレーション埋め込み削除エラー:', error);
+    throw error;
+  }
 }

@@ -427,10 +427,21 @@ export async function checkTopicEmbeddings(organizationId?: string): Promise<{
       
       // ChromaDBに保存されている場合は、埋め込みありとして扱う
       // SQLiteから読み込む際に文字列として保存されている可能性があるため、booleanと文字列の両方をチェック
+      // 注意: 保存処理では`chromaSynced`フラグを更新しているため、両方をチェック
       const storedInChromaDB = (embeddingData as any).storedInChromaDB === true || 
                                (embeddingData as any).storedInChromaDB === 'true' || 
                                (embeddingData as any).storedInChromaDB === 1 ||
                                String((embeddingData as any).storedInChromaDB).toLowerCase() === 'true';
+      
+      // chromaSyncedフラグもチェック（実際の保存処理で使用されているフラグ）
+      const chromaSyncedValue = (embeddingData as any).chromaSynced;
+      const chromaSynced = chromaSyncedValue === 1 || 
+                          chromaSyncedValue === true || 
+                          chromaSyncedValue === '1' ||
+                          String(chromaSyncedValue) === '1';
+      
+      // どちらかのフラグがtrueなら、ChromaDBに保存されていると判断
+      const isStoredInChromaDB = storedInChromaDB || chromaSynced;
       
       let combinedEmbedding: number[] | undefined;
       if (embeddingData.combinedEmbedding) {
@@ -445,14 +456,16 @@ export async function checkTopicEmbeddings(organizationId?: string): Promise<{
       }
 
       // SQLiteにベクトルデータがあるか、またはChromaDBに保存されているか
-      const hasEmbedding = !!(combinedEmbedding && combinedEmbedding.length > 0) || storedInChromaDB;
-      const dimension = combinedEmbedding?.length || (storedInChromaDB ? 1536 : 0); // ChromaDBの場合は1536次元と仮定
-      const model = embeddingData.embeddingModel || (storedInChromaDB ? 'text-embedding-3-small' : 'unknown');
+      const hasEmbedding = !!(combinedEmbedding && combinedEmbedding.length > 0) || isStoredInChromaDB;
+      const dimension = combinedEmbedding?.length || (isStoredInChromaDB ? 1536 : 0); // ChromaDBの場合は1536次元と仮定
+      const model = embeddingData.embeddingModel || (isStoredInChromaDB ? 'text-embedding-3-small' : 'unknown');
 
       // デバッグログ（開発時のみ）
       if (process.env.NODE_ENV === 'development') {
         console.log(`[checkTopicEmbeddings] トピック ${topicId}:`, {
           storedInChromaDB,
+          chromaSynced,
+          isStoredInChromaDB,
           hasCombinedEmbedding: !!(combinedEmbedding && combinedEmbedding.length > 0),
           hasEmbedding,
           model,

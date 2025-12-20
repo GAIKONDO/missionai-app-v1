@@ -6,17 +6,17 @@ use tokio::sync::oneshot;
 pub async fn show_confirm_dialog(
     app: tauri::AppHandle,
     message: String,
-    title: String,
+    _title: String,
 ) -> Result<bool, String> {
     let window = app.get_webview_window("main").ok_or("メインウィンドウが見つかりません")?;
     
     // 結果を受け取るためのチャネルを作成
-    let (tx, rx) = oneshot::channel::<bool>();
+    let (tx, _rx) = oneshot::channel::<bool>();
     let tx = Arc::new(tokio::sync::Mutex::new(Some(tx)));
     
     // グローバル変数にコールバックを設定
-    let callback_name = format!("__tauri_confirm_callback_{}", std::process::id());
-    let tx_clone = tx.clone();
+    let _callback_name = format!("__tauri_confirm_callback_{}", std::process::id());
+    let _tx_clone = tx.clone();
     
     // JavaScriptコードを構築
     let js_code = format!(
@@ -34,7 +34,7 @@ pub async fn show_confirm_dialog(
     );
     
     // Promiseベースのアプローチを使用
-    let promise_code = format!(
+    let _promise_code = format!(
         r#"
         new Promise((resolve) => {{
             window.__TAURI_CONFIRM_PROMISE_RESOLVE__ = resolve;

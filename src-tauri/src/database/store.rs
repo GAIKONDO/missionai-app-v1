@@ -955,7 +955,7 @@ pub fn delete_meeting_note_with_relations(note_id: &str) -> SqlResult<()> {
         )
     })?;
     
-    let mut conn = db.get_connection()?;
+    let conn = db.get_connection()?;
     
     // 外部キー制約を一時的に無効化（古い外部キー制約が残っている可能性があるため）
     if let Err(e) = conn.execute("PRAGMA foreign_keys = OFF", []) {

@@ -54,6 +54,19 @@ impl ChromaDBServer {
         let chroma_cmd = Self::find_chroma_command()?;
         eprintln!("   ChromaDBコマンド: {}", chroma_cmd);
 
+        // ポートが使用されているかチェック
+        let port_in_use = Self::check_port_in_use(port).await;
+        if port_in_use {
+            eprintln!("⚠️ ポート{}が既に使用されています。既存のChromaDBサーバーを停止します...", port);
+            if let Err(e) = Self::kill_process_on_port(port).await {
+                eprintln!("   ⚠️ 既存プロセスの停止に失敗しました（続行します）: {}", e);
+            } else {
+                eprintln!("   ✅ 既存プロセスを停止しました");
+                // プロセスが完全に終了するまで少し待機
+                sleep(Duration::from_secs(1)).await;
+            }
+        }
+
         // ChromaDBサーバーを起動
         let mut child = TokioCommand::new(&chroma_cmd)
             .arg("run")
@@ -75,8 +88,31 @@ impl ChromaDBServer {
 
         eprintln!("   ChromaDB Serverプロセスを起動しました (PID: {})", child.id().unwrap_or(0));
         
-        // stderrを読み取るためのタスクを開始（エラーメッセージを取得するため）
+        // stdoutとstderrを読み取るためのタスクを開始（ログとエラーメッセージを取得するため）
+        let stdout_arc = Arc::new(Mutex::new(Vec::<u8>::new()));
         let stderr_arc = Arc::new(Mutex::new(Vec::<u8>::new()));
+        
+        if let Some(mut stdout_reader) = child.stdout.take() {
+            let stdout_arc_clone = stdout_arc.clone();
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 1024];
+                loop {
+                    match stdout_reader.read(&mut buf).await {
+                        Ok(0) => break, // EOF
+                        Ok(n) => {
+                            let mut guard = stdout_arc_clone.lock().await;
+                            guard.extend_from_slice(&buf[..n]);
+                            // ログを出力（デバッグ用）
+                            if let Ok(text) = String::from_utf8(buf[..n].to_vec()) {
+                                eprintln!("   [ChromaDB stdout] {}", text.trim());
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
+        
         if let Some(mut stderr_reader) = child.stderr.take() {
             let stderr_arc_clone = stderr_arc.clone();
             tokio::spawn(async move {
@@ -87,6 +123,10 @@ impl ChromaDBServer {
                         Ok(n) => {
                             let mut guard = stderr_arc_clone.lock().await;
                             guard.extend_from_slice(&buf[..n]);
+                            // エラーログを出力（デバッグ用）
+                            if let Ok(text) = String::from_utf8(buf[..n].to_vec()) {
+                                eprintln!("   [ChromaDB stderr] {}", text.trim());
+                            }
                         }
                         Err(_) => break,
                     }
@@ -108,6 +148,12 @@ impl ChromaDBServer {
             
             if health_check.is_ok() {
                 eprintln!("✅ ChromaDB Serverが正常に起動しました ({}秒後)", i * 500 / 1000);
+                // ChromaDB 1.xでは、chroma.sqlite3は最初のコレクション作成時に自動的に作成される
+                // そのため、サーバー起動時には存在しない可能性がある
+                // サーバーが完全に初期化されるまで少し待機
+                eprintln!("   ChromaDBサーバーの初期化完了を待機中...");
+                sleep(Duration::from_secs(2)).await;
+                eprintln!("   ChromaDBサーバーの初期化が完了しました");
                 return Ok(Self {
                     process: Some(child),
                     port,
@@ -222,6 +268,144 @@ impl ChromaDBServer {
         let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
         eprintln!("   ChromaDBバージョン: {}", version);
         Ok(())
+    }
+
+    /// ポートが使用されているかチェック
+    async fn check_port_in_use(port: u16) -> bool {
+        let client = reqwest::Client::new();
+        let url = format!("http://localhost:{}/api/v1/heartbeat", port);
+        match client.get(&url).timeout(Duration::from_secs(1)).send().await {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    }
+
+    /// 指定されたポートを使用しているプロセスを停止
+    async fn kill_process_on_port(port: u16) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        {
+            use std::process::Command;
+            use std::process;
+            
+            // 自分自身のPIDを取得（自分自身を停止しないようにするため）
+            let self_pid = process::id();
+            
+            // lsofでポートを使用しているプロセスのPIDとコマンド名を取得
+            let output = Command::new("lsof")
+                .arg("-ti")
+                .arg(format!(":{}", port))
+                .output()
+                .map_err(|e| format!("lsofコマンドの実行に失敗しました: {}", e))?;
+            
+            if output.stdout.is_empty() {
+                return Ok(()); // プロセスが見つからない場合は成功とする
+            }
+            
+            // 改行で分割して、各PIDを個別に処理
+            let pid_str = String::from_utf8_lossy(&output.stdout);
+            let pids: Vec<&str> = pid_str.trim().split('\n').filter(|s| !s.is_empty()).collect();
+            
+            if pids.is_empty() {
+                return Ok(());
+            }
+            
+            eprintln!("   ポート{}を使用しているプロセスを確認中: PIDs={:?}", port, pids);
+            
+            // 各PIDを個別に確認してからkill
+            let mut killed_count = 0;
+            for pid_str in &pids {
+                // PIDを数値に変換
+                let pid: u32 = match pid_str.parse() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        eprintln!("   ⚠️ 無効なPID: {}", pid_str);
+                        continue;
+                    }
+                };
+                
+                // 自分自身のプロセスは停止しない
+                if pid == self_pid {
+                    eprintln!("   ⚠️ 自分自身のプロセス（PID: {}）はスキップします", pid);
+                    continue;
+                }
+                
+                // プロセス名を確認（ChromaDBサーバーのみを停止するため）
+                let ps_output = Command::new("ps")
+                    .arg("-p")
+                    .arg(pid_str)
+                    .arg("-o")
+                    .arg("comm=")
+                    .output();
+                
+                let is_chromadb = if let Ok(ps_output) = ps_output {
+                    if ps_output.status.success() {
+                        let comm = String::from_utf8_lossy(&ps_output.stdout).trim().to_string();
+                        // chroma、chromadb、python（chromadb.cliを実行している場合）を確認
+                        comm.contains("chroma") || comm.contains("python")
+                    } else {
+                        // psコマンドが失敗した場合、プロセスが既に終了している可能性がある
+                        false
+                    }
+                } else {
+                    false
+                };
+                
+                if !is_chromadb {
+                    eprintln!("   ⚠️ PID {}はChromaDBサーバーではないため、スキップします", pid);
+                    continue;
+                }
+                
+                eprintln!("   ChromaDBサーバープロセス（PID: {}）を停止します", pid);
+                
+                // プロセスを停止（まずSIGTERMを送信、その後SIGKILL）
+                let _ = Command::new("kill")
+                    .arg("-TERM")
+                    .arg(pid_str)
+                    .output();
+                
+                // 少し待ってから、まだ実行中の場合はSIGKILLを送信
+                sleep(Duration::from_millis(500)).await;
+                
+                let kill_output = Command::new("kill")
+                    .arg("-0")
+                    .arg(pid_str)
+                    .output();
+                
+                // プロセスがまだ実行中の場合はSIGKILLを送信
+                if kill_output.is_ok() && kill_output.unwrap().status.success() {
+                    let kill_output = Command::new("kill")
+                        .arg("-9")
+                        .arg(pid_str)
+                        .output()
+                        .map_err(|e| format!("killコマンドの実行に失敗しました: {}", e))?;
+                    
+                    if !kill_output.status.success() {
+                        eprintln!("   ⚠️ PID {}の停止に失敗しました: {}", pid_str, String::from_utf8_lossy(&kill_output.stderr));
+                    } else {
+                        killed_count += 1;
+                    }
+                } else {
+                    killed_count += 1;
+                }
+            }
+            
+            if killed_count > 0 {
+                eprintln!("   ✅ {}個のChromaDBサーバープロセスを停止しました", killed_count);
+                // プロセスが完全に終了するまで少し待機
+                sleep(Duration::from_millis(500)).await;
+            } else {
+                eprintln!("   ℹ️ 停止するChromaDBサーバープロセスはありませんでした");
+            }
+            
+            Ok(())
+        }
+        
+        #[cfg(not(target_os = "macos"))]
+        {
+            // macOS以外のOSでは、ポートチェックのみ行う
+            // 必要に応じて、他のOS用の実装を追加
+            Ok(())
+        }
     }
 
     /// ChromaDB Serverを停止
@@ -367,39 +551,16 @@ pub async fn init_chromadb_client(port: u16) -> Result<(), String> {
         return Ok(());
     }
 
-    // ChromaDB 2.xでは、v2 APIを使用してデータベースを作成する必要がある
+    // ChromaDB 1.xでは、データベースの概念がないが、Rustクライアント（v2.3.0）が
+    // 空文字列を[]として解釈してしまうため、明示的なデフォルト値を設定する
+    // ChromaDB 2.xでは、データベース名を指定する必要がある
     let base_url = format!("http://localhost:{}", port);
-    let database_name = "default_database";
     
-    // v2 APIを使用してデータベースを作成（既に存在する場合はエラーを無視）
-    let create_db_url = format!("{}/api/v2/databases", base_url);
-    let http_client = reqwest::Client::new();
-    match http_client
-        .post(&create_db_url)
-        .json(&serde_json::json!({"name": database_name}))
-        .send()
-        .await
-    {
-        Ok(response) => {
-            if response.status().is_success() {
-                eprintln!("   ✅ データベース '{}' を作成しました", database_name);
-            } else if response.status() == reqwest::StatusCode::CONFLICT {
-                eprintln!("   ℹ️  データベース '{}' は既に存在します", database_name);
-            } else {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                eprintln!("   ⚠️  データベース '{}' の作成に失敗しました（続行します）: {} {}", database_name, status.as_u16(), body);
-            }
-        }
-        Err(e) => {
-            eprintln!("   ⚠️  データベース '{}' の作成に失敗しました（続行します）: {}", database_name, e);
-        }
-    }
-    
-    // データベース名を指定してクライアントを作成
+    // 空文字列ではなく、明示的なデフォルト値を設定
+    // ChromaDB 1.xでは、この値は無視されるが、Rustクライアントのエラーを回避する
     let options = ChromaClientOptions {
         url: Some(base_url),
-        database: database_name.to_string(),
+        database: "default_database".to_string(), // 明示的なデフォルト値を設定
         auth: ChromaAuthMethod::None,
     };
     
@@ -429,6 +590,7 @@ async fn get_or_create_collection_with_error_handling(
         Ok(collection) => Ok(collection),
         Err(e) => {
             let error_msg = format!("{}", e);
+            eprintln!("❌ [get_or_create_collection] エラー: コレクション名='{}', エラー='{}'", collection_name, error_msg);
             // acquire_writeテーブルが見つからないエラーの場合、自動修復を試みる
             if error_msg.contains("acquire_write") || error_msg.contains("no such table") {
                 eprintln!("⚠️ ChromaDBの内部データベースエラーを検出しました。自動修復を試みます...");
@@ -1353,8 +1515,67 @@ pub async fn save_topic_embedding(
     combined_embedding: Vec<f32>,
     metadata: HashMap<String, Value>,
 ) -> Result<(), String> {
+    eprintln!("[save_topic_embedding] 開始: topicId={}, meetingNoteId={}, organizationId={}, embedding_dim={}", 
+        topic_id, meeting_note_id, organization_id, combined_embedding.len());
+    
+    // クライアントが初期化されていない場合、自動的に初期化を試みる
+    if CHROMADB_CLIENT.get().is_none() {
+        eprintln!("⚠️ ChromaDBクライアントが初期化されていません。自動初期化を試みます...");
+        
+        // サーバーが起動しているか確認
+        let server_lock = CHROMADB_SERVER.get();
+        let port = if let Some(server_lock) = server_lock {
+            let port_opt = {
+                let server_guard = server_lock.lock().unwrap();
+                server_guard.as_ref().map(|server| server.port())
+            };
+            
+            if let Some(port) = port_opt {
+                port
+            } else {
+                let port = std::env::var("CHROMADB_PORT")
+                    .ok()
+                    .and_then(|s| s.parse::<u16>().ok())
+                    .unwrap_or(8000);
+                let data_dir = get_default_chromadb_data_dir()?;
+                match init_chromadb_server(data_dir, port).await {
+                    Ok(_) => {
+                        eprintln!("✅ ChromaDBサーバーの自動起動に成功しました");
+                        port
+                    }
+                    Err(e) => {
+                        return Err(format!("ChromaDBサーバーの起動に失敗しました: {}", e));
+                    }
+                }
+            }
+        } else {
+            let port = std::env::var("CHROMADB_PORT")
+                .ok()
+                .and_then(|s| s.parse::<u16>().ok())
+                .unwrap_or(8000);
+            let data_dir = get_default_chromadb_data_dir()?;
+            match init_chromadb_server(data_dir, port).await {
+                Ok(_) => {
+                    eprintln!("✅ ChromaDBサーバーの自動起動に成功しました");
+                    port
+                }
+                Err(e) => {
+                    return Err(format!("ChromaDBサーバーの起動に失敗しました: {}", e));
+                }
+            }
+        };
+        
+        if CHROMADB_CLIENT.get().is_none() {
+            if let Err(e) = init_chromadb_client(port).await {
+                return Err(format!("ChromaDBクライアントが初期化されていません。初期化に失敗しました: {}", e));
+            }
+            eprintln!("✅ ChromaDBクライアントの自動初期化に成功しました");
+        }
+    }
+    
     let client_lock = get_chromadb_client()?;
     let collection_name = format!("topics_{}", organization_id);
+    eprintln!("[save_topic_embedding] コレクション名: {}", collection_name);
     
     // MutexGuardをdropしてから.awaitする必要がある
     let client = {
@@ -1364,7 +1585,9 @@ pub async fn save_topic_embedding(
             .clone()
     };
     
+    eprintln!("[save_topic_embedding] コレクションを取得/作成中...");
     let collection = get_or_create_collection_with_error_handling(client, &collection_name).await?;
+    eprintln!("[save_topic_embedding] コレクションを取得/作成しました");
     
     let mut embedding_metadata = metadata;
     embedding_metadata.insert("topicId".to_string(), Value::String(topic_id.clone()));
@@ -1377,6 +1600,7 @@ pub async fn save_topic_embedding(
         chroma_metadata.insert(k, v);
     }
     
+    eprintln!("[save_topic_embedding] 埋め込みを保存中... (embedding_dim={})", combined_embedding.len());
     let entries = CollectionEntries {
         ids: vec![topic_id.as_str()],
         embeddings: Some(vec![combined_embedding]),
@@ -1385,8 +1609,13 @@ pub async fn save_topic_embedding(
     };
     
     collection.upsert(entries, None).await
-        .map_err(|e| format!("トピック埋め込みの保存に失敗しました: {}", e))?;
+        .map_err(|e| {
+            let error_msg = format!("トピック埋め込みの保存に失敗しました: {}", e);
+            eprintln!("[save_topic_embedding] ❌ エラー: {}", error_msg);
+            error_msg
+        })?;
     
+    eprintln!("[save_topic_embedding] ✅ 成功: topicId={}", topic_id);
     Ok(())
 }
 

@@ -38,28 +38,16 @@ macro_rules! init_log_always {
 
 pub use auth::{sign_up, sign_in, sign_out};
 pub use store::{get_doc, set_doc, update_doc, delete_doc, add_doc, get_collection, delete_meeting_note_with_relations};
-pub use ai_settings::{get_ai_setting, set_ai_setting, get_default_model};
-pub use backup::{create_backup as db_create_backup, restore_backup as db_restore_backup, list_backups as db_list_backups, cleanup_old_backups, delete_backup as db_delete_backup};
 pub use export::{
-    export_to_file, import_from_file, export_table, export_all_data, import_template_data_if_empty,
-    export_selected_tables, export_organizations_and_members,
-    export_selected_tables_to_file, export_organizations_and_members_to_file
-};
-pub use container::{
-    add_container, get_container, get_containers_by_page, get_containers_by_plan,
-    update_container, delete_container, get_container_as_map,
+    export_to_file, import_from_file, import_template_data_if_empty,
+    export_organizations_and_members_to_file,
 };
 pub use organization::{
-    create_organization, update_organization, update_organization_parent_id, get_organization_by_id,
+    create_organization, update_organization, get_organization_by_id,
     search_organizations_by_name, get_organizations_by_parent_id, get_organization_tree, delete_organization,
     get_deletion_targets,
-    add_member, add_member_simple, update_member, get_member_by_id, get_members_by_organization_id, delete_member,
-    get_all_organizations, get_all_members,
-    export_organizations_and_members_to_csv,
-    check_duplicate_organizations, delete_duplicate_organizations,
-    DuplicateOrgInfo, OrgDetailInfo,
-    Organization, OrganizationMember, OrganizationWithMembers,
-    import_members_from_csv,
+    add_member, update_member, get_member_by_id, get_members_by_organization_id, delete_member,
+    get_all_organizations,
 };
 pub use design_doc::{
     create_design_doc_section, update_design_doc_section, get_design_doc_section_by_id,
@@ -67,7 +55,6 @@ pub use design_doc::{
     create_design_doc_section_relation, update_design_doc_section_relation,
     get_design_doc_section_relation_by_id, get_design_doc_section_relations_by_section_id,
     get_all_design_doc_section_relations, delete_design_doc_section_relation,
-    DesignDocSection, DesignDocSectionRelation,
 };
 pub use themes::{
     get_all_themes, get_theme_by_id, save_theme, create_theme, delete_theme,
@@ -1661,7 +1648,18 @@ pub async fn init_chromadb(app: &AppHandle) -> Result<(), String> {
     };
     
     let db_dir = app_data_dir.join(db_dir_name);
+    
+    // 重要: ChromaDBのデータディレクトリは、app.dbが存在するディレクトリとは別でなければならない
+    // app.dbは db_dir/app.db に存在する
+    // ChromaDBは db_dir/chromadb/ に存在する（完全に分離）
     let chromadb_data_dir = db_dir.join("chromadb");
+    
+    // 安全チェック: app.dbが存在するディレクトリとChromaDBのディレクトリが分離されていることを確認
+    let app_db_path = db_dir.join("app.db");
+    if app_db_path.exists() {
+        init_log!("✅ app.dbの場所: {}", app_db_path.display());
+    }
+    init_log!("✅ ChromaDBデータディレクトリ: {}", chromadb_data_dir.display());
     
     // ChromaDB Serverのポート番号を環境変数から読み込み、デフォルトは8000
     let chromadb_port = std::env::var("CHROMADB_PORT")

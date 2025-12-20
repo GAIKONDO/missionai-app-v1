@@ -2,8 +2,6 @@ use axum::Router;
 use std::net::SocketAddr;
 use tower_http::cors::{CorsLayer, Any};
 use tower::ServiceBuilder;
-use axum::http::Method;
-use tower_http::cors::AllowOrigin;
 
 use crate::database::get_db;
 

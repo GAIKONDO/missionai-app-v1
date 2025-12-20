@@ -12,7 +12,6 @@
 // 注意: 現在はChromaDBを使用するため、hnsw_rsは使用されていません
 // use hnsw_rs::dist::DistCosine;
 // use hnsw_rs::hnsw::Hnsw;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -59,8 +58,8 @@ static VECTOR_INDICES: Mutex<Option<HashMap<String, Arc<Mutex<VectorIndex>>>>> =
 // コンパイルエラーを回避するための空実装
 #[allow(dead_code)]
 pub async fn init_vector_index(
-    collection_name: &str,
-    data_dir: PathBuf,
+    _collection_name: &str,
+    _data_dir: PathBuf,
 ) -> Result<(), String> {
     // ChromaDBを使用するため、この実装は使用されていません
     Ok(())
@@ -72,10 +71,10 @@ pub async fn init_vector_index(
  */
 #[allow(dead_code)]
 pub async fn save_entity_embedding(
-    entity_id: String,
-    organization_id: String,
-    combined_embedding: Vec<f32>,
-    metadata: HashMap<String, Value>,
+    _entity_id: String,
+    _organization_id: String,
+    _combined_embedding: Vec<f32>,
+    _metadata: HashMap<String, Value>,
 ) -> Result<(), String> {
     // ChromaDBを使用するため、この実装は使用されていません
     Ok(())
@@ -87,7 +86,7 @@ pub async fn save_entity_embedding(
  */
 #[allow(dead_code)]
 pub async fn get_entity_embedding(
-    entity_id: String,
+    _entity_id: String,
 ) -> Result<Option<(Vec<f32>, HashMap<String, Value>)>, String> {
     // ChromaDBを使用するため、この実装は使用されていません
     Ok(None)
@@ -99,9 +98,9 @@ pub async fn get_entity_embedding(
  */
 #[allow(dead_code)]
 pub async fn find_similar_entities(
-    query_embedding: Vec<f32>,
-    limit: usize,
-    organization_id: Option<String>,
+    _query_embedding: Vec<f32>,
+    _limit: usize,
+    _organization_id: Option<String>,
 ) -> Result<Vec<(String, f32)>, String> {
     // ChromaDBを使用するため、この実装は使用されていません
     Ok(vec![])
@@ -113,10 +112,10 @@ pub async fn find_similar_entities(
  */
 #[allow(dead_code)]
 pub async fn save_relation_embedding(
-    relation_id: String,
-    organization_id: String,
-    combined_embedding: Vec<f32>,
-    metadata: HashMap<String, Value>,
+    _relation_id: String,
+    _organization_id: String,
+    _combined_embedding: Vec<f32>,
+    _metadata: HashMap<String, Value>,
 ) -> Result<(), String> {
     // ChromaDBを使用するため、この実装は使用されていません
     Ok(())
@@ -128,9 +127,9 @@ pub async fn save_relation_embedding(
  */
 #[allow(dead_code)]
 pub async fn find_similar_relations(
-    query_embedding: Vec<f32>,
-    limit: usize,
-    organization_id: Option<String>,
+    _query_embedding: Vec<f32>,
+    _limit: usize,
+    _organization_id: Option<String>,
 ) -> Result<Vec<(String, f32)>, String> {
     // ChromaDBを使用するため、この実装は使用されていません
     Ok(vec![])
@@ -142,11 +141,11 @@ pub async fn find_similar_relations(
  */
 #[allow(dead_code)]
 pub async fn save_topic_embedding(
-    topic_id: String,
-    meeting_note_id: String,
-    organization_id: String,
-    combined_embedding: Vec<f32>,
-    metadata: HashMap<String, Value>,
+    _topic_id: String,
+    _meeting_note_id: String,
+    _organization_id: String,
+    _combined_embedding: Vec<f32>,
+    _metadata: HashMap<String, Value>,
 ) -> Result<(), String> {
     // ChromaDBを使用するため、この実装は使用されていません
     Ok(())
@@ -158,9 +157,9 @@ pub async fn save_topic_embedding(
  */
 #[allow(dead_code)]
 pub async fn find_similar_topics(
-    query_embedding: Vec<f32>,
-    limit: usize,
-    organization_id: Option<String>,
+    _query_embedding: Vec<f32>,
+    _limit: usize,
+    _organization_id: Option<String>,
 ) -> Result<Vec<(String, String, f32)>, String> {
     // ChromaDBを使用するため、この実装は使用されていません
     Ok(vec![])

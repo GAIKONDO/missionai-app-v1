@@ -1,12 +1,7 @@
 use axum::{
     Router,
     routing::{get, post, put, delete},
-    response::Json,
-    extract::{Path, Query},
-    http::StatusCode,
 };
-use serde_json::Value;
-use std::collections::HashMap;
 
 use crate::api::handlers;
 
