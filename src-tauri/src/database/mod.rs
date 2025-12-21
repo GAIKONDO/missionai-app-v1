@@ -61,6 +61,12 @@ pub use themes::{
     update_theme_positions,
     Theme,
 };
+mod agent_system;
+pub use agent_system::{
+    save_task, get_task, get_all_tasks, delete_task,
+    save_task_execution, get_task_execution, get_task_executions, get_all_task_executions,
+    Task, TaskExecution,
+};
 
 pub struct Database {
     pool: DatabasePool,
@@ -1469,6 +1475,92 @@ impl Database {
         conn.execute("CREATE INDEX IF NOT EXISTS idx_designDocSectionRelations_source ON designDocSectionRelations(sourceSectionId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_designDocSectionRelations_target ON designDocSectionRelations(targetSectionId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_designDocSectionRelations_type ON designDocSectionRelations(relationType)", [])?;
+
+        // Agentシステム用テーブル
+        // タスクテーブル
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                type TEXT NOT NULL,
+                agentId TEXT,
+                requiredAgents TEXT,
+                dependencies TEXT,
+                parameters TEXT NOT NULL,
+                priority INTEGER DEFAULT 5,
+                timeout INTEGER,
+                retryCount INTEGER DEFAULT 0,
+                createdAt TEXT NOT NULL,
+                updatedAt TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        // タスク実行テーブル
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS taskExecutions (
+                id TEXT PRIMARY KEY,
+                taskId TEXT NOT NULL,
+                agentId TEXT NOT NULL,
+                status TEXT NOT NULL,
+                startedAt TEXT NOT NULL,
+                completedAt TEXT,
+                result TEXT,
+                error TEXT,
+                logs TEXT,
+                createdAt TEXT NOT NULL,
+                updatedAt TEXT NOT NULL,
+                FOREIGN KEY (taskId) REFERENCES tasks(id) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+
+        // Agent定義テーブル
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agents (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                role TEXT NOT NULL,
+                capabilities TEXT NOT NULL,
+                tools TEXT NOT NULL,
+                modelType TEXT NOT NULL,
+                systemPrompt TEXT NOT NULL,
+                config TEXT NOT NULL,
+                createdAt TEXT NOT NULL,
+                updatedAt TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        // A2Aメッセージ履歴テーブル
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS a2aMessages (
+                id TEXT PRIMARY KEY,
+                fromAgent TEXT NOT NULL,
+                toAgent TEXT NOT NULL,
+                type TEXT NOT NULL,
+                taskId TEXT,
+                payload TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                responseTo TEXT,
+                requiresResponse INTEGER DEFAULT 0,
+                createdAt TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        // インデックスを作成
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(type)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_agentId ON tasks(agentId)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_taskExecutions_taskId ON taskExecutions(taskId)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_taskExecutions_agentId ON taskExecutions(agentId)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_taskExecutions_status ON taskExecutions(status)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_agents_role ON agents(role)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_a2aMessages_fromAgent ON a2aMessages(fromAgent)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_a2aMessages_toAgent ON a2aMessages(toAgent)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_a2aMessages_taskId ON a2aMessages(taskId)", [])?;
 
         Ok(())
     }

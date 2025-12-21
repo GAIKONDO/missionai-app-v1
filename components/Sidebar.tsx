@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useTransition } from 'react';
-import { DashboardIcon, LineChartIcon, BarChartIcon, DocumentIcon, SettingsIcon, OrganizationIcon, KnowledgeGraphIcon, RAGSearchIcon, DesignIcon, TargetIcon, MenuIcon, CloseIcon } from './Icons';
+import { DashboardIcon, LineChartIcon, BarChartIcon, DocumentIcon, SettingsIcon, OrganizationIcon, KnowledgeGraphIcon, RAGSearchIcon, DesignIcon, TargetIcon, MenuIcon, CloseIcon, AgentIcon } from './Icons';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -25,6 +25,7 @@ export default function Sidebar({ isOpen, onToggle, currentPage }: SidebarProps)
     { icon: RAGSearchIcon, label: 'RAG検索', id: 'rag-search', path: '/rag-search' },
     { icon: BarChartIcon, label: 'レポート', id: 'reports', path: '/reports' },
     { icon: DesignIcon, label: '設計', id: 'design', path: '/design' },
+    { icon: AgentIcon, label: 'Agent', id: 'agents', path: '/agents' },
     { icon: SettingsIcon, label: '設定', id: 'settings', path: '/settings' },
   ];
 
@@ -38,6 +39,7 @@ export default function Sidebar({ isOpen, onToggle, currentPage }: SidebarProps)
     if (pathname.startsWith('/rag-search')) return 'rag-search';
     if (pathname.startsWith('/a2c100')) return 'a2c100';
     if (pathname.startsWith('/design')) return 'design';
+    if (pathname.startsWith('/agents')) return 'agents';
     const pathWithoutSlash = pathname.replace('/', '');
     return pathWithoutSlash || 'dashboard';
   };

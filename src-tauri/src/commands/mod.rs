@@ -8,4 +8,5 @@ pub mod fs;
 pub mod chromadb;
 pub mod design_doc;
 pub mod plantuml;
+pub mod agent_system;
 

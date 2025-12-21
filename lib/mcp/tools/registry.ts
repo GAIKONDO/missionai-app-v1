@@ -479,6 +479,13 @@ export function registerStandardTools(): void {
   registerTool(new UpdateCauseEffectDiagramTool());
   registerTool(new GenerateContainerTool());
   registerTool(new SearchKnowledgeGraphTool());
-  console.log('[MCPTools] 標準Toolを登録しました');
+  
+  // Agent関連Toolを登録
+  const { executeAgentTaskTool, listAgentsTool, sendAgentMessageTool } = require('./agentTools');
+  registerTool(executeAgentTaskTool);
+  registerTool(listAgentsTool);
+  registerTool(sendAgentMessageTool);
+  
+  console.log('[MCPTools] 標準Toolを登録しました（Agent関連Toolを含む）');
 }
 

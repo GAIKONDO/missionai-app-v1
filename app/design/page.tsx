@@ -12,6 +12,9 @@ import { SQLiteSchemaSection } from '@/components/design/sections/SQLiteSchemaSe
 import { ChromaDBSchemaSection } from '@/components/design/sections/ChromaDBSchemaSection';
 import { DataFlowSection } from '@/components/design/sections/DataFlowSection';
 import { PageStructureSection } from '@/components/design/sections/PageStructureSection';
+import { RAGSearchMechanismSection } from '@/components/design/sections/RAGSearchMechanismSection';
+import { OrchestrationMCPLLMSection } from '@/components/design/sections/OrchestrationMCPLLMSection';
+import { AgentSystemSection } from '@/components/design/sections/AgentSystemSection';
 
 export default function DesignPage() {
   const [viewMode, setViewMode] = useState<'sections' | 'search' | 'ai'>('sections');
@@ -167,6 +170,9 @@ export default function DesignPage() {
                   {activeSection === 'chromadb-schema' && <ChromaDBSchemaSection />}
                   {activeSection === 'data-flow' && <DataFlowSection />}
                   {activeSection === 'page-structure' && <PageStructureSection />}
+                  {activeSection === 'rag-search-mechanism' && <RAGSearchMechanismSection />}
+                  {activeSection === 'orchestration-mcp-llm' && <OrchestrationMCPLLMSection />}
+                  {activeSection === 'agent-system' && <AgentSystemSection />}
                 </div>
               </div>
             )}

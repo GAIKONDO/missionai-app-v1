@@ -13,6 +13,9 @@ import { SQLiteSchemaCard } from './SQLiteSchemaCard';
 import { ChromaDBSchemaCard } from './ChromaDBSchemaCard';
 import { DataFlowCard } from './DataFlowCard';
 import { PageStructureCard } from './PageStructureCard';
+import { RAGSearchMechanismCard } from './RAGSearchMechanismCard';
+import { OrchestrationMCPLLMCard } from './OrchestrationMCPLLMCard';
+import { AgentSystemCard } from './AgentSystemCard';
 
 // カードコンポーネントの型定義
 export interface CardComponent {
@@ -60,5 +63,23 @@ export const cardComponents: CardComponent[] = [
     title: 'ページ構造', 
     description: 'ページ間のリンク関係とID管理', 
     component: PageStructureCard 
+  },
+  { 
+    id: 'rag-search-mechanism', 
+    title: 'RAG検索の仕組み', 
+    description: 'RAG検索のアルゴリズムとデータフロー', 
+    component: RAGSearchMechanismCard 
+  },
+  { 
+    id: 'orchestration-mcp-llm', 
+    title: 'オーケストレーション・MCP・LLM連携', 
+    description: 'オーケストレーションレイヤー、MCPサーバー、LLMの連携方法', 
+    component: OrchestrationMCPLLMCard 
+  },
+  { 
+    id: 'agent-system', 
+    title: 'Agentシステム', 
+    description: 'マルチエージェントシステムのアーキテクチャと動作', 
+    component: AgentSystemCard 
   },
 ];

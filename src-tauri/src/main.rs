@@ -239,6 +239,15 @@ fn main() {
             // PlantUMLコマンド
             commands::plantuml::render_plantuml,
             commands::plantuml::check_java_installed,
+            // Agentシステムコマンド
+            commands::agent_system::save_task_command,
+            commands::agent_system::get_task_command,
+            commands::agent_system::get_all_tasks_command,
+            commands::agent_system::delete_task_command,
+            commands::agent_system::save_task_execution_command,
+            commands::agent_system::get_task_execution_command,
+            commands::agent_system::get_task_executions_command,
+            commands::agent_system::get_all_task_executions_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

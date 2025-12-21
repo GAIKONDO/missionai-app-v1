@@ -1,13 +1,8 @@
 import React from 'react';
+import type { DesignCardProps } from './DesignCard.types';
 
-export interface DesignCardProps {
-  id: string;
-  title: string;
-  description?: string;
-  isActive?: boolean;
-  onClick?: () => void;
-  children?: React.ReactNode;
-}
+// 型定義を再エクスポート（既存のコードとの互換性のため）
+export type { DesignCardProps };
 
 /**
  * デザインページ用のカードコンポーネント

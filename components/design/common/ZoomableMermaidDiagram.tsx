@@ -24,10 +24,12 @@ export function ZoomableMermaidDiagram({
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const contentDivRef = useRef<HTMLDivElement>(null);
   const mermaidContainerRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const translateRef = useRef({ x: 0, y: 0 });
   const zoomRef = useRef(1);
+  const isDraggingRef = useRef(false);
   const mermaidRenderedRef = useRef(false);
   const [mermaidLoaded, setMermaidLoaded] = useState(false);
   const [isInViewport, setIsInViewport] = useState(false);
@@ -55,52 +57,115 @@ export function ZoomableMermaidDiagram({
     setTranslateY(0);
   };
 
-  // マウスドラッグ処理
+  // isDraggingの状態をrefに同期
   useEffect(() => {
+    isDraggingRef.current = isDragging;
+  }, [isDragging]);
+
+  // マウスドラッグ処理（isInViewportがtrueになってから実行）
+  useEffect(() => {
+    if (!isInViewport) {
+      console.log('[ZoomableMermaidDiagram] Not in viewport, skipping drag setup');
+      return;
+    }
+
     const wrapper = wrapperRef.current;
-    if (!wrapper) return;
+    if (!wrapper) {
+      console.log('[ZoomableMermaidDiagram] wrapper not found, will retry when in viewport');
+      return;
+    }
+
+    console.log('[ZoomableMermaidDiagram] Setting up drag handlers', { zoom: zoomRef.current });
+
+    let animationFrameId: number | null = null;
 
     const handleMouseDown = (e: MouseEvent) => {
+      console.log('[ZoomableMermaidDiagram] handleMouseDown called', {
+        zoom: zoomRef.current,
+        target: (e.target as HTMLElement)?.tagName,
+        currentTarget: (e.currentTarget as HTMLElement)?.tagName,
+      });
+      
+      // ズームが1より大きい場合のみドラッグを有効化
       if (zoomRef.current > 1) {
+        console.log('[ZoomableMermaidDiagram] Starting drag');
+        isDraggingRef.current = true;
         setIsDragging(true);
         dragStartRef.current = {
           x: e.clientX - translateRef.current.x,
           y: e.clientY - translateRef.current.y,
         };
         wrapper.style.cursor = 'grabbing';
+        wrapper.style.userSelect = 'none';
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      } else {
+        console.log('[ZoomableMermaidDiagram] Zoom is 1 or less, drag disabled', {
+          zoomRef: zoomRef.current,
+        });
       }
     };
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (isDragging && zoomRef.current > 1) {
-        setTranslateX(e.clientX - dragStartRef.current.x);
-        setTranslateY(e.clientY - dragStartRef.current.y);
+      if (isDraggingRef.current && zoomRef.current > 1) {
+        if (animationFrameId) {
+          cancelAnimationFrame(animationFrameId);
+        }
+        animationFrameId = requestAnimationFrame(() => {
+          const contentDiv = contentDivRef.current;
+          if (!contentDiv) return;
+          
+          const newX = e.clientX - dragStartRef.current.x;
+          const newY = e.clientY - dragStartRef.current.y;
+          translateRef.current = { x: newX, y: newY };
+          setTranslateX(newX);
+          setTranslateY(newY);
+          // DOMのスタイルも直接更新して即座に反映
+          contentDiv.style.transform = `scale(${zoomRef.current}) translate(${newX}px, ${newY}px)`;
+          contentDiv.style.transition = 'none';
+        });
+        e.preventDefault();
       }
     };
 
     const handleMouseUp = () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+      }
+      isDraggingRef.current = false;
       setIsDragging(false);
       if (wrapper) {
         wrapper.style.cursor = zoomRef.current > 1 ? 'grab' : 'default';
       }
+      const contentDiv = contentDivRef.current;
+      if (contentDiv) {
+        contentDiv.style.transition = 'transform 0.1s ease';
+      }
     };
 
-    wrapper.addEventListener('mousedown', handleMouseDown);
+    // capture phaseでイベントをキャプチャ（子要素より先に処理）
+    wrapper.addEventListener('mousedown', handleMouseDown, { capture: true });
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
 
     return () => {
-      wrapper.removeEventListener('mousedown', handleMouseDown);
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+      wrapper.removeEventListener('mousedown', handleMouseDown, { capture: true });
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging]);
+  }, [isInViewport]);
 
   // ズーム変更時にカーソルを更新
   useEffect(() => {
     const wrapper = wrapperRef.current;
     if (wrapper) {
       wrapper.style.cursor = zoom > 1 ? 'grab' : 'default';
+      console.log('[ZoomableMermaidDiagram] Zoom changed', { zoom, zoomRef: zoomRef.current });
     }
   }, [zoom]);
 
@@ -277,9 +342,11 @@ export function ZoomableMermaidDiagram({
               borderRadius: '8px',
               minHeight: '200px',
               backgroundColor: '#f5f5f5',
+              cursor: zoom > 1 ? 'grab' : 'default',
             }}
           >
             <div
+              ref={contentDivRef}
               style={{
                 backgroundColor: 'white',
                 padding: '24px',
