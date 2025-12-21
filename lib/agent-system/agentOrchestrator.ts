@@ -10,14 +10,29 @@ import { agentRegistry } from './agentRegistry';
 import { getA2AManager } from './a2aManager';
 import { generateId } from './utils';
 import { getErrorHandler } from './errorHandler';
+import { saveTaskExecution, getAllTaskExecutions } from './taskManager';
 
 /**
  * Agentオーケストレーター
  */
+/**
+ * タスクキューエントリ
+ */
+interface QueuedTask {
+  task: Task;
+  resolve: (execution: TaskExecution) => void;
+  reject: (error: Error) => void;
+  executionId: string;
+}
+
 export class AgentOrchestrator {
   private taskPlanner: TaskPlanner;
   private a2aManager = getA2AManager();
   private executions: Map<string, TaskExecution> = new Map();
+  private abortControllers: Map<string, AbortController> = new Map(); // 実行ID -> AbortController
+  private runningTasks: Set<string> = new Set(); // 実行中のタスクID
+  private taskQueues: Map<string, QueuedTask[]> = new Map(); // Agent ID -> タスクキュー
+  private maxConcurrentTasks: number = 10; // デフォルトの最大同時実行数
 
   constructor() {
     this.taskPlanner = new TaskPlanner();
@@ -51,28 +66,184 @@ export class AgentOrchestrator {
       execution.status = ES.FAILED;
       execution.completedAt = Date.now();
       execution.error = `Agent ${plan.assignedAgentId} not found`;
+      // 実行履歴をデータベースに保存（エラー時）
+      try {
+        await saveTaskExecution(execution);
+      } catch (saveError) {
+        console.error(`[AgentOrchestrator] 実行履歴の保存に失敗（Agent未検出時）:`, saveError);
+      }
       return execution;
     }
 
-    // 5. タスクが実行可能かチェック
+    // 5. 同時実行数制御（キューイングシステム）
+    const agentDef = agent.getAgent();
+    const agentMaxConcurrent = agentDef.config.maxConcurrentTasks || this.maxConcurrentTasks;
+    
+    // 同じAgentで実行中のタスク数をカウント
+    const runningCount = Array.from(this.runningTasks).filter(taskId => {
+      const exec = this.executions.get(taskId);
+      return exec && exec.agentId === agentDef.id && exec.status === ES.RUNNING;
+    }).length;
+
+    // 同時実行数制限に達している場合、キューに追加
+    if (runningCount >= agentMaxConcurrent) {
+      return new Promise<TaskExecution>((resolve, reject) => {
+        // キューに追加
+        if (!this.taskQueues.has(agentDef.id)) {
+          this.taskQueues.set(agentDef.id, []);
+        }
+        this.taskQueues.get(agentDef.id)!.push({
+          task,
+          resolve,
+          reject,
+          executionId,
+        });
+        
+        // キューから処理を開始（既に処理中の場合はスキップ）
+        this.processQueue(agentDef.id, agentMaxConcurrent);
+      });
+    }
+
+    // 実行中のタスクとして登録
+    this.runningTasks.add(executionId);
+
+    // 6. タスクを実行（内部実装を呼び出し）
+    return await this.executeTaskInternal(task, executionId);
+  }
+
+  /**
+   * キューからタスクを処理
+   */
+  private async processQueue(agentId: string, maxConcurrent: number): Promise<void> {
+    const queue = this.taskQueues.get(agentId);
+    if (!queue || queue.length === 0) {
+      return;
+    }
+
+    // 現在の実行中タスク数をカウント
+    const runningCount = Array.from(this.runningTasks).filter(taskId => {
+      const exec = this.executions.get(taskId);
+      return exec && exec.agentId === agentId && exec.status === ES.RUNNING;
+    }).length;
+
+    // 実行可能なタスク数を計算
+    const availableSlots = maxConcurrent - runningCount;
+
+    // 実行可能なタスクを処理
+    for (let i = 0; i < Math.min(availableSlots, queue.length); i++) {
+      const queuedTask = queue.shift();
+      if (!queuedTask) break;
+
+      try {
+        // タスクを実行（executeTaskの内部処理を実行）
+        const execution = await this.executeTaskInternal(queuedTask.task, queuedTask.executionId);
+        queuedTask.resolve(execution);
+      } catch (error) {
+        queuedTask.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+  }
+
+  /**
+   * タスクを実行（内部実装、キューイングなし）
+   */
+  private async executeTaskInternal(task: Task, executionId: string): Promise<TaskExecution> {
+    // 1. 実行計画を作成
+    const plan = await this.taskPlanner.createPlan(task);
+
+    // 2. 実行記録を作成
+    const execution: TaskExecution = {
+      id: executionId,
+      taskId: task.id,
+      agentId: plan.assignedAgentId,
+      status: ES.PENDING,
+      startedAt: Date.now(),
+      logs: [],
+    };
+
+    this.executions.set(executionId, execution);
+
+    // 3. Agentを取得
+    const agent = agentRegistry.get(plan.assignedAgentId);
+    if (!agent) {
+      execution.status = ES.FAILED;
+      execution.completedAt = Date.now();
+      execution.error = `Agent ${plan.assignedAgentId} not found`;
+      try {
+        await saveTaskExecution(execution);
+      } catch (saveError) {
+        console.error(`[AgentOrchestrator] 実行履歴の保存に失敗（Agent未検出時）:`, saveError);
+      }
+      return execution;
+    }
+
+    // 4. タスクが実行可能かチェック
     if (!agent.canExecuteTask(task)) {
       execution.status = ES.FAILED;
       execution.completedAt = Date.now();
       execution.error = `Agent ${plan.assignedAgentId} cannot execute task type ${task.type}`;
+      this.runningTasks.delete(executionId);
+      try {
+        await saveTaskExecution(execution);
+      } catch (saveError) {
+        console.error(`[AgentOrchestrator] 実行履歴の保存に失敗（実行不可時）:`, saveError);
+      }
       return execution;
     }
 
-    // 6. タスクを実行
+    // 5. 実行履歴をデータベースに保存（開始時）
+    try {
+      await saveTaskExecution(execution);
+    } catch (saveError) {
+      console.error(`[AgentOrchestrator] 実行履歴の保存に失敗（開始時）:`, saveError);
+    }
+
+    // 6. AbortControllerを作成
+    const abortController = new AbortController();
+    this.abortControllers.set(executionId, abortController);
+
+    // 7. タスクを実行（タイムアウト処理付き）
     execution.status = ES.RUNNING;
     try {
-      const result = await agent.executeTask(task, {
+      // タイムアウト処理
+      const timeout = task.timeout || 60000; // デフォルト60秒
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        const timeoutId = setTimeout(() => {
+          reject(new Error(`タスクがタイムアウトしました（${timeout}ms）`));
+        }, timeout);
+        
+        // AbortControllerがシグナルされた場合、タイムアウトをクリア
+        abortController.signal.addEventListener('abort', () => {
+          clearTimeout(timeoutId);
+        });
+      });
+
+      const taskPromise = agent.executeTask(task, {
         executionId,
         a2aManager: this.a2aManager,
+        abortController,
       });
+
+      // タイムアウトとタスク実行を競争させる
+      // AbortControllerがシグナルされた場合、エラーをスロー
+      const abortPromise = new Promise<never>((_, reject) => {
+        abortController.signal.addEventListener('abort', () => {
+          reject(new Error('タスクがキャンセルされました'));
+        });
+      });
+
+      const result = await Promise.race([taskPromise, timeoutPromise, abortPromise]);
 
       execution.status = ES.COMPLETED;
       execution.completedAt = Date.now();
       execution.result = result;
+
+      // 実行履歴をデータベースに保存（完了時）
+      try {
+        await saveTaskExecution(execution);
+      } catch (saveError) {
+        console.error(`[AgentOrchestrator] 実行履歴の保存に失敗（完了時）:`, saveError);
+      }
     } catch (error: any) {
       const errorHandler = getErrorHandler();
       const errorInfo = errorHandler.classifyError(error);
@@ -81,6 +252,13 @@ export class AgentOrchestrator {
       execution.completedAt = Date.now();
       execution.error = errorInfo.message;
       this.addLog(execution, 'error', `タスク実行エラー: ${errorInfo.message}`, errorInfo);
+
+      // 実行履歴をデータベースに保存（エラー時）
+      try {
+        await saveTaskExecution(execution);
+      } catch (saveError) {
+        console.error(`[AgentOrchestrator] 実行履歴の保存に失敗（エラー時）:`, saveError);
+      }
 
       // エラー通知
       await errorHandler.notifyError(errorInfo, task, execution);
@@ -107,7 +285,19 @@ export class AgentOrchestrator {
           execution.status = ES.FAILED;
           execution.error = retryExecution.error || errorInfo.message;
         }
+
+        // リトライ後の実行履歴をデータベースに保存
+        try {
+          await saveTaskExecution(execution);
+        } catch (saveError) {
+          console.error(`[AgentOrchestrator] 実行履歴の保存に失敗（リトライ後）:`, saveError);
+        }
       }
+    } finally {
+      // 実行中のタスクから削除
+      this.runningTasks.delete(executionId);
+      // AbortControllerを削除
+      this.abortControllers.delete(executionId);
     }
 
     return execution;
@@ -156,8 +346,39 @@ export class AgentOrchestrator {
 
   /**
    * すべての実行を取得
+   * メモリ内の実行とデータベースから読み込んだ実行をマージ
    */
-  getAllExecutions(): TaskExecution[] {
+  async getAllExecutions(): Promise<TaskExecution[]> {
+    // データベースから実行履歴を読み込む
+    try {
+      const dbExecutions = await getAllTaskExecutions();
+      
+      // メモリ内の実行とマージ（メモリ内の実行が優先）
+      const memoryExecutionIds = new Set(Array.from(this.executions.keys()));
+      const mergedExecutions = [...Array.from(this.executions.values())];
+      
+      // データベースにあってメモリにない実行を追加
+      for (const dbExec of dbExecutions) {
+        if (!memoryExecutionIds.has(dbExec.id)) {
+          mergedExecutions.push(dbExec);
+        }
+      }
+      
+      // 開始時刻でソート（新しい順）
+      mergedExecutions.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+      
+      return mergedExecutions;
+    } catch (error) {
+      console.error('[AgentOrchestrator] 実行履歴の読み込みに失敗:', error);
+      // エラー時はメモリ内の実行のみを返す
+      return Array.from(this.executions.values());
+    }
+  }
+
+  /**
+   * すべての実行を取得（同期版、メモリ内のみ）
+   */
+  getAllExecutionsSync(): TaskExecution[] {
     return Array.from(this.executions.values());
   }
 
@@ -175,10 +396,39 @@ export class AgentOrchestrator {
    */
   async cancelExecution(executionId: string): Promise<void> {
     const execution = this.executions.get(executionId);
-    if (execution && execution.status === ES.RUNNING) {
+    if (!execution) {
+      console.warn(`[AgentOrchestrator] 実行が見つかりません: ${executionId}`);
+      return;
+    }
+
+    // 実行中または待機中のタスクのみキャンセル可能
+    if (execution.status !== ES.RUNNING && execution.status !== ES.PENDING) {
+      console.warn(`[AgentOrchestrator] 実行は既に完了または失敗しています: ${executionId} (${execution.status})`);
+      return;
+    }
+
+    // AbortControllerを取得して中断シグナルを送信
+    const abortController = this.abortControllers.get(executionId);
+    if (abortController) {
+      abortController.abort();
+      console.log(`[AgentOrchestrator] 実行を中断: ${executionId}`);
+    }
+
+    // 実行状態を更新
       execution.status = ES.CANCELLED;
       execution.completedAt = Date.now();
+    execution.error = 'ユーザーによってキャンセルされました';
       this.addLog(execution, 'info', '実行がキャンセルされました');
+
+    // 実行中のタスクから削除
+    this.runningTasks.delete(executionId);
+    this.abortControllers.delete(executionId);
+
+    // 実行履歴をデータベースに保存
+    try {
+      await saveTaskExecution(execution);
+    } catch (saveError) {
+      console.error(`[AgentOrchestrator] 実行履歴の保存に失敗（キャンセル時）:`, saveError);
     }
   }
 

@@ -21,6 +21,7 @@ export class ValidationAgent extends BaseAgent {
       capabilities: agent?.capabilities || [TaskType.VALIDATION],
       tools: agent?.tools || [],
       modelType: agent?.modelType || 'gpt',
+      selectedModel: agent?.selectedModel,
       systemPrompt: agent?.systemPrompt || `あなたは検証専門のAIエージェントです。
 提供されたデータの整合性、品質、正確性を検証します。
 検証結果は明確で、問題があれば具体的な指摘を行います。`,
@@ -47,6 +48,11 @@ export class ValidationAgent extends BaseAgent {
     task: Task,
     context: TaskExecutionContext
   ): Promise<any> {
+    // AbortControllerのチェック
+    if (context.abortController?.signal.aborted) {
+      throw new Error('タスクがキャンセルされました');
+    }
+
     const execution = context.executionId ? {
       id: context.executionId,
       taskId: task.id,

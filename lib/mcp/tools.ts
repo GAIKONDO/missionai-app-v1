@@ -10,6 +10,11 @@ import type { MCPTool, MCPToolResult, MCPToolRequest } from './types';
 export interface MCPToolImplementation {
   name: string;
   description: string;
+  arguments?: MCPToolArgument[]; // 引数情報（オプション）
+  returns?: {
+    type: 'string' | 'object' | 'array';
+    description: string;
+  };
   execute(request: MCPToolRequest): Promise<MCPToolResult>;
 }
 
@@ -41,7 +46,8 @@ class MCPToolRegistry {
     return Array.from(this.tools.values()).map(tool => ({
       name: tool.name,
       description: tool.description,
-      arguments: [], // 実装時に詳細を追加
+      arguments: tool.arguments || [],
+      returns: tool.returns,
     }));
   }
 
@@ -103,8 +109,44 @@ export async function executeTool(request: MCPToolRequest): Promise<MCPToolResul
 
 /**
  * 利用可能なToolの一覧を取得
+ * メモリ内のツールとデータベースのツールをマージ
  */
-export function listAvailableTools(): MCPTool[] {
+export async function listAvailableTools(): Promise<MCPTool[]> {
+  // メモリ内のツール（実行可能なツール）
+  const memoryTools = toolRegistry.list();
+  
+  // データベースからツールのメタデータを取得（将来的にカスタムツールを追加する場合）
+  try {
+    const { loadEnabledMCPTools } = await import('../mcp/toolStorage');
+    const dbTools = await loadEnabledMCPTools();
+    
+    // メモリ内のツールを優先し、データベースのツールで補完
+    const toolMap = new Map<string, MCPTool>();
+    
+    // まずメモリ内のツールを追加
+    for (const tool of memoryTools) {
+      toolMap.set(tool.name, tool);
+    }
+    
+    // データベースのツールで、メモリ内にないものを追加（カスタムツールなど）
+    for (const tool of dbTools) {
+      if (!toolMap.has(tool.name)) {
+        toolMap.set(tool.name, tool);
+      }
+    }
+    
+    return Array.from(toolMap.values());
+  } catch (error) {
+    console.warn('[MCPTools] データベースからのツール読み込みに失敗、メモリ内のツールのみを使用:', error);
+    return memoryTools;
+  }
+}
+
+/**
+ * 利用可能なToolの一覧を取得（同期版、後方互換性のため）
+ * @deprecated 非同期版のlistAvailableTools()を使用してください
+ */
+export function listAvailableToolsSync(): MCPTool[] {
   return toolRegistry.list();
 }
 

@@ -11,6 +11,17 @@ import type { MCPToolImplementation, MCPToolRequest, MCPToolResult } from '../to
 class UpdateCauseEffectDiagramTool implements MCPToolImplementation {
   name = 'update_cause_effect_diagram';
   description = '特性要因図を議事録またはテキストの内容で更新します';
+  arguments = [
+    { name: 'causeEffectDiagramId', type: 'string' as const, description: '特性要因図ID', required: true },
+    { name: 'meetingNoteId', type: 'string' as const, description: '議事録ID（textContentと排他的）', required: false },
+    { name: 'textContent', type: 'string' as const, description: 'テキストコンテンツ（meetingNoteIdと排他的）', required: false },
+    { name: 'modelType', type: 'string' as const, description: 'モデルタイプ（gpt/local/cursor）', required: false, default: 'gpt' },
+    { name: 'selectedModel', type: 'string' as const, description: '選択されたモデル名', required: false, default: 'gpt-4.1-mini' },
+  ];
+  returns = {
+    type: 'object' as const,
+    description: '更新結果（summary, addedElementsを含む）',
+  };
 
   async execute(request: MCPToolRequest): Promise<MCPToolResult> {
     const { causeEffectDiagramId, meetingNoteId, textContent, modelType, selectedModel } = request.arguments;
@@ -108,75 +119,20 @@ class UpdateCauseEffectDiagramTool implements MCPToolImplementation {
 }
 
 /**
- * コンテナ生成Tool
- */
-class GenerateContainerTool implements MCPToolImplementation {
-  name = 'generate_container';
-  description = 'コンテナのコンテンツを生成します';
-
-  async execute(request: MCPToolRequest): Promise<MCPToolResult> {
-    const { containerId, theme, planId, subMenuId, modelType, selectedModel } = request.arguments;
-    
-    if (!containerId || !theme || !planId || !subMenuId) {
-      return {
-        success: false,
-        error: 'コンテナID、テーマ、計画ID、サブメニューIDが必要です',
-      };
-    }
-
-    try {
-      const { generateContainerContent, updateContainer } = await import('@/lib/containerGeneration');
-      
-      // モデルタイプとモデル名を取得（デフォルト値を使用）
-      const finalModelType = (modelType || 'gpt') as 'gpt' | 'local' | 'cursor';
-      const finalSelectedModel = selectedModel || 'gpt-4.1-mini';
-
-      // コンテナコンテンツを生成
-      const result = await generateContainerContent(
-        containerId,
-        theme,
-        planId,
-        subMenuId,
-        finalModelType,
-        finalSelectedModel
-      );
-
-      // コンテナを更新
-      await updateContainer(planId, containerId, subMenuId, {
-        title: result.title,
-        content: result.content,
-      });
-
-      return {
-        success: true,
-        data: {
-          message: `コンテナ ${containerId} のコンテンツを生成しました`,
-          title: result.title,
-          content: result.content,
-        },
-        metadata: {
-          source: this.name,
-        },
-      };
-    } catch (error: any) {
-      console.error('[GenerateContainerTool] エラー:', error);
-      return {
-        success: false,
-        error: error.message || 'コンテナの生成に失敗しました',
-        metadata: {
-          source: this.name,
-        },
-      };
-    }
-  }
-}
-
-/**
  * ナレッジグラフ検索Tool
  */
 class SearchKnowledgeGraphTool implements MCPToolImplementation {
   name = 'search_knowledge_graph';
   description = 'ナレッジグラフを検索して関連情報を取得します';
+  arguments = [
+    { name: 'query', type: 'string' as const, description: '検索クエリ', required: true },
+    { name: 'limit', type: 'number' as const, description: '検索結果の最大件数', required: false, default: 10 },
+    { name: 'organizationId', type: 'string' as const, description: '組織ID（オプション）', required: false },
+  ];
+  returns = {
+    type: 'array' as const,
+    description: '検索結果の配列（topic, entity, relationを含む）',
+  };
 
   async execute(request: MCPToolRequest): Promise<MCPToolResult> {
     const { query, limit = 10, organizationId } = request.arguments;
@@ -477,7 +433,6 @@ class SearchKnowledgeGraphTool implements MCPToolImplementation {
  */
 export function registerStandardTools(): void {
   registerTool(new UpdateCauseEffectDiagramTool());
-  registerTool(new GenerateContainerTool());
   registerTool(new SearchKnowledgeGraphTool());
   
   // Agent関連Toolを登録

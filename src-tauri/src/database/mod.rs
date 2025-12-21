@@ -65,7 +65,15 @@ mod agent_system;
 pub use agent_system::{
     save_task, get_task, get_all_tasks, delete_task,
     save_task_execution, get_task_execution, get_task_executions, get_all_task_executions,
-    Task, TaskExecution,
+    save_task_chain, get_task_chain, get_all_task_chains, delete_task_chain,
+    save_agent, get_agent, get_all_agents, delete_agent,
+    Task, TaskExecution, TaskChain, Agent,
+};
+mod mcp_tools;
+pub use mcp_tools::{
+    save_mcp_tool, get_mcp_tool_by_name, get_all_mcp_tools, get_enabled_mcp_tools, delete_mcp_tool,
+    update_mcp_tool_enabled,
+    MCPTool,
 };
 
 pub struct Database {
@@ -1491,11 +1499,44 @@ impl Database {
                 priority INTEGER DEFAULT 5,
                 timeout INTEGER,
                 retryCount INTEGER DEFAULT 0,
+                modelType TEXT,
+                selectedModel TEXT,
                 createdAt TEXT NOT NULL,
                 updatedAt TEXT NOT NULL
             )",
             [],
         )?;
+
+        // tasksテーブルにmodelTypeとselectedModelカラムを追加（マイグレーション）
+        let _ = (|| -> rusqlite::Result<()> {
+            // modelTypeカラムの存在確認
+            let model_type_exists = conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name='modelType'",
+                [],
+                |row| Ok(row.get::<_, i32>(0)? > 0),
+            ).unwrap_or(false);
+
+            if !model_type_exists {
+                init_log!("📝 tasksテーブルにmodelTypeカラムを追加します");
+                conn.execute("ALTER TABLE tasks ADD COLUMN modelType TEXT", [])?;
+                init_log!("✅ modelTypeカラムを追加しました");
+            }
+
+            // selectedModelカラムの存在確認
+            let selected_model_exists = conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name='selectedModel'",
+                [],
+                |row| Ok(row.get::<_, i32>(0)? > 0),
+            ).unwrap_or(false);
+
+            if !selected_model_exists {
+                init_log!("📝 tasksテーブルにselectedModelカラムを追加します");
+                conn.execute("ALTER TABLE tasks ADD COLUMN selectedModel TEXT", [])?;
+                init_log!("✅ selectedModelカラムを追加しました");
+            }
+
+            Ok(())
+        })();
 
         // タスク実行テーブル
         conn.execute(
@@ -1526,6 +1567,7 @@ impl Database {
                 capabilities TEXT NOT NULL,
                 tools TEXT NOT NULL,
                 modelType TEXT NOT NULL,
+                selectedModel TEXT,
                 systemPrompt TEXT NOT NULL,
                 config TEXT NOT NULL,
                 createdAt TEXT NOT NULL,
@@ -1533,6 +1575,24 @@ impl Database {
             )",
             [],
         )?;
+
+        // agentsテーブルにselectedModelカラムを追加（マイグレーション）
+        let _ = (|| -> rusqlite::Result<()> {
+            // selectedModelカラムの存在確認
+            let selected_model_exists = conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='selectedModel'",
+                [],
+                |row| Ok(row.get::<_, i32>(0)? > 0),
+            ).unwrap_or(false);
+
+            if !selected_model_exists {
+                init_log!("📝 agentsテーブルにselectedModelカラムを追加します");
+                conn.execute("ALTER TABLE agents ADD COLUMN selectedModel TEXT", [])?;
+                init_log!("✅ selectedModelカラムを追加しました");
+            }
+
+            Ok(())
+        })();
 
         // A2Aメッセージ履歴テーブル
         conn.execute(
@@ -1551,6 +1611,51 @@ impl Database {
             [],
         )?;
 
+        // Agentプロンプトバージョン履歴テーブル
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_prompt_versions (
+                id TEXT PRIMARY KEY,
+                agentId TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                systemPrompt TEXT NOT NULL,
+                createdAt INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL,
+                FOREIGN KEY (agentId) REFERENCES agents(id) ON DELETE CASCADE,
+                UNIQUE(agentId, version)
+            )",
+            [],
+        )?;
+
+        // タスクチェーンテーブル
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS taskChains (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                startNodeId TEXT NOT NULL,
+                nodes TEXT NOT NULL,
+                createdAt INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL
+            )",
+            [],
+        )?;
+
+        // MCPツールテーブル
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS mcp_tools (
+                id TEXT PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                description TEXT NOT NULL,
+                arguments TEXT NOT NULL,
+                returns TEXT,
+                implementationType TEXT NOT NULL,
+                enabled INTEGER DEFAULT 1,
+                createdAt TEXT NOT NULL,
+                updatedAt TEXT NOT NULL
+            )",
+            [],
+        )?;
+
         // インデックスを作成
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(type)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_agentId ON tasks(agentId)", [])?;
@@ -1561,6 +1666,11 @@ impl Database {
         conn.execute("CREATE INDEX IF NOT EXISTS idx_a2aMessages_fromAgent ON a2aMessages(fromAgent)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_a2aMessages_toAgent ON a2aMessages(toAgent)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_a2aMessages_taskId ON a2aMessages(taskId)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_taskChains_name ON taskChains(name)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_prompt_versions_agentId ON agent_prompt_versions(agentId)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_prompt_versions_version ON agent_prompt_versions(agentId, version)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_tools_name ON mcp_tools(name)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_tools_enabled ON mcp_tools(enabled)", [])?;
 
         Ok(())
     }

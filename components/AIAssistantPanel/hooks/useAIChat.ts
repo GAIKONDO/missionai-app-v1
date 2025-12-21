@@ -288,7 +288,7 @@ Toolを呼び出す場合は、上記の形式で指定してください。Tool
   return { sendMessage };
 }
 
-async function callOllamaAPI(model: string, messages: any[]): Promise<string> {
+export async function callOllamaAPI(model: string, messages: any[]): Promise<string> {
   let apiUrl: string = 'http://localhost:11434/api/chat';
   if (typeof window !== 'undefined') {
     const savedUrl = localStorage.getItem('NEXT_PUBLIC_OLLAMA_API_URL') || localStorage.getItem('ollamaChatApiUrl');
@@ -327,7 +327,7 @@ async function callOllamaAPI(model: string, messages: any[]): Promise<string> {
   return data.message?.content?.trim() || '';
 }
 
-async function callOpenAIAPI(model: string, messages: any[]): Promise<{ text: string; usage?: any }> {
+export async function callOpenAIAPI(model: string, messages: any[]): Promise<{ text: string; usage?: any }> {
   let apiKey: string | null = null;
   if (typeof window !== 'undefined') {
     try {

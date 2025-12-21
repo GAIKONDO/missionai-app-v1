@@ -7,13 +7,18 @@
 import { useState } from 'react';
 import { ChainList } from '@/components/agent-system/ChainList';
 import { ChainEditor } from '@/components/agent-system/ChainEditor';
+import { DeleteChainConfirmModal } from '@/components/agent-system/DeleteChainConfirmModal';
 import type { TaskChain } from '@/lib/agent-system/taskChain';
 import { getTaskChainManager } from '@/lib/agent-system/taskChain';
+import { saveTaskChain, deleteTaskChain, getAllTaskChains } from '@/lib/agent-system/taskManager';
 
 export function ChainTabContent() {
   const [viewMode, setViewMode] = useState<'list' | 'editor'>('list');
   const [selectedChainId, setSelectedChainId] = useState<string | null>(null);
   const [editingChainId, setEditingChainId] = useState<string | null>(null);
+  const [deleteConfirmChain, setDeleteConfirmChain] = useState<TaskChain | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [listRefreshTrigger, setListRefreshTrigger] = useState(0);
 
   const handleSelectChain = (chainId: string) => {
     setSelectedChainId(chainId);
@@ -26,12 +31,43 @@ export function ChainTabContent() {
     setViewMode('editor');
   };
 
-  const handleDeleteChain = (chainId: string) => {
-    if (confirm('このチェーンを削除しますか？')) {
-      const manager = getTaskChainManager();
-      // 将来的にSQLiteから削除
-      // manager.deleteChain(chainId);
-      alert('チェーンを削除しました（実装予定）');
+  const handleDeleteChain = async (chainId: string) => {
+    // データベースからチェーンを取得してモーダルを表示
+    try {
+      const chains = await getAllTaskChains();
+      const chain = chains.find(c => c.id === chainId);
+      if (chain) {
+        setDeleteConfirmChain(chain);
+      } else {
+        showToast('チェーンが見つかりません', 'warning');
+      }
+    } catch (error) {
+      console.error('チェーン取得エラー:', error);
+      showToast('チェーンの取得に失敗しました', 'error');
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteConfirmChain) return;
+
+    setIsDeleting(true);
+    try {
+      await deleteTaskChain(deleteConfirmChain.id);
+      setDeleteConfirmChain(null);
+      // リストを更新
+      setListRefreshTrigger(prev => prev + 1);
+      showToast('チェーンを削除しました', 'success');
+    } catch (error: any) {
+      console.error('チェーン削除エラー:', error);
+      showToast(`チェーン削除エラー: ${error.message || error}`, 'error');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleCloseDeleteModal = () => {
+    if (!isDeleting) {
+      setDeleteConfirmChain(null);
     }
   };
 
@@ -39,9 +75,9 @@ export function ChainTabContent() {
     const manager = getTaskChainManager();
     try {
       const result = await manager.executeChain(chainId);
-      alert(`チェーン実行が完了しました: ${result.status}`);
+      showToast(`チェーン実行が完了しました: ${result.status}`, 'success');
     } catch (error: any) {
-      alert(`チェーン実行エラー: ${error.message}`);
+      showToast(`チェーン実行エラー: ${error.message}`, 'error');
     }
   };
 
@@ -50,12 +86,20 @@ export function ChainTabContent() {
     setViewMode('editor');
   };
 
-  const handleSaveChain = (chain: TaskChain) => {
-    const manager = getTaskChainManager();
-    manager.registerChain(chain);
-    alert('チェーンを保存しました');
-    setViewMode('list');
-    setEditingChainId(null);
+  const handleSaveChain = async (chain: TaskChain) => {
+    try {
+      // データベースに保存
+      await saveTaskChain(chain);
+      // メモリにも登録（実行時に使用）
+      const manager = getTaskChainManager();
+      manager.registerChain(chain);
+      showToast('チェーンを保存しました', 'success');
+      setViewMode('list');
+      setEditingChainId(null);
+    } catch (error: any) {
+      console.error('チェーン保存エラー:', error);
+      showToast(`チェーン保存エラー: ${error.message || error}`, 'error');
+    }
   };
 
   const handleBackToList = () => {
@@ -104,6 +148,14 @@ export function ChainTabContent() {
         onDeleteChain={handleDeleteChain}
         onExecuteChain={handleExecuteChain}
         onCreateChain={handleCreateChain}
+        refreshTrigger={listRefreshTrigger}
+      />
+      <DeleteChainConfirmModal
+        isOpen={deleteConfirmChain !== null}
+        chain={deleteConfirmChain}
+        onClose={handleCloseDeleteModal}
+        onConfirm={handleConfirmDelete}
+        isDeleting={isDeleting}
       />
     </div>
   );

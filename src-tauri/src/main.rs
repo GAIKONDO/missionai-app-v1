@@ -248,6 +248,20 @@ fn main() {
             commands::agent_system::get_task_execution_command,
             commands::agent_system::get_task_executions_command,
             commands::agent_system::get_all_task_executions_command,
+            commands::agent_system::save_task_chain_command,
+            commands::agent_system::get_task_chain_command,
+            commands::agent_system::get_all_task_chains_command,
+            commands::agent_system::delete_task_chain_command,
+            commands::agent_system::save_agent_command,
+            commands::agent_system::get_agent_command,
+            commands::agent_system::get_all_agents_command,
+            commands::agent_system::delete_agent_command,
+            commands::agent_system::save_mcp_tool_command,
+            commands::agent_system::get_mcp_tool_command,
+            commands::agent_system::get_all_mcp_tools_command,
+            commands::agent_system::get_enabled_mcp_tools_command,
+            commands::agent_system::delete_mcp_tool_command,
+            commands::agent_system::update_mcp_tool_enabled_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

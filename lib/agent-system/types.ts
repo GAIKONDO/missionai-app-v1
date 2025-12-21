@@ -28,6 +28,8 @@ export interface Task {
   priority: number;              // 優先度（1-10）
   timeout?: number;              // タイムアウト（ミリ秒）
   retryCount?: number;           // リトライ回数
+  modelType?: 'gpt' | 'local' | 'cursor'; // 使用するLLMタイプ（オプション、AgentのmodelTypeを優先）
+  selectedModel?: string;        // 選択されたモデル名（オプション、AgentのmodelTypeを優先）
   createdAt: number;             // 作成日時
   updatedAt: number;             // 更新日時
 }
@@ -108,7 +110,8 @@ export interface Agent {
   role: AgentRole;               // Agentの役割
   capabilities: string[];        // 実行可能なタスクタイプ
   tools: string[];               // 利用可能なToolリスト
-  modelType: 'gpt' | 'local' | 'cursor'; // 使用するLLM
+  modelType: 'gpt' | 'local' | 'cursor'; // 使用するLLMタイプ
+  selectedModel?: string;        // 選択されたLLMモデル（gpt-4.1-mini, qwen:7bなど）
   systemPrompt: string;           // システムプロンプト
   config: AgentConfig;           // Agent設定
   createdAt: number;             // 作成日時
@@ -149,6 +152,7 @@ export interface TaskExecutionContext {
   a2aManager: any;                // A2AManagerインスタンス（循環参照回避のためany）
   organizationId?: string;        // 組織ID
   userId?: string;               // ユーザーID
+  abortController?: AbortController; // 中断制御（オプション）
 }
 
 /**

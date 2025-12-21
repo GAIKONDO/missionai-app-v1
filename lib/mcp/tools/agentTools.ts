@@ -15,6 +15,17 @@ import { generateId } from '@/lib/agent-system/utils';
 class ExecuteAgentTaskTool implements MCPToolImplementation {
   name = 'execute_agent_task';
   description = 'Agentにタスクを実行させます。タスク名、タイプ、パラメータを指定してください。';
+  arguments = [
+    { name: 'taskName', type: 'string' as const, description: 'タスク名', required: true },
+    { name: 'taskType', type: 'string' as const, description: 'タスクタイプ（SEARCH, ANALYSIS, GENERATION, VALIDATION, COORDINATION）', required: true },
+    { name: 'parameters', type: 'object' as const, description: 'タスクパラメータ', required: false, default: {} },
+    { name: 'agentId', type: 'string' as const, description: 'Agent ID（オプション）', required: false },
+    { name: 'priority', type: 'number' as const, description: '優先度（1-10）', required: false, default: 5 },
+  ];
+  returns = {
+    type: 'object' as const,
+    description: 'タスク実行結果',
+  };
 
   async execute(request: MCPToolRequest): Promise<MCPToolResult> {
     const { taskName, taskType, parameters, agentId, priority } = request.arguments;
@@ -84,6 +95,11 @@ class ExecuteAgentTaskTool implements MCPToolImplementation {
 class ListAgentsTool implements MCPToolImplementation {
   name = 'list_agents';
   description = '登録されているAgentの一覧を取得します。';
+  arguments = [];
+  returns = {
+    type: 'object' as const,
+    description: 'Agent一覧（agents配列を含む）',
+  };
 
   async execute(request: MCPToolRequest): Promise<MCPToolResult> {
     try {
@@ -124,6 +140,17 @@ class ListAgentsTool implements MCPToolImplementation {
 class SendAgentMessageTool implements MCPToolImplementation {
   name = 'send_agent_message';
   description = 'Agent間でメッセージを送信します。確認要求、通知、状態更新などが可能です。';
+  arguments = [
+    { name: 'fromAgentId', type: 'string' as const, description: '送信元Agent ID', required: true },
+    { name: 'toAgentId', type: 'string' as const, description: '送信先Agent ID', required: true },
+    { name: 'messageType', type: 'string' as const, description: 'メッセージタイプ（request/response/notification）', required: true },
+    { name: 'message', type: 'object' as const, description: 'メッセージペイロード', required: true },
+    { name: 'taskId', type: 'string' as const, description: '関連タスクID（オプション）', required: false },
+  ];
+  returns = {
+    type: 'object' as const,
+    description: 'メッセージ送信結果',
+  };
 
   async execute(request: MCPToolRequest): Promise<MCPToolResult> {
     const { fromAgentId, toAgentId, messageType, message, taskId } = request.arguments;

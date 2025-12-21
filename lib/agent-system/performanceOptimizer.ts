@@ -80,7 +80,7 @@ export class PerformanceOptimizer {
       const execution = await orchestrator.executeTask(task);
 
       // キャッシュに保存
-      if (this.options.cacheEnabled && execution.status === 'completed') {
+      if (this.options.cacheEnabled && execution.status === ExecutionStatus.COMPLETED) {
         const cacheKey = this.getCacheKey(task);
         this.setCache(cacheKey, execution, this.options.cacheTTL);
       }

@@ -21,6 +21,7 @@ export class GenerationAgent extends BaseAgent {
       capabilities: agent?.capabilities || [TaskType.GENERATION],
       tools: agent?.tools || [],
       modelType: agent?.modelType || 'gpt',
+      selectedModel: agent?.selectedModel,
       systemPrompt: agent?.systemPrompt || `あなたは生成専門のAIエージェントです。
 ユーザーからの指示に基づいて、テキスト、要約、レポートなどを生成します。
 生成されるコンテンツは正確で、構造化され、読みやすい形式にします。`,
@@ -47,6 +48,11 @@ export class GenerationAgent extends BaseAgent {
     task: Task,
     context: TaskExecutionContext
   ): Promise<any> {
+    // AbortControllerのチェック
+    if (context.abortController?.signal.aborted) {
+      throw new Error('タスクがキャンセルされました');
+    }
+
     const execution = context.executionId ? {
       id: context.executionId,
       taskId: task.id,
@@ -70,9 +76,41 @@ export class GenerationAgent extends BaseAgent {
         this.addLog(execution, 'info', `生成を開始: スタイル=${style}, 最大長=${maxLength}`);
       }
 
-      // 生成を実行（将来実装: 実際の生成機能を呼び出す）
-      // 現時点ではモック実装
-      const generated = `生成されたコンテンツ（モック実装）\n\nプロンプト: ${prompt}\n\nこれは生成Agentによって生成されたサンプルコンテンツです。実際の実装では、LLM APIを使用してコンテンツを生成します。`;
+      // LLM APIを使用してコンテンツを生成
+      const { getModelInfo } = await import('../llmHelper');
+      const { modelType, selectedModel } = getModelInfo(
+        this.agent.modelType,
+        this.agent.selectedModel,
+        task.modelType,
+        task.selectedModel
+      );
+
+      if (execution) {
+        this.addLog(execution, 'info', `LLM APIを呼び出し: ${modelType} / ${selectedModel}`);
+      }
+
+      // AbortControllerのチェック
+      if (context.abortController?.signal.aborted) {
+        throw new Error('タスクがキャンセルされました');
+      }
+
+      const { callLLMAPI } = await import('../llmHelper');
+      const systemPrompt = this.agent.systemPrompt || 'あなたはテキスト生成の専門家です。ユーザーの指示に従って、高品質なコンテンツを生成してください。';
+      
+      const generationPrompt = `以下のスタイルでコンテンツを生成してください。
+
+スタイル: ${style}
+最大長: ${maxLength}文字
+
+プロンプト:
+${prompt}`;
+
+      const generated = await callLLMAPI(generationPrompt, systemPrompt, modelType, selectedModel);
+
+      // AbortControllerのチェック（LLM API呼び出し後）
+      if (context.abortController?.signal.aborted) {
+        throw new Error('タスクがキャンセルされました');
+      }
 
       if (execution) {
         this.addLog(execution, 'info', `生成完了: ${generated.length}文字`);
@@ -83,6 +121,8 @@ export class GenerationAgent extends BaseAgent {
         generated,
         style,
         length: generated.length,
+        modelType,
+        selectedModel,
       };
     } catch (error: any) {
       if (execution) {

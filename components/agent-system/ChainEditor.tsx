@@ -10,7 +10,7 @@ import type { TaskChain, ChainNode } from '@/lib/agent-system/taskChain';
 import { getTaskChainManager } from '@/lib/agent-system/taskChain';
 import { generateId } from '@/lib/agent-system/utils';
 import { NodeEditModal } from './NodeEditModal';
-import { getAllTasks } from '@/lib/agent-system/taskManager';
+import { getAllTasks, saveTaskChain, getTaskChain } from '@/lib/agent-system/taskManager';
 import type { Task } from '@/lib/agent-system/types';
 import { ChainExecutionMonitor } from './ChainExecutionMonitor';
 import type { ChainExecutionResult } from '@/lib/agent-system/taskChain';
@@ -76,10 +76,23 @@ export function ChainEditor({ chainId, onSave, onExecute }: ChainEditorProps) {
 
   // チェーンを読み込む
   useEffect(() => {
+    const loadChain = async () => {
     if (chainId) {
+        try {
+          // まずデータベースから読み込む
+          let chain = await getTaskChain(chainId);
+          
+          // データベースにない場合はメモリから読み込む
+          if (!chain) {
       const manager = getTaskChainManager();
-      const chain = manager.getChain(chainId);
+            chain = manager.getChain(chainId) || undefined;
+          }
+          
       if (chain) {
+            // メモリにも登録（実行時に使用）
+            const manager = getTaskChainManager();
+            manager.registerChain(chain);
+            
         setChainName(chain.name);
         setChainDescription(chain.description);
         // チェーンからReact Flowのノードとエッジを生成
@@ -87,8 +100,14 @@ export function ChainEditor({ chainId, onSave, onExecute }: ChainEditorProps) {
         const flowEdges = convertChainToFlowEdges(chain);
         setNodes(flowNodes);
         setEdges(flowEdges);
+          }
+        } catch (error) {
+          console.error('チェーン読み込みエラー:', error);
       }
     }
+    };
+    
+    loadChain();
     // タスクを読み込む
     loadTasks();
   }, [chainId, setNodes, setEdges]);
@@ -133,20 +152,28 @@ export function ChainEditor({ chainId, onSave, onExecute }: ChainEditorProps) {
   };
 
   // チェーン保存
-  const handleSave = () => {
-    const chain = convertFlowToChain(nodes, edges, chainName, chainDescription);
+  const handleSave = async () => {
+    const chain = convertFlowToChain(nodes, edges, chainName, chainDescription, chainId);
     if (onSave) {
       onSave(chain);
     } else {
+      try {
+        // データベースに保存
+        await saveTaskChain(chain);
+        // メモリにも登録（実行時に使用）
       const manager = getTaskChainManager();
       manager.registerChain(chain);
       alert('チェーンを保存しました');
+      } catch (error: any) {
+        console.error('チェーン保存エラー:', error);
+        alert(`チェーン保存エラー: ${error.message || error}`);
+      }
     }
   };
 
   // チェーン実行
   const handleExecute = async () => {
-    const chain = convertFlowToChain(nodes, edges, chainName, chainDescription);
+    const chain = convertFlowToChain(nodes, edges, chainName, chainDescription, chainId);
     setIsExecuting(true);
     setCurrentExecutionId(null);
     setExecutionResult(null);
@@ -291,7 +318,7 @@ export function ChainEditor({ chainId, onSave, onExecute }: ChainEditorProps) {
           </button>
           {chainName && (
             <ChainExportImport
-              chain={convertFlowToChain(nodes, edges, chainName, chainDescription)}
+              chain={convertFlowToChain(nodes, edges, chainName, chainDescription, chainId)}
               onImport={(importedChain) => {
                 setChainName(importedChain.name);
                 setChainDescription(importedChain.description);
@@ -716,10 +743,18 @@ function convertFlowToChain(
   nodes: any[],
   edges: any[],
   name: string,
-  description: string
+  description: string,
+  existingChainId?: string
 ): TaskChain {
   const chainNodes = new Map<string, ChainNode>();
   let startNodeId = '';
+  let existingChain: TaskChain | undefined;
+
+  // 既存のチェーンがある場合は読み込む
+  if (existingChainId) {
+    const manager = getTaskChainManager();
+    existingChain = manager.getChain(existingChainId);
+  }
 
   // ノードを変換
   nodes.forEach((node) => {
@@ -750,12 +785,12 @@ function convertFlowToChain(
   });
 
   return {
-    id: generateId(),
+    id: existingChain?.id || generateId(),
     name: name || '無題のチェーン',
     description,
     startNodeId: startNodeId || nodes[0]?.id || '',
     nodes: chainNodes,
-    createdAt: Date.now(),
+    createdAt: existingChain?.createdAt || Date.now(),
     updatedAt: Date.now(),
   };
 }

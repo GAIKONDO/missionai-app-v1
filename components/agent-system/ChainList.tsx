@@ -7,6 +7,7 @@
 import { useState, useEffect } from 'react';
 import type { TaskChain } from '@/lib/agent-system/taskChain';
 import { getTaskChainManager } from '@/lib/agent-system/taskChain';
+import { getAllTaskChains } from '@/lib/agent-system/taskManager';
 import { ChainExportImport } from './ChainExportImport';
 
 interface ChainListProps {
@@ -15,6 +16,7 @@ interface ChainListProps {
   onDeleteChain: (chainId: string) => void;
   onExecuteChain: (chainId: string) => void;
   onCreateChain: () => void;
+  refreshTrigger?: number; // 削除後に更新をトリガーするためのプロップ
 }
 
 export function ChainList({
@@ -23,22 +25,26 @@ export function ChainList({
   onDeleteChain,
   onExecuteChain,
   onCreateChain,
+  refreshTrigger,
 }: ChainListProps) {
   const [chains, setChains] = useState<TaskChain[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadChains();
-  }, []);
+  }, [refreshTrigger]);
 
-  const loadChains = () => {
+  const loadChains = async () => {
     try {
-      const manager = getTaskChainManager();
-      // 将来的にSQLiteから読み込む
-      // 現時点ではメモリ内のチェーンを取得
-      const allChains: TaskChain[] = [];
-      // manager.getAllChains() が実装されたら使用
+      // データベースからチェーンを読み込む
+      const allChains = await getAllTaskChains();
       setChains(allChains);
+      
+      // メモリにも登録（実行時に使用）
+      const manager = getTaskChainManager();
+      allChains.forEach(chain => {
+        manager.registerChain(chain);
+      });
     } catch (error) {
       console.error('チェーン読み込みエラー:', error);
     } finally {

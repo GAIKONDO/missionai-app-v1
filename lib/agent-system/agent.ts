@@ -36,6 +36,17 @@ export abstract class BaseAgent {
   }
 
   /**
+   * Agent定義を更新
+   */
+  updateAgent(updates: Partial<Agent>): void {
+    this.agent = {
+      ...this.agent,
+      ...updates,
+      updatedAt: Date.now(),
+    };
+  }
+
+  /**
    * タスクを実行（抽象メソッド）
    */
   abstract executeTask(

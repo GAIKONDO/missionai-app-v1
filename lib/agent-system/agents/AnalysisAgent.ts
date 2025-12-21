@@ -21,6 +21,7 @@ export class AnalysisAgent extends BaseAgent {
       capabilities: agent?.capabilities || [TaskType.ANALYSIS],
       tools: agent?.tools || [],
       modelType: agent?.modelType || 'gpt',
+      selectedModel: agent?.selectedModel,
       systemPrompt: agent?.systemPrompt || `あなたは分析専門のAIエージェントです。
 提供されたデータやトピックを分析し、パターン、傾向、洞察を抽出します。
 分析結果は構造化され、アクション可能な推奨事項を含めます。`,
@@ -47,6 +48,11 @@ export class AnalysisAgent extends BaseAgent {
     task: Task,
     context: TaskExecutionContext
   ): Promise<any> {
+    // AbortControllerのチェック
+    if (context.abortController?.signal.aborted) {
+      throw new Error('タスクがキャンセルされました');
+    }
+
     const execution = context.executionId ? {
       id: context.executionId,
       taskId: task.id,
@@ -70,22 +76,96 @@ export class AnalysisAgent extends BaseAgent {
         this.addLog(execution, 'info', `分析を開始: タイプ=${analysisType}, 深度=${depth}`);
       }
 
-      // 分析を実行（将来実装: 実際の分析機能を呼び出す）
-      // 現時点ではモック実装
+      // LLM APIを使用して分析を実行
+      const { getModelInfo } = await import('../llmHelper');
+      const { modelType, selectedModel } = getModelInfo(
+        this.agent.modelType,
+        undefined,
+        task.modelType,
+        task.selectedModel
+      );
+
+      if (execution) {
+        this.addLog(execution, 'info', `LLM APIを呼び出し: ${modelType} / ${selectedModel}`);
+      }
+
+      // AbortControllerのチェック
+      if (context.abortController?.signal.aborted) {
+        throw new Error('タスクがキャンセルされました');
+      }
+
+      const { callLLMAPI } = await import('../llmHelper');
+      const systemPrompt = this.agent.systemPrompt || 'あなたはデータ分析の専門家です。提供されたデータを分析し、洞察、推奨事項、パターンを抽出してください。';
+      
+      const analysisPrompt = `以下のデータを分析してください。
+
+分析タイプ: ${analysisType}
+分析深度: ${depth}
+
+データ:
+${typeof data === 'string' ? data : JSON.stringify(data, null, 2)}
+
+以下の形式で分析結果を返してください：
+- 洞察: 重要な発見や気づき
+- 推奨事項: アクション可能な提案
+- パターン: 検出されたパターン
+- 要約: 分析結果の要約`;
+
+      const analysisText = await callLLMAPI(analysisPrompt, systemPrompt, modelType, selectedModel);
+
+      // AbortControllerのチェック（LLM API呼び出し後）
+      if (context.abortController?.signal.aborted) {
+        throw new Error('タスクがキャンセルされました');
+      }
+
+      // 分析結果をパース（簡易実装）
+      const insights: string[] = [];
+      const recommendations: string[] = [];
+      const patterns: string[] = [];
+      let summary = '分析が完了しました。';
+
+      // テキストから構造化された情報を抽出（簡易実装）
+      const lines = analysisText.split('\n');
+      let currentSection = '';
+      for (const line of lines) {
+        if (line.includes('洞察') || line.includes('insight')) {
+          currentSection = 'insights';
+        } else if (line.includes('推奨') || line.includes('recommendation')) {
+          currentSection = 'recommendations';
+        } else if (line.includes('パターン') || line.includes('pattern')) {
+          currentSection = 'patterns';
+        } else if (line.includes('要約') || line.includes('summary')) {
+          currentSection = 'summary';
+        } else if (line.trim() && line.startsWith('-')) {
+          const content = line.replace(/^-\s*/, '').trim();
+          if (currentSection === 'insights' && content) {
+            insights.push(content);
+          } else if (currentSection === 'recommendations' && content) {
+            recommendations.push(content);
+          } else if (currentSection === 'patterns' && content) {
+            patterns.push(content);
+          }
+        } else if (currentSection === 'summary' && line.trim()) {
+          summary = line.trim();
+        }
+      }
+
+      // 抽出できなかった場合は、全体を要約として使用
+      if (insights.length === 0 && recommendations.length === 0 && patterns.length === 0) {
+        summary = analysisText;
+      }
+
       const analysisResult = {
         data,
         analysisType,
         depth,
-        insights: [
-          '分析結果1: 重要なパターンが検出されました',
-          '分析結果2: 傾向が確認されました',
-        ],
-        recommendations: [
-          '推奨事項1: この傾向を継続的に監視してください',
-          '推奨事項2: 追加のデータ収集を検討してください',
-        ],
-        patterns: ['パターンA', 'パターンB'],
-        summary: '分析が完了しました。重要な洞察が抽出されました。',
+        insights: insights.length > 0 ? insights : ['分析が完了しました。'],
+        recommendations: recommendations.length > 0 ? recommendations : ['追加の分析を推奨します。'],
+        patterns: patterns.length > 0 ? patterns : ['パターンが検出されました。'],
+        summary,
+        rawAnalysis: analysisText,
+        modelType,
+        selectedModel,
       };
 
       if (execution) {

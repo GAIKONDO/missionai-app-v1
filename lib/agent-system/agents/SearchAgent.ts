@@ -21,6 +21,7 @@ export class SearchAgent extends BaseAgent {
       capabilities: agent?.capabilities || [TaskType.SEARCH],
       tools: agent?.tools || ['search_knowledge_graph'],
       modelType: agent?.modelType || 'gpt',
+      selectedModel: agent?.selectedModel,
       systemPrompt: agent?.systemPrompt || `あなたは検索専門のAIエージェントです。
 ユーザーからの検索クエリに対して、ナレッジグラフや設計ドキュメントを検索し、関連情報を提供します。
 検索結果は正確で関連性の高いものを優先します。`,
@@ -47,6 +48,11 @@ export class SearchAgent extends BaseAgent {
     task: Task,
     context: TaskExecutionContext
   ): Promise<any> {
+    // AbortControllerのチェック
+    if (context.abortController?.signal.aborted) {
+      throw new Error('タスクがキャンセルされました');
+    }
+
     const execution = context.executionId ? {
       id: context.executionId,
       taskId: task.id,
@@ -70,6 +76,11 @@ export class SearchAgent extends BaseAgent {
         this.addLog(execution, 'info', `検索を開始: "${query}"`);
       }
 
+      // AbortControllerのチェック
+      if (context.abortController?.signal.aborted) {
+        throw new Error('タスクがキャンセルされました');
+      }
+
       // ナレッジグラフ検索を実行
       const { searchKnowledgeGraph } = await import('@/lib/knowledgeGraphRAG');
       const searchResults = await searchKnowledgeGraph(
@@ -77,6 +88,11 @@ export class SearchAgent extends BaseAgent {
         limit,
         organizationId ? { organizationId } : undefined
       );
+
+      // AbortControllerのチェック（検索後）
+      if (context.abortController?.signal.aborted) {
+        throw new Error('タスクがキャンセルされました');
+      }
 
       if (execution) {
         this.addLog(execution, 'info', `検索結果: ${searchResults.length}件`);
@@ -90,6 +106,11 @@ export class SearchAgent extends BaseAgent {
         organizationId ? { organizationId } : undefined,
         2000
       );
+
+      // AbortControllerのチェック（コンテキスト生成後）
+      if (context.abortController?.signal.aborted) {
+        throw new Error('タスクがキャンセルされました');
+      }
 
       return {
         query,

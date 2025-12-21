@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect } from 'react';
-import { getAllEntities, getAllRelations } from '@/lib/entityApi';
+import { getAllEntities } from '@/lib/entityApi';
+import { getAllRelations } from '@/lib/relationApi';
 
 // 開発環境でのみコンソールコマンドを登録するカスタムフック
 export function useDevConsoleCommands(
