@@ -32,7 +32,7 @@ import {
   findRelatedEntities,
   findRelatedRelations,
   getKnowledgeGraphContext,
-} from './knowledgeGraphRAG';
+} from '@/lib/knowledgeGraphRAG';
 
 /**
  * テスト用の組織を取得または作成

@@ -3,7 +3,7 @@
  * トークン制限内で優先情報を選択し、冗長情報を除去
  */
 
-import type { KnowledgeGraphSearchResult } from './knowledgeGraphRAG';
+import type { KnowledgeGraphSearchResult } from '@/lib/knowledgeGraphRAG';
 
 /**
  * コンテキスト最適化の設定

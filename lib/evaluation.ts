@@ -3,7 +3,7 @@
  * AI回答の品質を定量的に評価
  */
 
-import { searchKnowledgeGraph } from './knowledgeGraphRAG';
+import { searchKnowledgeGraph } from '@/lib/knowledgeGraphRAG';
 
 // テストケース
 export interface TestCase {

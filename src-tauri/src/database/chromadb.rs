@@ -1628,6 +1628,7 @@ pub struct TopicSearchResult {
     pub similarity: f32,
     pub title: String,
     pub content_summary: String,
+    pub organization_id: Option<String>, // 組織ID（メタデータから取得）
 }
 
 async fn search_topics_in_collection(
@@ -1696,12 +1697,21 @@ async fn search_topics_in_collection(
                                             .unwrap_or("")
                                             .to_string();
                                         
+                                        // メタデータからorganizationIdを取得
+                                        let organization_id = metadata
+                                            .and_then(|m| {
+                                                m.get("organizationId")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(|s| s.to_string())
+                                            });
+                                        
                                         similar_topics.push(TopicSearchResult {
                                             topic_id: topic_id.clone(),
                                             meeting_note_id,
                                             similarity,
                                             title,
                                             content_summary,
+                                            organization_id,
                                         });
                                     }
                                 }

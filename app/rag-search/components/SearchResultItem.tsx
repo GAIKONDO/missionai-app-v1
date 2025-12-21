@@ -180,7 +180,7 @@ export default function SearchResultItem({
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                 <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#1F2937', margin: 0 }}>
-                  トピック
+                  {result.topic?.title || 'トピック'}
                 </h3>
                 {result.meetingNoteId && (
                   <button
@@ -200,9 +200,16 @@ export default function SearchResultItem({
                   </button>
                 )}
               </div>
-              <p style={{ fontSize: '14px', color: '#6B7280', margin: 0 }}>
-                ID: {result.topicId}
-              </p>
+              {result.topic?.contentSummary && (
+                <p style={{ fontSize: '14px', color: '#6B7280', margin: '4px 0 0 0', lineHeight: '1.5' }}>
+                  {result.topic.contentSummary}
+                </p>
+              )}
+              {result.topic?.semanticCategory && (
+                <p style={{ fontSize: '12px', color: '#9CA3AF', margin: '4px 0 0 0' }}>
+                  カテゴリ: {result.topic.semanticCategory}
+                </p>
+              )}
             </div>
           )}
           

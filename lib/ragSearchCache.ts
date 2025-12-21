@@ -3,7 +3,7 @@
  * 検索クエリとフィルターをキーに検索結果をキャッシュ
  */
 
-import type { KnowledgeGraphSearchResult } from './knowledgeGraphRAG';
+import type { KnowledgeGraphSearchResult } from '@/lib/knowledgeGraphRAG';
 
 interface CacheEntry {
   results: KnowledgeGraphSearchResult[];

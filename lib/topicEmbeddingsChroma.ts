@@ -189,7 +189,7 @@ export async function findSimilarTopicsChroma(
   limit: number = 5,
   organizationId?: string,
   semanticCategory?: string
-): Promise<Array<{ topicId: string; meetingNoteId: string; similarity: number; title?: string; contentSummary?: string }>> {
+): Promise<Array<{ topicId: string; meetingNoteId: string; similarity: number; title?: string; contentSummary?: string; organizationId?: string }>> {
   if (typeof window === 'undefined') {
     return [];
   }
@@ -215,6 +215,7 @@ export async function findSimilarTopicsChroma(
       similarity: number;
       title: string;
       content_summary: string;
+      organization_id?: string | null;
     }>;
 
     // 結果を変換
@@ -227,6 +228,7 @@ export async function findSimilarTopicsChroma(
           similarity: 0,
           title: result.title,
           contentSummary: result.content_summary,
+          organizationId: result.organization_id || undefined,
         };
       }
       return {
@@ -235,6 +237,7 @@ export async function findSimilarTopicsChroma(
         similarity: result.similarity,
         title: result.title,
         contentSummary: result.content_summary,
+        organizationId: result.organization_id || undefined,
       };
     });
 

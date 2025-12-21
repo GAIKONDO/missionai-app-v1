@@ -7,13 +7,11 @@ import type { OrgNodeData, MemberInfo } from '@/components/OrgChart';
 import { getOrgTreeFromDb, getOrgMembers, updateOrg, updateOrgParent, addOrgMember, updateOrgMember, deleteOrgMember, tauriAlert, tauriConfirm, createOrg, deleteOrg, getAllOrganizationsFromTree, findOrganizationById, getDeletionTargets } from '@/lib/orgApi';
 import { callTauriCommand } from '@/lib/localFirebase';
 import { sortMembersByPosition } from '@/lib/memberSort';
-import { checkBpoMembersInDb } from '@/lib/check-bpo-members-db';
 import { saveBpoMembersOnly } from '@/lib/save-bpo-members-only';
 import { saveFrontierBusinessMembers } from '@/lib/save-frontier-business-members';
 import { removeIctDivisionDuplicates } from '@/lib/remove-ict-division-duplicates';
 import { saveIctDivisionMembers } from '@/lib/save-ict-division-members';
 import { reorderFrontierBusiness } from '@/lib/reorder-frontier-business';
-import { checkDepartmentOrder } from '@/lib/check-department-order';
 import HierarchyView from './views/HierarchyView';
 import BubbleView from './views/BubbleView';
 import FinderView from './views/FinderView';
@@ -352,13 +350,11 @@ export default function OrganizationPage() {
     
     // デバッグ用：グローバルに公開（開発時のみ）
     if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
-      (window as any).checkBpoMembersInDb = checkBpoMembersInDb;
       (window as any).saveBpoMembersOnly = saveBpoMembersOnly;
       (window as any).saveFrontierBusinessMembers = saveFrontierBusinessMembers;
       (window as any).removeIctDivisionDuplicates = removeIctDivisionDuplicates;
       (window as any).saveIctDivisionMembers = saveIctDivisionMembers;
       (window as any).reorderFrontierBusiness = reorderFrontierBusiness;
-      (window as any).checkDepartmentOrder = checkDepartmentOrder;
     }
   }, []);
 

@@ -5,7 +5,7 @@
 
 import type { Entity } from '@/types/entity';
 import type { Relation } from '@/types/relation';
-import type { KnowledgeGraphSearchResult } from './knowledgeGraphRAG';
+import type { KnowledgeGraphSearchResult } from '@/lib/knowledgeGraphRAG';
 
 /**
  * フィルタリング段階の設定

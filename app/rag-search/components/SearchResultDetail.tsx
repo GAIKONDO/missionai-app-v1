@@ -105,16 +105,59 @@ export default function SearchResultDetail({ result, onClose }: SearchResultDeta
       {result.type === 'topic' && (
         <div>
           <h3 style={{ fontSize: '18px', fontWeight: 600, color: '#1F2937', marginBottom: '12px' }}>
-            トピック
+            {result.topic?.title || 'トピック'}
           </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <div>
-              <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280' }}>トピックID: </span>
-              <span style={{ fontSize: '14px', color: '#1F2937' }}>{result.topicId}</span>
-            </div>
-            <div>
-              <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280' }}>議事録ID: </span>
-              <span style={{ fontSize: '14px', color: '#1F2937' }}>{result.meetingNoteId}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {result.topic?.contentSummary && (
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280', marginBottom: '4px' }}>
+                  内容
+                </div>
+                <p style={{ 
+                  fontSize: '14px', 
+                  color: '#1F2937', 
+                  lineHeight: '1.6',
+                  padding: '12px',
+                  backgroundColor: '#F9FAFB',
+                  borderRadius: '6px',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}>
+                  {result.topic.contentSummary}
+                </p>
+              </div>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {result.topic?.semanticCategory && (
+                <div>
+                  <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280' }}>セマンティックカテゴリ: </span>
+                  <span style={{ fontSize: '14px', color: '#1F2937' }}>{result.topic.semanticCategory}</span>
+                </div>
+              )}
+              {result.topic?.keywords && result.topic.keywords.length > 0 && (
+                <div>
+                  <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280' }}>キーワード: </span>
+                  <span style={{ fontSize: '14px', color: '#1F2937' }}>
+                    {result.topic.keywords.join(', ')}
+                  </span>
+                </div>
+              )}
+              <div>
+                <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280' }}>トピックID: </span>
+                <span style={{ fontSize: '14px', color: '#1F2937' }}>{result.topicId}</span>
+              </div>
+              {result.meetingNoteId && (
+                <div>
+                  <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280' }}>議事録ID: </span>
+                  <span style={{ fontSize: '14px', color: '#1F2937' }}>{result.meetingNoteId}</span>
+                </div>
+              )}
+              {result.topic?.organizationId && (
+                <div>
+                  <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280' }}>組織ID: </span>
+                  <span style={{ fontSize: '14px', color: '#1F2937' }}>{result.topic.organizationId}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>

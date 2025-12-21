@@ -86,22 +86,47 @@ export function calculateMetadataScore(
  * @returns 新しさスコア（0.0-1.0）
  */
 export function calculateRecencyScore(
-  updatedAt: string | undefined,
+  updatedAt: string | undefined | any,
   decayFactor: number = 30 // 30日で半減
 ): number {
   try {
     // updatedAtが無効な場合はデフォルト値を返す
     if (!updatedAt || updatedAt === 'undefined' || updatedAt === 'null') {
-      console.warn('[calculateRecencyScore] updatedAtが無効です:', updatedAt);
+      return 0.5; // デフォルト値
+    }
+    
+    let dateString: string | undefined;
+    
+    // Firestoreタイムスタンプ形式の処理 {nanoseconds: number, seconds: number}
+    if (typeof updatedAt === 'object' && updatedAt !== null) {
+      if ('seconds' in updatedAt && typeof updatedAt.seconds === 'number') {
+        // Firestoreタイムスタンプをミリ秒に変換
+        const milliseconds = updatedAt.seconds * 1000;
+        if (updatedAt.nanoseconds && typeof updatedAt.nanoseconds === 'number') {
+          dateString = new Date(milliseconds + updatedAt.nanoseconds / 1000000).toISOString();
+        } else {
+          dateString = new Date(milliseconds).toISOString();
+        }
+      } else if ('toDate' in updatedAt && typeof updatedAt.toDate === 'function') {
+        // Firestore Timestampオブジェクトの場合
+        dateString = updatedAt.toDate().toISOString();
+      } else {
+        // その他のオブジェクト形式の場合は文字列に変換を試みる
+        dateString = String(updatedAt);
+      }
+    } else if (typeof updatedAt === 'string') {
+      dateString = updatedAt;
+    } else {
+      console.warn('[calculateRecencyScore] updatedAtの形式が不明です:', updatedAt);
       return 0.5; // デフォルト値
     }
     
     const now = new Date();
-    const updated = new Date(updatedAt);
+    const updated = new Date(dateString);
     
     // 日付が無効な場合
     if (isNaN(updated.getTime())) {
-      console.warn('[calculateRecencyScore] 日付の解析に失敗しました:', updatedAt);
+      console.warn('[calculateRecencyScore] 日付の解析に失敗しました:', { updatedAt, dateString });
       return 0.5; // デフォルト値
     }
     

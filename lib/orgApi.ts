@@ -2672,7 +2672,13 @@ export async function getTopicsByMeetingNote(meetingNoteId: string): Promise<Top
     console.log('📖 [getTopicsByMeetingNote] 開始:', { meetingNoteId });
     
     const meetingNote = await getMeetingNoteById(meetingNoteId);
-    if (!meetingNote || !meetingNote.content) {
+    if (!meetingNote) {
+      console.warn('⚠️ [getTopicsByMeetingNote] 議事録が見つかりません:', meetingNoteId);
+      return [];
+    }
+    
+    if (!meetingNote.content) {
+      console.warn('⚠️ [getTopicsByMeetingNote] 議事録のcontentが空です:', meetingNoteId);
       return [];
     }
     
@@ -2697,14 +2703,31 @@ export async function getTopicsByMeetingNote(meetingNoteId: string): Promise<Top
         }>;
       }>;
       
+      console.log('📖 [getTopicsByMeetingNote] パース成功。タブ数:', Object.keys(parsed).length);
+      
+      let totalItems = 0;
+      let totalTopicsInItems = 0;
+      
       for (const [tabId, tabData] of Object.entries(parsed)) {
-        if (!tabData.items || !Array.isArray(tabData.items)) continue;
+        if (!tabData.items || !Array.isArray(tabData.items)) {
+          console.log(`📖 [getTopicsByMeetingNote] タブ ${tabId} にitemsがありません`);
+          continue;
+        }
+        
+        totalItems += tabData.items.length;
         
         for (const item of tabData.items) {
-          if (!item.topics || !Array.isArray(item.topics)) continue;
+          if (!item.topics || !Array.isArray(item.topics)) {
+            continue;
+          }
+          
+          totalTopicsInItems += item.topics.length;
           
           for (const topic of item.topics) {
-            if (!topic.id || !topic.title) continue;
+            if (!topic.id || !topic.title) {
+              console.warn(`⚠️ [getTopicsByMeetingNote] トピックにidまたはtitleがありません:`, { topicId: topic.id, title: topic.title });
+              continue;
+            }
             
             // topicDateの優先順位: topic.mentionedDate > item.date > undefined
             const topicDate = topic.mentionedDate !== undefined 
@@ -2729,14 +2752,24 @@ export async function getTopicsByMeetingNote(meetingNoteId: string): Promise<Top
           }
         }
       }
+      
+      console.log(`📖 [getTopicsByMeetingNote] 処理完了: items=${totalItems}, topics in items=${totalTopicsInItems}, 抽出したtopics=${topics.length}`);
+      
+      if (topics.length === 0 && totalTopicsInItems > 0) {
+        console.warn('⚠️ [getTopicsByMeetingNote] トピックが存在するのに抽出できませんでした。構造を確認してください。');
+      }
     } catch (parseError) {
-      console.warn('⚠️ [getTopicsByMeetingNote] 議事録のパースエラー:', {
+      console.error('❌ [getTopicsByMeetingNote] 議事録のパースエラー:', {
         meetingNoteId,
         error: parseError,
+        contentPreview: meetingNote.content?.substring(0, 200),
       });
     }
     
     console.log('✅ [getTopicsByMeetingNote] 取得成功:', topics.length, '件');
+    if (topics.length > 0) {
+      console.log('📖 [getTopicsByMeetingNote] トピックIDのサンプル:', topics.slice(0, 3).map(t => t.id));
+    }
     return topics;
   } catch (error: any) {
     console.error('❌ [getTopicsByMeetingNote] エラー:', error);
