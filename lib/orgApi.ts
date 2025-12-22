@@ -598,6 +598,19 @@ export async function deleteOrg(id: string): Promise<void> {
     console.error('❌ [deleteOrg] Tauriコマンド経由の削除が失敗しました:', error);
     throw error;
   }
+  
+  // ChromaDBのコレクションを削除（非同期、エラーは無視）
+  (async () => {
+    try {
+      const { callTauriCommand: chromaCallTauriCommand } = await import('./localFirebase');
+      await chromaCallTauriCommand('chromadb_delete_organization_collections', {
+        organizationId: id,
+      });
+      console.log(`✅ [deleteOrg] ChromaDBコレクション削除成功: ${id}`);
+    } catch (error: any) {
+      console.warn(`⚠️ [deleteOrg] ChromaDBコレクション削除エラー（続行します）: ${id}`, error);
+    }
+  })();
 }
 
 /**

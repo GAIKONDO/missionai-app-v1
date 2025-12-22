@@ -189,3 +189,11 @@ pub async fn chromadb_delete_relation_embedding(
 pub async fn chromadb_clear_data_dir() -> Result<(), String> {
     chromadb::clear_chromadb_data_dir().await
 }
+
+/// 組織に関連するChromaDBコレクションを削除
+#[tauri::command]
+pub async fn chromadb_delete_organization_collections(
+    organizationId: String,
+) -> Result<(), String> {
+    chromadb::delete_organization_collections(organizationId).await
+}

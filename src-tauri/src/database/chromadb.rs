@@ -2309,3 +2309,53 @@ pub async fn delete_relation_embedding(
     
     Ok(())
 }
+
+/// 組織に関連するChromaDBコレクションを削除
+pub async fn delete_organization_collections(
+    organization_id: String,
+) -> Result<(), String> {
+    let client_lock = get_chromadb_client()?;
+    
+    // MutexGuardをdropしてから.awaitする必要がある
+    let client = {
+        let client_guard = client_lock.lock().await;
+        client_guard.as_ref()
+            .ok_or("ChromaDBクライアントが初期化されていません")?
+            .clone()
+    };
+    
+    // 削除するコレクション名のリスト
+    let collection_names = if organization_id.is_empty() {
+        vec![
+            "topics_all".to_string(),
+            "entities_all".to_string(),
+            "relations_all".to_string(),
+        ]
+    } else {
+        vec![
+            format!("topics_{}", organization_id),
+            format!("entities_{}", organization_id),
+            format!("relations_{}", organization_id),
+        ]
+    };
+    
+    // 各コレクションを削除
+    for collection_name in collection_names {
+        match client.delete_collection(&collection_name).await {
+            Ok(_) => {
+                eprintln!("✅ [delete_organization_collections] コレクション削除成功: {}", collection_name);
+            }
+            Err(e) => {
+                let error_msg = format!("{}", e);
+                // コレクションが存在しない場合はエラーを無視（既に削除されている可能性がある）
+                if error_msg.contains("not found") || error_msg.contains("does not exist") {
+                    eprintln!("⚠️ [delete_organization_collections] コレクションが存在しません（スキップ）: {}", collection_name);
+                } else {
+                    eprintln!("⚠️ [delete_organization_collections] コレクション削除エラー（続行します）: {} - {}", collection_name, error_msg);
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
