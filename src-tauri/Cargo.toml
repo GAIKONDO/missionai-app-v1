@@ -1,6 +1,6 @@
 [package]
 name = "mission-ai"
-version = "2.1.2"
+version = "2.1.3"
 description = "MissionAI - AI-powered mission management desktop application"
 authors = ["you"]
 license = ""

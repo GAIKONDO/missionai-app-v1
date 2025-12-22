@@ -23,13 +23,6 @@ export function DashboardHeader({ selectedTypeFilter }: DashboardHeaderProps) {
       }}>
         ダッシュボード
       </h2>
-      <p style={{
-        marginBottom: 0,
-        fontSize: '14px',
-        color: '#808080',
-      }}>
-        テーマごとの施策件数を{typeLabel}別に分析します
-      </p>
     </div>
   );
 }

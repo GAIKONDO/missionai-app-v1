@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useTransition } from 'react';
-import { DashboardIcon, LineChartIcon, BarChartIcon, DocumentIcon, SettingsIcon, OrganizationIcon, KnowledgeGraphIcon, RAGSearchIcon, DesignIcon, TargetIcon, MenuIcon, CloseIcon, AgentIcon } from './Icons';
+import { DashboardIcon, LineChartIcon, BarChartIcon, DocumentIcon, SettingsIcon, OrganizationIcon, KnowledgeGraphIcon, DesignIcon, MenuIcon, CloseIcon, AgentIcon } from './Icons';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -20,12 +20,10 @@ export default function Sidebar({ isOpen, onToggle, currentPage }: SidebarProps)
     { icon: DashboardIcon, label: 'ダッシュボード', id: 'dashboard', path: '/' },
     { icon: OrganizationIcon, label: '組織', id: 'organization', path: '/organization' },
     { icon: LineChartIcon, label: '分析', id: 'analytics', path: '/analytics' },
-    { icon: TargetIcon, label: 'A to C 100', id: 'a2c100', path: '/a2c100' },
     { icon: KnowledgeGraphIcon, label: 'ナレッジグラフ', id: 'knowledge-graph', path: '/knowledge-graph' },
-    { icon: RAGSearchIcon, label: 'RAG検索', id: 'rag-search', path: '/rag-search' },
     { icon: BarChartIcon, label: 'レポート', id: 'reports', path: '/reports' },
-    { icon: DesignIcon, label: '設計', id: 'design', path: '/design' },
     { icon: AgentIcon, label: 'Agent', id: 'agents', path: '/agents' },
+    { icon: DesignIcon, label: '設計', id: 'design', path: '/design' },
     { icon: SettingsIcon, label: '設定', id: 'settings', path: '/settings' },
   ];
 
@@ -36,8 +34,6 @@ export default function Sidebar({ isOpen, onToggle, currentPage }: SidebarProps)
     }
     if (pathname === '/') return 'dashboard';
     if (pathname.startsWith('/knowledge-graph')) return 'knowledge-graph';
-    if (pathname.startsWith('/rag-search')) return 'rag-search';
-    if (pathname.startsWith('/a2c100')) return 'a2c100';
     if (pathname.startsWith('/design')) return 'design';
     if (pathname.startsWith('/agents')) return 'agents';
     const pathWithoutSlash = pathname.replace('/', '');

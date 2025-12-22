@@ -27,170 +27,93 @@ export default function FilterPanel({
   getRootOrganizations,
   onResetFilters,
 }: FilterPanelProps) {
-  const hasMultipleRootOrgs = orgData && (orgData.id === 'virtual-root' || getRootOrganizations().length > 1);
+  const rootOrganizations = getRootOrganizations();
+  const hasOrgData = orgData !== null;
 
   return (
     <>
-      {/* ルート組織選択ボタンとフィルターボタン */}
-      {hasMultipleRootOrgs && (
+      {/* ルート組織選択タブとフィルターボタン */}
+      {hasOrgData && (
         <div style={{ 
-          marginTop: '16px', 
-          padding: '12px', 
-          backgroundColor: '#F0F9FF', 
-          borderRadius: '8px',
-          border: '1px solid #BAE6FD',
+          marginTop: '16px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          gap: '16px',
+          flexWrap: 'wrap',
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
-            <div style={{ flex: 1, minWidth: '300px' }}>
-              <div style={{ 
-                fontSize: '13px', 
-                fontWeight: '500', 
-                color: '#0369A1', 
-                marginBottom: '8px' 
-              }}>
-                表示する組織を選択:
-              </div>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <button
-                  onClick={() => setSelectedRootOrgId(null)}
-                  style={{
-                    padding: '6px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid #BAE6FD',
-                    backgroundColor: selectedRootOrgId === null ? '#0EA5E9' : '#fff',
-                    color: selectedRootOrgId === null ? '#fff' : '#0369A1',
-                    cursor: 'pointer',
-                    fontSize: '13px',
-                    fontWeight: '500',
-                    whiteSpace: 'nowrap',
-                    transition: 'all 0.2s',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (selectedRootOrgId !== null) {
-                      e.currentTarget.style.backgroundColor = '#E0F2FE';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (selectedRootOrgId !== null) {
-                      e.currentTarget.style.backgroundColor = '#fff';
-                    }
-                  }}
-                >
-                  すべて表示
-                </button>
-                {getRootOrganizations().map((rootOrg) => (
-                  <button
-                    key={rootOrg.id}
-                    onClick={() => setSelectedRootOrgId(rootOrg.id || null)}
-                    style={{
-                      padding: '6px 12px',
-                      borderRadius: '6px',
-                      border: '1px solid #BAE6FD',
-                      backgroundColor: selectedRootOrgId === rootOrg.id ? '#0EA5E9' : '#fff',
-                      color: selectedRootOrgId === rootOrg.id ? '#fff' : '#0369A1',
-                      cursor: 'pointer',
-                      fontSize: '13px',
-                      fontWeight: '500',
-                      whiteSpace: 'nowrap',
-                      transition: 'all 0.2s',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (selectedRootOrgId !== rootOrg.id) {
-                        e.currentTarget.style.backgroundColor = '#E0F2FE';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (selectedRootOrgId !== rootOrg.id) {
-                        e.currentTarget.style.backgroundColor = '#fff';
-                      }
-                    }}
-                  >
-                    {rootOrg.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-            
-            {/* フィルターボタン */}
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
+          {/* タブ風のルート組織選択 */}
+          <div style={{ flex: 1, minWidth: '300px' }}>
+            <div style={{ 
+              display: 'flex', 
+              gap: '8px', 
+              borderBottom: '1px solid #E0E0E0',
+              overflowX: 'auto',
+            }}>
               <button
-                onClick={() => setIsFilterExpanded(!isFilterExpanded)}
+                onClick={() => setSelectedRootOrgId(null)}
                 style={{
-                  padding: '6px 12px',
-                  borderRadius: '6px',
-                  border: '1px solid #BAE6FD',
-                  backgroundColor: '#fff',
-                  color: '#0369A1',
+                  padding: '12px 24px',
+                  border: 'none',
+                  background: 'transparent',
+                  color: selectedRootOrgId === null ? '#4262FF' : '#808080',
+                  borderBottom: selectedRootOrgId === null ? '2px solid #4262FF' : '2px solid transparent',
                   cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: '500',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
+                  fontWeight: selectedRootOrgId === null ? 600 : 400,
+                  fontSize: '14px',
+                  fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                  transition: 'all 150ms',
                   whiteSpace: 'nowrap',
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = '#E0F2FE';
+                  if (selectedRootOrgId !== null) {
+                    e.currentTarget.style.color = '#1A1A1A';
+                  }
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = '#fff';
+                  if (selectedRootOrgId !== null) {
+                    e.currentTarget.style.color = '#808080';
+                  }
                 }}
               >
-                {isFilterExpanded ? '▼' : '▶'} フィルター
-                {searchQuery && (
-                  <span style={{ 
-                    marginLeft: '4px',
-                    padding: '2px 6px',
-                    borderRadius: '10px',
-                    backgroundColor: '#3B82F6',
-                    color: '#fff',
-                    fontSize: '11px',
-                  }}>
-                    適用中
-                  </span>
-                )}
+                すべて表示
               </button>
-              {searchQuery && (
+              {rootOrganizations.map((rootOrg) => (
                 <button
-                  onClick={onResetFilters}
+                  key={rootOrg.id}
+                  onClick={() => setSelectedRootOrgId(rootOrg.id || null)}
                   style={{
-                    padding: '6px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid #BAE6FD',
-                    backgroundColor: '#fff',
-                    color: '#0369A1',
+                    padding: '12px 24px',
+                    border: 'none',
+                    background: 'transparent',
+                    color: selectedRootOrgId === rootOrg.id ? '#4262FF' : '#808080',
+                    borderBottom: selectedRootOrgId === rootOrg.id ? '2px solid #4262FF' : '2px solid transparent',
                     cursor: 'pointer',
-                    fontSize: '13px',
-                    fontWeight: '500',
+                    fontWeight: selectedRootOrgId === rootOrg.id ? 600 : 400,
+                    fontSize: '14px',
+                    fontFamily: 'var(--font-inter), var(--font-noto), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    transition: 'all 150ms',
                     whiteSpace: 'nowrap',
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = '#E0F2FE';
+                    if (selectedRootOrgId !== rootOrg.id) {
+                      e.currentTarget.style.color = '#1A1A1A';
+                    }
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = '#fff';
+                    if (selectedRootOrgId !== rootOrg.id) {
+                      e.currentTarget.style.color = '#808080';
+                    }
                   }}
                 >
-                  🔄 リセット
+                  {rootOrg.name}
                 </button>
-              )}
+              ))}
             </div>
           </div>
-        </div>
-      )}
-      
-      {/* ルート組織が1つの場合、またはデータがない場合でもフィルターボタンを表示 */}
-      {!hasMultipleRootOrgs && (
-        <div style={{ 
-          marginTop: '16px', 
-          padding: '12px', 
-          backgroundColor: '#F0F9FF', 
-          borderRadius: '8px',
-          border: '1px solid #BAE6FD',
-          display: 'flex',
-          justifyContent: 'flex-end',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          
+          {/* フィルターボタン */}
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
             <button
               onClick={() => setIsFilterExpanded(!isFilterExpanded)}
               style={{

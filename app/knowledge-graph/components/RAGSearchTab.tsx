@@ -1,33 +1,36 @@
+/**
+ * RAG検索タブコンテンツ
+ */
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import Layout from '@/components/Layout';
 import type { KnowledgeGraphSearchResult } from '@/lib/knowledgeGraphRAG';
 import { getCacheStats } from '@/lib/ragSearchCache';
 import { getOrgTreeFromDb, getAllOrganizationsFromTree } from '@/lib/orgApi';
-import type { SearchHistory } from './types';
-import AnalyticsModal from './components/modals/AnalyticsModal';
-import EmbeddingStatsModal from './components/modals/EmbeddingStatsModal';
-import DataQualityReportModal from './components/modals/DataQualityReportModal';
-import EvaluationPanelModal from './components/modals/EvaluationPanelModal';
-import SearchBar from './components/SearchBar';
-import SearchFilters from './components/SearchFilters';
-import SearchResultsHeader from './components/SearchResultsHeader';
-import SearchResultsList from './components/SearchResultsList';
-import { useSearchHistory } from './hooks/useSearchHistory';
-import { useSearchFilters } from './hooks/useSearchFilters';
-import { useRAGSearch } from './hooks/useRAGSearch';
-import { useGraphData } from './hooks/useGraphData';
-import { useModalHandlers } from './hooks/useModalHandlers';
-import { setupDiagnosticTools } from './utils/diagnoseRAGSearch';
-import { devWarn } from './utils/devLog';
-import { entityTypeLabels, relationTypeLabels } from './constants/labels';
-import SearchResultDetail from './components/SearchResultDetail';
-import SearchEmptyState from './components/SearchEmptyState';
-import GraphView from './components/GraphView';
-import PageHeader from './components/PageHeader';
+import type { SearchHistory } from '@/app/rag-search/types';
+import AnalyticsModal from '@/app/rag-search/components/modals/AnalyticsModal';
+import EmbeddingStatsModal from '@/app/rag-search/components/modals/EmbeddingStatsModal';
+import DataQualityReportModal from '@/app/rag-search/components/modals/DataQualityReportModal';
+import EvaluationPanelModal from '@/app/rag-search/components/modals/EvaluationPanelModal';
+import SearchBar from '@/app/rag-search/components/SearchBar';
+import SearchFilters from '@/app/rag-search/components/SearchFilters';
+import SearchResultsHeader from '@/app/rag-search/components/SearchResultsHeader';
+import SearchResultsList from '@/app/rag-search/components/SearchResultsList';
+import { useSearchHistory } from '@/app/rag-search/hooks/useSearchHistory';
+import { useSearchFilters } from '@/app/rag-search/hooks/useSearchFilters';
+import { useRAGSearch } from '@/app/rag-search/hooks/useRAGSearch';
+import { useGraphData } from '@/app/rag-search/hooks/useGraphData';
+import { useModalHandlers } from '@/app/rag-search/hooks/useModalHandlers';
+import { setupDiagnosticTools } from '@/app/rag-search/utils/diagnoseRAGSearch';
+import { devWarn } from '@/app/rag-search/utils/devLog';
+import { entityTypeLabels, relationTypeLabels } from '@/app/rag-search/constants/labels';
+import SearchResultDetail from '@/app/rag-search/components/SearchResultDetail';
+import SearchEmptyState from '@/app/rag-search/components/SearchEmptyState';
+import GraphView from '@/app/rag-search/components/GraphView';
+import PageHeader from '@/app/rag-search/components/PageHeader';
 
-export default function RAGSearchPage() {
+export function RAGSearchTab() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedResult, setSelectedResult] = useState<KnowledgeGraphSearchResult | null>(null);
   const [organizations, setOrganizations] = useState<Array<{ id: string; name: string; title?: string; type?: string }>>([]);
@@ -123,7 +126,7 @@ export default function RAGSearchPage() {
           
           // 組織が選択されていない場合、最初の組織を自動選択
           if (orgs.length > 0 && !searchFiltersHook.selectedOrganizationId) {
-            console.log('[RAGSearchPage] 組織が選択されていないため、最初の組織を自動選択:', orgs[0].id);
+            console.log('[RAGSearchTab] 組織が選択されていないため、最初の組織を自動選択:', orgs[0].id);
             searchFiltersHook.setSelectedOrganizationId(orgs[0].id);
           }
         }
@@ -184,11 +187,11 @@ export default function RAGSearchPage() {
       relationType: filters?.relationType,
     });
 
-    console.log('[RAGSearchPage] 検索実行:', { query, searchFilters });
+    console.log('[RAGSearchTab] 検索実行:', { query, searchFilters });
     
     // organizationIdが未指定の場合、全組織横断検索が実行される
     if (!searchFilters.organizationId) {
-      console.log('[RAGSearchPage] organizationIdが未指定のため、全組織横断検索を実行します。');
+      console.log('[RAGSearchTab] organizationIdが未指定のため、全組織横断検索を実行します。');
     }
 
     await ragSearchHook.search(query, searchFilters, 10);
@@ -213,7 +216,7 @@ export default function RAGSearchPage() {
   }, [ragSearchHook.searchResults]);
 
   return (
-    <Layout>
+    <>
       <div style={{ minHeight: '100vh', backgroundColor: '#F9FAFB', padding: '24px' }}>
         <div style={{ width: '100%' }}>
           <PageHeader />
@@ -365,6 +368,7 @@ export default function RAGSearchPage() {
         onEvaluationReportUpdate={setEvaluationReport}
         onRunningEvaluationUpdate={setIsRunningEvaluation}
       />
-    </Layout>
+    </>
   );
 }
+
