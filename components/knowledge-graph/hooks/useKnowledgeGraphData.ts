@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { getAllEntities, getEntityById } from '@/lib/entityApi';
 import { getAllRelations, getRelationById } from '@/lib/relationApi';
-import { getAllTopicsBatch, getOrgTreeFromDb, getAllOrganizationsFromTree } from '@/lib/orgApi';
+import { getAllTopicsBatch, getOrgTreeFromDb, getAllOrganizationsFromTree, getAllMembersBatch } from '@/lib/orgApi';
 import type { Entity } from '@/types/entity';
 import type { Relation } from '@/types/relation';
 import type { TopicInfo } from '@/lib/orgApi';

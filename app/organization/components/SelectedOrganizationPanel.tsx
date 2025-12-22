@@ -5,8 +5,8 @@ import type { OrgNodeData, MemberInfo } from '@/components/OrgChart';
 
 interface SelectedOrganizationPanelProps {
   selectedNode: OrgNodeData | null;
-  expandedMembers: Set<number>;
-  setExpandedMembers: (set: Set<number>) => void;
+  expandedMembers: Set<string>;
+  setExpandedMembers: (set: Set<string>) => void;
   onEditClick: () => void;
   onNavigateToDetail: () => void;
   showCompanyDisplay?: boolean;

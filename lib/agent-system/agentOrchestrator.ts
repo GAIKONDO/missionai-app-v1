@@ -5,12 +5,14 @@
 
 import type { Task, TaskExecution, ExecutionStatus, ExecutionPlan, FullExecutionPlan } from './types';
 import { ExecutionStatus as ES } from './types';
-import { TaskPlanner } from './taskPlanner';
+import { TaskPlanner, QueueingStrategy, type TaskPlannerConfig } from './taskPlanner';
 import { agentRegistry } from './agentRegistry';
 import { getA2AManager } from './a2aManager';
 import { generateId } from './utils';
 import { getErrorHandler } from './errorHandler';
 import { saveTaskExecution, getAllTaskExecutions } from './taskManager';
+import { getExecutionTimePredictor } from './executionTimePredictor';
+import { getResourceMonitor } from './resourceMonitor';
 
 /**
  * Agentオーケストレーター
@@ -33,9 +35,68 @@ export class AgentOrchestrator {
   private runningTasks: Set<string> = new Set(); // 実行中のタスクID
   private taskQueues: Map<string, QueuedTask[]> = new Map(); // Agent ID -> タスクキュー
   private maxConcurrentTasks: number = 10; // デフォルトの最大同時実行数
+  private globalMaxConcurrentTasks: number | null = null; // グローバル同時実行数制限（null = 制限なし）
+  private queueingStrategy: QueueingStrategy = QueueingStrategy.FIFO; // キューイング戦略
+  private resourceMonitor = getResourceMonitor();
+  private dynamicAdjustmentEnabled: boolean = false;
 
-  constructor() {
-    this.taskPlanner = new TaskPlanner();
+  constructor(config?: { globalMaxConcurrentTasks?: number; queueingStrategy?: QueueingStrategy; enableDynamicAdjustment?: boolean }) {
+    this.taskPlanner = new TaskPlanner({
+      enableAutoAgentSelection: true,
+      queueingStrategy: config?.queueingStrategy || QueueingStrategy.FIFO,
+    });
+    this.globalMaxConcurrentTasks = config?.globalMaxConcurrentTasks || null;
+    this.queueingStrategy = config?.queueingStrategy || QueueingStrategy.FIFO;
+    this.dynamicAdjustmentEnabled = config?.enableDynamicAdjustment !== false;
+
+    // リソース監視を開始
+    if (this.dynamicAdjustmentEnabled) {
+      this.resourceMonitor.startMonitoring((usage) => {
+        this.adjustConcurrencyBasedOnResources(usage);
+      });
+    }
+  }
+
+  /**
+   * オーケストレーター設定を更新
+   */
+  updateConfig(config: { globalMaxConcurrentTasks?: number; queueingStrategy?: QueueingStrategy; enableDynamicAdjustment?: boolean }): void {
+    if (config.globalMaxConcurrentTasks !== undefined) {
+      this.globalMaxConcurrentTasks = config.globalMaxConcurrentTasks;
+    }
+    if (config.queueingStrategy !== undefined) {
+      this.queueingStrategy = config.queueingStrategy;
+      this.taskPlanner.updateConfig({ queueingStrategy: config.queueingStrategy });
+    }
+    if (config.enableDynamicAdjustment !== undefined) {
+      this.dynamicAdjustmentEnabled = config.enableDynamicAdjustment;
+      if (this.dynamicAdjustmentEnabled) {
+        this.resourceMonitor.startMonitoring((usage) => {
+          this.adjustConcurrencyBasedOnResources(usage);
+        });
+      } else {
+        this.resourceMonitor.stopMonitoring();
+      }
+    }
+  }
+
+  /**
+   * リソース使用率に基づいて同時実行数を調整
+   */
+  private adjustConcurrencyBasedOnResources(usage: { cpuUsage: number; memoryUsage: number }): void {
+    if (!this.dynamicAdjustmentEnabled) return;
+
+    // グローバル同時実行数制限を調整
+    if (this.globalMaxConcurrentTasks !== null) {
+      const recommended = this.resourceMonitor.getRecommendedConcurrentTasks(this.globalMaxConcurrentTasks);
+      if (recommended !== this.globalMaxConcurrentTasks) {
+        console.log(`[AgentOrchestrator] リソース使用率に基づいて同時実行数を調整: ${this.globalMaxConcurrentTasks} -> ${recommended} (CPU: ${(usage.cpuUsage * 100).toFixed(1)}%, Memory: ${(usage.memoryUsage * 100).toFixed(1)}%)`);
+        this.globalMaxConcurrentTasks = recommended;
+      }
+    }
+
+    // Agent別の同時実行数も調整（必要に応じて）
+    // 現時点では、グローバル制限のみを調整
   }
 
   /**
@@ -79,13 +140,40 @@ export class AgentOrchestrator {
     const agentDef = agent.getAgent();
     const agentMaxConcurrent = agentDef.config.maxConcurrentTasks || this.maxConcurrentTasks;
     
+    // グローバル同時実行数制限をチェック
+    if (this.globalMaxConcurrentTasks !== null) {
+      const globalRunningCount = Array.from(this.runningTasks).filter(taskId => {
+        const exec = this.executions.get(taskId);
+        return exec && exec.status === ES.RUNNING;
+      }).length;
+      
+      if (globalRunningCount >= this.globalMaxConcurrentTasks) {
+        // グローバル制限に達している場合、キューに追加
+        return new Promise<TaskExecution>((resolve, reject) => {
+          // グローバルキューに追加（Agent ID = 'global'）
+          if (!this.taskQueues.has('global')) {
+            this.taskQueues.set('global', []);
+          }
+          this.taskQueues.get('global')!.push({
+            task,
+            resolve,
+            reject,
+            executionId,
+          });
+          
+          // グローバルキューから処理を開始
+          this.processQueue('global', this.globalMaxConcurrentTasks!);
+        });
+      }
+    }
+    
     // 同じAgentで実行中のタスク数をカウント
     const runningCount = Array.from(this.runningTasks).filter(taskId => {
       const exec = this.executions.get(taskId);
       return exec && exec.agentId === agentDef.id && exec.status === ES.RUNNING;
     }).length;
 
-    // 同時実行数制限に達している場合、キューに追加
+    // Agent別の同時実行数制限に達している場合、キューに追加
     if (runningCount >= agentMaxConcurrent) {
       return new Promise<TaskExecution>((resolve, reject) => {
         // キューに追加
@@ -120,11 +208,19 @@ export class AgentOrchestrator {
       return;
     }
 
+    // キューイング戦略に応じてキューをソート
+    await this.sortQueue(queue);
+
     // 現在の実行中タスク数をカウント
-    const runningCount = Array.from(this.runningTasks).filter(taskId => {
-      const exec = this.executions.get(taskId);
-      return exec && exec.agentId === agentId && exec.status === ES.RUNNING;
-    }).length;
+    const runningCount = agentId === 'global'
+      ? Array.from(this.runningTasks).filter(taskId => {
+          const exec = this.executions.get(taskId);
+          return exec && exec.status === ES.RUNNING;
+        }).length
+      : Array.from(this.runningTasks).filter(taskId => {
+          const exec = this.executions.get(taskId);
+          return exec && exec.agentId === agentId && exec.status === ES.RUNNING;
+        }).length;
 
     // 実行可能なタスク数を計算
     const availableSlots = maxConcurrent - runningCount;
@@ -134,6 +230,29 @@ export class AgentOrchestrator {
       const queuedTask = queue.shift();
       if (!queuedTask) break;
 
+      // グローバルキューの場合、実行計画を再作成してAgentを決定
+      if (agentId === 'global') {
+        const plan = await this.taskPlanner.createPlan(queuedTask.task);
+        const agent = agentRegistry.get(plan.assignedAgentId);
+        if (agent) {
+          const agentDef = agent.getAgent();
+          const agentMaxConcurrent = agentDef.config.maxConcurrentTasks || this.maxConcurrentTasks;
+          const agentRunningCount = Array.from(this.runningTasks).filter(taskId => {
+            const exec = this.executions.get(taskId);
+            return exec && exec.agentId === agentDef.id && exec.status === ES.RUNNING;
+          }).length;
+          
+          // Agent別の制限に達している場合、Agent別キューに移動
+          if (agentRunningCount >= agentMaxConcurrent) {
+            if (!this.taskQueues.has(agentDef.id)) {
+              this.taskQueues.set(agentDef.id, []);
+            }
+            this.taskQueues.get(agentDef.id)!.push(queuedTask);
+            continue;
+          }
+        }
+      }
+
       try {
         // タスクを実行（executeTaskの内部処理を実行）
         const execution = await this.executeTaskInternal(queuedTask.task, queuedTask.executionId);
@@ -141,6 +260,50 @@ export class AgentOrchestrator {
       } catch (error) {
         queuedTask.reject(error instanceof Error ? error : new Error(String(error)));
       }
+    }
+
+    // グローバルキューの処理後、Agent別キューも処理
+    if (agentId === 'global') {
+      for (const [agentId, agentQueue] of this.taskQueues.entries()) {
+        if (agentId !== 'global' && agentQueue.length > 0) {
+          const agent = agentRegistry.get(agentId);
+          if (agent) {
+            const agentDef = agent.getAgent();
+            const agentMaxConcurrent = agentDef.config.maxConcurrentTasks || this.maxConcurrentTasks;
+            this.processQueue(agentId, agentMaxConcurrent);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * キューイング戦略に応じてキューをソート
+   */
+  private async sortQueue(queue: QueuedTask[]): Promise<void> {
+    switch (this.queueingStrategy) {
+      case QueueingStrategy.PRIORITY:
+        // 優先度の高い順（priorityが大きい順）
+        queue.sort((a, b) => (b.task.priority || 5) - (a.task.priority || 5));
+        break;
+      case QueueingStrategy.SHORTEST_JOB_FIRST:
+        // 実行時間予測を使用して最短ジョブ優先
+        const predictor = getExecutionTimePredictor();
+        const predictions = await predictor.predictMultipleTasks(queue.map(qt => qt.task));
+        queue.sort((a, b) => {
+          const timeA = predictions.get(a.task.id)?.estimatedTime || a.task.timeout || 60000;
+          const timeB = predictions.get(b.task.id)?.estimatedTime || b.task.timeout || 60000;
+          return timeA - timeB;
+        });
+        break;
+      case QueueingStrategy.ROUND_ROBIN:
+        // ラウンドロビンは既にFIFOで実現されているため、そのまま
+        // （必要に応じて、より高度な実装を追加可能）
+        break;
+      case QueueingStrategy.FIFO:
+      default:
+        // デフォルトはFIFO（既にキューに入っている順序を維持）
+        break;
     }
   }
 
@@ -265,10 +428,18 @@ export class AgentOrchestrator {
 
       // リトライ可能なエラーで、リトライ回数が残っている場合
       if (errorInfo.retryable && task.retryCount && task.retryCount > 0) {
-        const retryPolicy = {
-          maxRetries: task.retryCount,
+        // Agentの設定からリトライポリシーを取得（デフォルト値を使用）
+        const agentDef = agent.getAgent();
+        const defaultRetryPolicy = agentDef.config.retryPolicy || {
+          maxRetries: 3,
           retryDelay: 1000,
           backoffMultiplier: 2,
+        };
+        
+        const retryPolicy = {
+          maxRetries: task.retryCount,
+          retryDelay: defaultRetryPolicy.retryDelay,
+          backoffMultiplier: defaultRetryPolicy.backoffMultiplier,
         };
 
         const retryExecution = await errorHandler.retryTask(task, execution, retryPolicy);
@@ -447,6 +618,182 @@ export class AgentOrchestrator {
       message,
       data,
     });
+  }
+
+  /**
+   * オーケストレーターの設定を取得
+   */
+  getOrchestratorConfig(): {
+    globalMaxConcurrentTasks: number | null;
+    queueingStrategy: QueueingStrategy;
+    defaultMaxConcurrentTasks: number;
+  } {
+    return {
+      globalMaxConcurrentTasks: this.globalMaxConcurrentTasks,
+      queueingStrategy: this.queueingStrategy,
+      defaultMaxConcurrentTasks: this.maxConcurrentTasks,
+    };
+  }
+
+  /**
+   * オーケストレーターの状態を取得（管理用）
+   */
+  getOrchestratorStatus(): {
+    runningTasksCount: number;
+    queuedTasksCount: number;
+    pendingTasksCount: number;
+    agentQueues: Array<{ agentId: string; queueLength: number; runningCount: number }>;
+    totalExecutions: number;
+  } {
+    const runningTasksCount = this.runningTasks.size;
+    let queuedTasksCount = 0;
+    const agentQueues: Array<{ agentId: string; queueLength: number; runningCount: number }> = [];
+
+    // Agent別のキュー情報を取得
+    for (const [agentId, queue] of this.taskQueues.entries()) {
+      const queueLength = queue.length;
+      queuedTasksCount += queueLength;
+
+      // このAgentで実行中のタスク数をカウント
+      const runningCount = Array.from(this.runningTasks).filter(taskId => {
+        const exec = this.executions.get(taskId);
+        return exec && exec.agentId === agentId && exec.status === ES.RUNNING;
+      }).length;
+
+      agentQueues.push({ agentId, queueLength, runningCount });
+    }
+
+    // 待機中タスク数をカウント
+    const pendingTasksCount = Array.from(this.executions.values()).filter(
+      exec => exec.status === ES.PENDING
+    ).length;
+
+    // グローバル実行中タスク数
+    const globalRunningCount = Array.from(this.runningTasks).filter(taskId => {
+      const exec = this.executions.get(taskId);
+      return exec && exec.status === ES.RUNNING;
+    }).length;
+
+    return {
+      runningTasksCount,
+      queuedTasksCount,
+      pendingTasksCount,
+      agentQueues,
+      totalExecutions: this.executions.size,
+      globalRunningCount,
+    };
+  }
+
+  /**
+   * キュー内のタスク情報を取得
+   */
+  getQueuedTasks(): Array<{ agentId: string; taskId: string; taskName: string; executionId: string; queuedAt?: number }> {
+    const queuedTasks: Array<{ agentId: string; taskId: string; taskName: string; executionId: string; queuedAt?: number }> = [];
+
+    for (const [agentId, queue] of this.taskQueues.entries()) {
+      for (const queuedTask of queue) {
+        const execution = this.executions.get(queuedTask.executionId);
+        queuedTasks.push({
+          agentId,
+          taskId: queuedTask.task.id,
+          taskName: queuedTask.task.name,
+          executionId: queuedTask.executionId,
+          queuedAt: execution?.startedAt,
+        });
+      }
+    }
+
+    return queuedTasks;
+  }
+
+  /**
+   * キューからタスクを削除（キャンセル）
+   */
+  async removeTaskFromQueue(executionId: string): Promise<boolean> {
+    for (const [agentId, queue] of this.taskQueues.entries()) {
+      const index = queue.findIndex(qt => qt.executionId === executionId);
+      if (index !== -1) {
+        const queuedTask = queue[index];
+        queue.splice(index, 1);
+
+        // 実行記録を更新
+        const execution = this.executions.get(executionId);
+        if (execution) {
+          execution.status = ES.CANCELLED;
+          execution.completedAt = Date.now();
+          execution.error = 'キューから削除されました';
+          this.addLog(execution, 'info', 'キューから削除されました');
+
+          // データベースに保存
+          try {
+            await saveTaskExecution(execution);
+          } catch (saveError) {
+            console.error(`[AgentOrchestrator] 実行履歴の保存に失敗（キュー削除時）:`, saveError);
+          }
+        }
+
+        // Promiseを拒否
+        queuedTask.reject(new Error('キューから削除されました'));
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * キューをクリア
+   */
+  async clearQueue(agentId?: string): Promise<number> {
+    let clearedCount = 0;
+
+    if (agentId) {
+      // 特定のAgentのキューをクリア
+      const queue = this.taskQueues.get(agentId);
+      if (queue) {
+        clearedCount = queue.length;
+        for (const queuedTask of queue) {
+          const execution = this.executions.get(queuedTask.executionId);
+          if (execution) {
+            execution.status = ES.CANCELLED;
+            execution.completedAt = Date.now();
+            execution.error = 'キューがクリアされました';
+            this.addLog(execution, 'info', 'キューがクリアされました');
+
+            try {
+              await saveTaskExecution(execution);
+            } catch (saveError) {
+              console.error(`[AgentOrchestrator] 実行履歴の保存に失敗（キュークリア時）:`, saveError);
+            }
+          }
+          queuedTask.reject(new Error('キューがクリアされました'));
+        }
+        this.taskQueues.delete(agentId);
+      }
+    } else {
+      // すべてのキューをクリア
+      for (const [agentId, queue] of this.taskQueues.entries()) {
+        clearedCount += queue.length;
+        for (const queuedTask of queue) {
+          const execution = this.executions.get(queuedTask.executionId);
+          if (execution) {
+            execution.status = ES.CANCELLED;
+            execution.completedAt = Date.now();
+            execution.error = 'キューがクリアされました';
+            this.addLog(execution, 'info', 'キューがクリアされました');
+
+            try {
+              await saveTaskExecution(execution);
+            } catch (saveError) {
+              console.error(`[AgentOrchestrator] 実行履歴の保存に失敗（キュークリア時）:`, saveError);
+            }
+          }
+          queuedTask.reject(new Error('キューがクリアされました'));
+        }
+      }
+      this.taskQueues.clear();
+    }
+
+    return clearedCount;
   }
 }
 

@@ -5,8 +5,8 @@
 'use client';
 
 interface TabBarProps {
-  activeTab: 'tasks' | 'agents' | 'executions' | 'chains' | 'tools';
-  onTabChange: (tab: 'tasks' | 'agents' | 'executions' | 'chains' | 'tools') => void;
+  activeTab: 'tasks' | 'agents' | 'executions' | 'chains' | 'tools' | 'orchestrator';
+  onTabChange: (tab: 'tasks' | 'agents' | 'executions' | 'chains' | 'tools' | 'orchestrator') => void;
 }
 
 export function TabBar({ activeTab, onTabChange }: TabBarProps) {
@@ -16,6 +16,7 @@ export function TabBar({ activeTab, onTabChange }: TabBarProps) {
     { id: 'executions' as const, label: '実行監視' },
     { id: 'chains' as const, label: 'タスクチェーン' },
     { id: 'tools' as const, label: 'MCPツール' },
+    { id: 'orchestrator' as const, label: 'オーケストレーター' },
   ];
 
   return (

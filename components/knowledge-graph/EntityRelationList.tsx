@@ -10,18 +10,25 @@ interface EntityRelationListProps {
   topics: TopicInfo[];
   filteredEntities: Entity[];
   filteredRelations: Relation[];
+  filteredTopics: TopicInfo[];
   paginatedEntities: Entity[];
   paginatedRelations: Relation[];
+  paginatedTopics: TopicInfo[];
   entityPage: number;
   setEntityPage: (page: number | ((prev: number) => number)) => void;
   totalEntityPages: number;
   relationPage: number;
   setRelationPage: (page: number | ((prev: number) => number)) => void;
   totalRelationPages: number;
+  topicPage: number;
+  setTopicPage: (page: number | ((prev: number) => number)) => void;
+  totalTopicPages: number;
   entitySearchQuery: string;
   setEntitySearchQuery: (query: string) => void;
   relationSearchQuery: string;
   setRelationSearchQuery: (query: string) => void;
+  topicSearchQuery: string;
+  setTopicSearchQuery: (query: string) => void;
   entityTypeFilter: string;
   setEntityTypeFilter: (filter: string) => void;
   relationTypeFilter: string;
@@ -43,18 +50,25 @@ export default function EntityRelationList({
   topics,
   filteredEntities,
   filteredRelations,
+  filteredTopics,
   paginatedEntities,
   paginatedRelations,
+  paginatedTopics,
   entityPage,
   setEntityPage,
   totalEntityPages,
   relationPage,
   setRelationPage,
   totalRelationPages,
+  topicPage,
+  setTopicPage,
+  totalTopicPages,
   entitySearchQuery,
   setEntitySearchQuery,
   relationSearchQuery,
   setRelationSearchQuery,
+  topicSearchQuery,
+  setTopicSearchQuery,
   entityTypeFilter,
   setEntityTypeFilter,
   relationTypeFilter,
@@ -468,6 +482,140 @@ export default function EntityRelationList({
                 borderRadius: '6px',
                 fontSize: '14px',
                 cursor: relationPage === totalRelationPages ? 'not-allowed' : 'pointer',
+                fontWeight: 500,
+              }}
+            >
+              次へ
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* トピックセクション */}
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 600, color: '#1a1a1a' }}>
+            📝 トピック ({filteredTopics.length}件)
+            {totalTopicPages > 1 && (
+              <span style={{ fontSize: '14px', fontWeight: 500, color: '#6B7280', marginLeft: '8px' }}>
+                (ページ {topicPage} / {totalTopicPages})
+              </span>
+            )}
+          </h2>
+        </div>
+        
+        {/* 検索 */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+          <input
+            type="text"
+            placeholder="トピック名で検索..."
+            value={topicSearchQuery}
+            onChange={(e) => setTopicSearchQuery(e.target.value)}
+            style={{
+              flex: 1,
+              padding: '8px 12px',
+              border: '1px solid #D1D5DB',
+              borderRadius: '6px',
+              fontSize: '14px',
+            }}
+          />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '400px', overflowY: 'auto' }}>
+          {paginatedTopics.map((topic) => {
+            // このトピックに関連するエンティティ数を取得
+            const relatedEntitiesCount = entities.filter(e => {
+              if (e.metadata && typeof e.metadata === 'object' && 'topicId' in e.metadata) {
+                return e.metadata.topicId === topic.id;
+              }
+              return false;
+            }).length;
+            
+            // このトピックに関連するリレーション数を取得
+            const relatedRelationsCount = relations.filter(r => r.topicId === topic.id).length;
+            
+            return (
+              <div
+                key={topic.id}
+                style={{
+                  padding: '12px',
+                  backgroundColor: '#F9FAFB',
+                  borderRadius: '8px',
+                  border: '1px solid #E5E7EB',
+                  fontSize: '14px',
+                }}
+              >
+                <div style={{ color: '#1a1a1a', fontWeight: 600, marginBottom: '4px' }}>
+                  📝 {topic.title || 'タイトルなし'}
+                </div>
+                {topic.meetingNoteTitle && (
+                  <div style={{ color: '#6B7280', fontSize: '12px', marginBottom: '4px' }}>
+                    議事録: {topic.meetingNoteTitle}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: '12px', marginTop: '8px', fontSize: '12px', color: '#6B7280' }}>
+                  {relatedEntitiesCount > 0 && (
+                    <span>
+                      📌 エンティティ: {relatedEntitiesCount}件
+                    </span>
+                  )}
+                  {relatedRelationsCount > 0 && (
+                    <span>
+                      🔗 リレーション: {relatedRelationsCount}件
+                    </span>
+                  )}
+                  {topic.importance && (
+                    <span style={{
+                      color: topic.importance === 'high' ? '#EF4444' : topic.importance === 'medium' ? '#F59E0B' : '#6B7280',
+                      fontWeight: 500,
+                    }}>
+                      {topic.importance === 'high' ? '🔴 高' : topic.importance === 'medium' ? '🟡 中' : '⚪ 低'}
+                    </span>
+                  )}
+                  {topic.topicDate && (
+                    <span>
+                      📅 {new Date(topic.topicDate).toLocaleDateString('ja-JP')}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        
+        {/* トピックのページネーションコントロール */}
+        {totalTopicPages > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', marginTop: '16px' }}>
+            <button
+              onClick={() => setTopicPage(prev => Math.max(1, prev - 1))}
+              disabled={topicPage === 1}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: topicPage === 1 ? '#F3F4F6' : '#3B82F6',
+                color: topicPage === 1 ? '#9CA3AF' : '#FFFFFF',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '14px',
+                cursor: topicPage === 1 ? 'not-allowed' : 'pointer',
+                fontWeight: 500,
+              }}
+            >
+              前へ
+            </button>
+            <span style={{ fontSize: '14px', color: '#6B7280' }}>
+              {topicPage} / {totalTopicPages}
+            </span>
+            <button
+              onClick={() => setTopicPage(prev => Math.min(totalTopicPages, prev + 1))}
+              disabled={topicPage === totalTopicPages}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: topicPage === totalTopicPages ? '#F3F4F6' : '#3B82F6',
+                color: topicPage === totalTopicPages ? '#9CA3AF' : '#FFFFFF',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '14px',
+                cursor: topicPage === totalTopicPages ? 'not-allowed' : 'pointer',
                 fontWeight: 500,
               }}
             >

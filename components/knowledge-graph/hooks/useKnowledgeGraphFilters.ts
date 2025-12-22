@@ -22,6 +22,7 @@ interface UseKnowledgeGraphFiltersProps {
   entityTypeFilter: string;
   relationSearchQuery: string;
   relationTypeFilter: string;
+  topicSearchQuery: string;
   selectedOrganizationIds: Set<string>;
   selectedMemberIds: Set<string>;
   dateRangeStart: string;
@@ -32,18 +33,23 @@ interface UseKnowledgeGraphFiltersProps {
   relationTypeLabels: Record<string, string>;
   entityPage: number;
   relationPage: number;
+  topicPage: number;
   ITEMS_PER_PAGE: number;
   setEntityPage: (page: number | ((prev: number) => number)) => void;
   setRelationPage: (page: number | ((prev: number) => number)) => void;
+  setTopicPage: (page: number | ((prev: number) => number)) => void;
 }
 
 interface UseKnowledgeGraphFiltersReturn {
   filteredEntities: Entity[];
   filteredRelations: Relation[];
+  filteredTopics: TopicInfo[];
   paginatedEntities: Entity[];
   paginatedRelations: Relation[];
+  paginatedTopics: TopicInfo[];
   totalEntityPages: number;
   totalRelationPages: number;
+  totalTopicPages: number;
   filteredRelationIds: Set<string>;
 }
 
@@ -56,6 +62,7 @@ export function useKnowledgeGraphFilters({
   entityTypeFilter,
   relationSearchQuery,
   relationTypeFilter,
+  topicSearchQuery,
   selectedOrganizationIds,
   selectedMemberIds,
   dateRangeStart,
@@ -66,9 +73,11 @@ export function useKnowledgeGraphFilters({
   relationTypeLabels,
   entityPage,
   relationPage,
+  topicPage,
   ITEMS_PER_PAGE,
   setEntityPage,
   setRelationPage,
+  setTopicPage,
 }: UseKnowledgeGraphFiltersProps): UseKnowledgeGraphFiltersReturn {
   // トピック情報のマップ化（パフォーマンス最適化）
   const topicMap = useMemo(() => {
@@ -384,6 +393,61 @@ export function useKnowledgeGraphFilters({
     return Math.ceil(filteredRelations.length / ITEMS_PER_PAGE);
   }, [filteredRelations.length, ITEMS_PER_PAGE]);
   
+  // トピックのフィルタリング
+  const filteredTopics = useMemo(() => {
+    return topics.filter((topic) => {
+      // 検索フィルター
+      if (topicSearchQuery) {
+        const query = topicSearchQuery.toLowerCase();
+        const titleMatch = topic.title?.toLowerCase().includes(query);
+        const meetingNoteTitleMatch = topic.meetingNoteTitle?.toLowerCase().includes(query);
+        if (!titleMatch && !meetingNoteTitleMatch) {
+          return false;
+        }
+      }
+      
+      // 組織フィルター
+      if (selectedOrganizationIds.size > 0) {
+        if (!topic.organizationId || !selectedOrganizationIds.has(topic.organizationId)) {
+          return false;
+        }
+      }
+      
+      // 期間フィルター
+      if (dateRangeStart || dateRangeEnd) {
+        if (topic.isAllPeriods === true) {
+          // 全期間に反映の場合は常に表示
+          return true;
+        } else if (topic.topicDate !== undefined) {
+          return isDateInRange(topic.topicDate, dateRangeStart, dateRangeEnd);
+        } else {
+          // トピックに日付がない場合は除外
+          return false;
+        }
+      }
+      
+      // 重要度フィルター
+      if (selectedImportance.size > 0) {
+        if (!topic.importance || !selectedImportance.has(topic.importance)) {
+          return false;
+        }
+      }
+      
+      return true;
+    });
+  }, [topics, topicSearchQuery, selectedOrganizationIds, dateRangeStart, dateRangeEnd, selectedImportance, isDateInRange]);
+  
+  // トピックのページネーション
+  const paginatedTopics = useMemo(() => {
+    const startIndex = (topicPage - 1) * ITEMS_PER_PAGE;
+    const endIndex = startIndex + ITEMS_PER_PAGE;
+    return filteredTopics.slice(startIndex, endIndex);
+  }, [filteredTopics, topicPage, ITEMS_PER_PAGE]);
+  
+  const totalTopicPages = useMemo(() => {
+    return Math.ceil(filteredTopics.length / ITEMS_PER_PAGE);
+  }, [filteredTopics.length, ITEMS_PER_PAGE]);
+  
   // 検索やフィルターが変更されたらページをリセット
   useEffect(() => {
     setEntityPage(1);
@@ -392,14 +456,21 @@ export function useKnowledgeGraphFilters({
   useEffect(() => {
     setRelationPage(1);
   }, [relationSearchQuery, relationTypeFilter, setRelationPage]);
+  
+  useEffect(() => {
+    setTopicPage(1);
+  }, [topicSearchQuery, setTopicPage]);
 
   return {
     filteredEntities,
     filteredRelations,
+    filteredTopics,
     paginatedEntities,
     paginatedRelations,
+    paginatedTopics,
     totalEntityPages,
     totalRelationPages,
+    totalTopicPages,
     filteredRelationIds,
   };
 }

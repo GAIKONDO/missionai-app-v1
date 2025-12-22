@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { getAllEntities, deleteEntity } from '@/lib/entityApi';
-import { getRelationsByEntityId, deleteRelation } from '@/lib/relationApi';
+import { getRelationsByEntityId, deleteRelation, getAllRelations } from '@/lib/relationApi';
 import type { Entity } from '@/types/entity';
 import type { Relation } from '@/types/relation';
 

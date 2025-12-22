@@ -18,10 +18,11 @@ import { AgentsTabContent } from './components/AgentsTabContent';
 import { ExecutionsTabContent } from './components/ExecutionsTabContent';
 import { ChainTabContent } from './components/ChainTabContent';
 import { MCPToolsTabContent } from './components/MCPToolsTabContent';
+import { OrchestratorTabContent } from './components/OrchestratorTabContent';
 import { ToastContainer } from '@/components/Toast';
 
 export default function AgentsPage() {
-  const [activeTab, setActiveTab] = useState<'tasks' | 'agents' | 'executions' | 'chains' | 'tools'>('tasks');
+  const [activeTab, setActiveTab] = useState<'tasks' | 'agents' | 'executions' | 'chains' | 'tools' | 'orchestrator'>('tasks');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [executions, setExecutions] = useState<TaskExecution[]>([]);
@@ -176,6 +177,10 @@ export default function AgentsPage() {
 
         {activeTab === 'tools' && (
           <MCPToolsTabContent />
+        )}
+
+        {activeTab === 'orchestrator' && (
+          <OrchestratorTabContent />
         )}
 
         <ToastContainer />

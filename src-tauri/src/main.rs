@@ -262,6 +262,9 @@ fn main() {
             commands::agent_system::get_enabled_mcp_tools_command,
             commands::agent_system::delete_mcp_tool_command,
             commands::agent_system::update_mcp_tool_enabled_command,
+            // システムリソース監視コマンド
+            commands::system::get_system_resources,
+            commands::system::get_process_resources,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

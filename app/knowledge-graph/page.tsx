@@ -60,10 +60,12 @@ function KnowledgeGraphPageContent() {
   const [entityTypeFilter, setEntityTypeFilter] = useState<string>('all');
   const [relationSearchQuery, setRelationSearchQuery] = useState('');
   const [relationTypeFilter, setRelationTypeFilter] = useState<string>('all');
+  const [topicSearchQuery, setTopicSearchQuery] = useState('');
   
   // ページネーション状態
   const [entityPage, setEntityPage] = useState(1);
   const [relationPage, setRelationPage] = useState(1);
+  const [topicPage, setTopicPage] = useState(1);
   const ITEMS_PER_PAGE = 50;
   
   // フィルター状態
@@ -154,10 +156,13 @@ function KnowledgeGraphPageContent() {
   const {
     filteredEntities,
     filteredRelations,
+    filteredTopics,
     paginatedEntities,
     paginatedRelations,
+    paginatedTopics,
     totalEntityPages,
     totalRelationPages,
+    totalTopicPages,
     filteredRelationIds,
   } = useKnowledgeGraphFilters({
     entities,
@@ -168,6 +173,7 @@ function KnowledgeGraphPageContent() {
     entityTypeFilter,
     relationSearchQuery,
     relationTypeFilter,
+    topicSearchQuery,
     selectedOrganizationIds,
     selectedMemberIds,
     dateRangeStart,
@@ -178,9 +184,11 @@ function KnowledgeGraphPageContent() {
     relationTypeLabels,
     entityPage,
     relationPage,
+    topicPage,
     ITEMS_PER_PAGE,
     setEntityPage,
     setRelationPage,
+    setTopicPage,
   });
 
   return (
@@ -250,18 +258,25 @@ function KnowledgeGraphPageContent() {
                 topics={topics}
                 filteredEntities={filteredEntities}
                 filteredRelations={filteredRelations}
+                filteredTopics={filteredTopics}
                 paginatedEntities={paginatedEntities}
                 paginatedRelations={paginatedRelations}
+                paginatedTopics={paginatedTopics}
                 entityPage={entityPage}
                 setEntityPage={setEntityPage}
                 totalEntityPages={totalEntityPages}
                 relationPage={relationPage}
                 setRelationPage={setRelationPage}
                 totalRelationPages={totalRelationPages}
+                topicPage={topicPage}
+                setTopicPage={setTopicPage}
+                totalTopicPages={totalTopicPages}
                 entitySearchQuery={entitySearchQuery}
                 setEntitySearchQuery={setEntitySearchQuery}
                 relationSearchQuery={relationSearchQuery}
                 setRelationSearchQuery={setRelationSearchQuery}
+                topicSearchQuery={topicSearchQuery}
+                setTopicSearchQuery={setTopicSearchQuery}
                 entityTypeFilter={entityTypeFilter}
                 setEntityTypeFilter={setEntityTypeFilter}
                 relationTypeFilter={relationTypeFilter}
