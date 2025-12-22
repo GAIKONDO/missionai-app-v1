@@ -124,10 +124,18 @@ export function RAGSearchTab() {
           }));
           setOrganizations(orgs);
           
-          // 組織が選択されていない場合、最初の組織を自動選択
+          // 組織が選択されていない場合、最初の実組織を自動選択（virtual-rootを除外）
           if (orgs.length > 0 && !searchFiltersHook.selectedOrganizationId) {
-            console.log('[RAGSearchTab] 組織が選択されていないため、最初の組織を自動選択:', orgs[0].id);
-            searchFiltersHook.setSelectedOrganizationId(orgs[0].id);
+            // virtual-rootを除外して実組織のみを取得
+            const realOrgs = orgs.filter(org => org.id !== 'virtual-root');
+            if (realOrgs.length > 0) {
+              console.log('[RAGSearchTab] 組織が選択されていないため、最初の実組織を自動選択:', realOrgs[0].id);
+              searchFiltersHook.setSelectedOrganizationId(realOrgs[0].id);
+            } else {
+              console.log('[RAGSearchTab] 実組織が見つかりませんでした。全組織横断検索を実行します。');
+              // 実組織がない場合は、organizationIdを未指定にして全組織横断検索を実行
+              searchFiltersHook.setSelectedOrganizationId('');
+            }
           }
         }
       } catch (error) {
@@ -188,6 +196,12 @@ export function RAGSearchTab() {
     });
 
     console.log('[RAGSearchTab] 検索実行:', { query, searchFilters });
+    
+    // virtual-rootが選択されている場合は、全組織横断検索を実行（organizationIdを未指定にする）
+    if (searchFilters.organizationId === 'virtual-root') {
+      console.log('[RAGSearchTab] virtual-rootが選択されているため、全組織横断検索を実行します。');
+      searchFilters.organizationId = undefined;
+    }
     
     // organizationIdが未指定の場合、全組織横断検索が実行される
     if (!searchFilters.organizationId) {

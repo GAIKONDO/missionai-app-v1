@@ -14,7 +14,7 @@ import { getAvailableOllamaModels } from '@/lib/pageGeneration';
 import type { Entity, EntityType } from '@/types/entity';
 import type { Relation, RelationType } from '@/types/relation';
 import { getRelationsByTopicId, createRelation, deleteRelation } from '@/lib/relationApi';
-import { createEntity, getEntitiesByOrganizationId, deleteEntity } from '@/lib/entityApi';
+import { createEntity, getEntitiesByOrganizationId, getEntitiesByCompanyId, deleteEntity } from '@/lib/entityApi';
 import { callTauriCommand } from '@/lib/localFirebase';
 import { deleteTopicFromChroma } from '@/lib/chromaSync';
 import { EditIcon, AIIcon, DeleteIcon } from './components/Icons';
@@ -1075,23 +1075,388 @@ function MeetingNoteDetailPageContent() {
           setTopicRelations([]);
           setReplaceExistingEntities(false);
         }}
-        onSave={(updatedContents) => {
-          setMonthContents(updatedContents);
-          setHasUnsavedChanges(true);
-          setShowTopicModal(false);
-          setEditingTopicItemId(null);
-          setEditingTopicId(null);
-          setTopicTitle('');
-          setTopicContent('');
-          setTopicSemanticCategory('');
-          setTopicKeywords('');
-          setTopicSummary('');
-          setTopicImportance('');
-          setPendingMetadata(null);
-          setPendingEntities(null);
-          setPendingRelations(null);
-          setTopicEntities([]);
-          setTopicRelations([]);
+        onSave={async (updatedContents) => {
+          try {
+            setSavingStatus('saving');
+            
+            // トピック情報を取得
+            const topicId = editingTopicId || (() => {
+              // 新規追加の場合は、保存されたトピックIDを取得
+              const tabData = updatedContents[activeTab];
+              if (tabData?.items) {
+                const item = tabData.items.find(i => i.id === editingTopicItemId);
+                if (item?.topics && item.topics.length > 0) {
+                  // 最新のトピック（最後に追加されたもの）を取得
+                  return item.topics[item.topics.length - 1]?.id;
+                }
+              }
+              return null;
+            })();
+            
+            if (!topicId) {
+              console.error('❌ トピックIDが取得できませんでした');
+              alert('エラー: トピックIDが取得できませんでした');
+              setSavingStatus('idle');
+              return;
+            }
+            
+            // トピック情報を取得
+            const tabData = updatedContents[activeTab];
+            const item = tabData?.items?.find(i => i.id === editingTopicItemId);
+            const topic = item?.topics?.find(t => t.id === topicId);
+            
+            if (!topic) {
+              console.error('❌ トピックが見つかりませんでした');
+              alert('エラー: トピックが見つかりませんでした');
+              setSavingStatus('idle');
+              return;
+            }
+            
+            // 議事録を保存
+            if (meetingNote) {
+              const contentJson = JSON.stringify(updatedContents, null, 2);
+              await saveMeetingNote({
+                ...meetingNote,
+                content: contentJson,
+              });
+              devLog('✅ 議事録を保存しました');
+            }
+            
+            // トピック埋め込みを保存（非同期）
+            if (meetingNote && organizationId) {
+              saveTopicEmbeddingAsync(
+                topicId,
+                meetingId,
+                organizationId,
+                topic.title || '',
+                topic.content || '',
+                {
+                  keywords: topic.keywords,
+                  semanticCategory: topic.semanticCategory,
+                  importance: topic.importance,
+                  summary: topic.summary,
+                }
+              ).catch((error: any) => {
+                devWarn('⚠️ トピック埋め込みの保存に失敗しました（続行します）:', error);
+              });
+            }
+            
+            // topicsレコードを作成または確認
+            const topicEmbeddingId = `${meetingId}-topic-${topicId}`;
+            try {
+              const topicEmbeddingResult = await callTauriCommand('doc_get', {
+                collectionName: 'topics',
+                docId: topicEmbeddingId,
+              });
+              
+              if (!topicEmbeddingResult || !topicEmbeddingResult.exists || !topicEmbeddingResult.data) {
+                // レコードが存在しない場合は作成
+                const now = new Date().toISOString();
+                await callTauriCommand('doc_set', {
+                  collectionName: 'topics',
+                  docId: topicEmbeddingId,
+                  data: {
+                    id: topicEmbeddingId,
+                    topicId: topicId,
+                    meetingNoteId: meetingId,
+                    organizationId: organizationId,
+                    title: topic.title || '',
+                    content: topic.content || '',
+                    createdAt: now,
+                    updatedAt: now,
+                  },
+                });
+                devLog('✅ topicsレコードを作成しました:', topicEmbeddingId);
+              }
+            } catch (error: any) {
+              const errorMessage = error?.message || error?.error || error?.errorString || String(error || '');
+              const isNoRowsError = errorMessage.includes('no rows') || 
+                                    errorMessage.includes('Query returned no rows') ||
+                                    errorMessage.includes('ドキュメント取得エラー');
+              
+              if (isNoRowsError) {
+                // レコードが存在しない場合は作成
+                const now = new Date().toISOString();
+                try {
+                  await callTauriCommand('doc_set', {
+                    collectionName: 'topics',
+                    docId: topicEmbeddingId,
+                    data: {
+                      id: topicEmbeddingId,
+                      topicId: topicId,
+                      meetingNoteId: meetingId,
+                      organizationId: organizationId,
+                      title: topic.title || '',
+                      content: topic.content || '',
+                      createdAt: now,
+                      updatedAt: now,
+                    },
+                  });
+                  devLog('✅ topicsレコードを作成しました:', topicEmbeddingId);
+                } catch (createError: any) {
+                  devWarn('⚠️ topicsレコード作成エラー（続行します）:', createError);
+                }
+              } else {
+                devWarn('⚠️ topicsレコード確認エラー（続行します）:', error);
+              }
+            }
+            
+            // 既存のエンティティとリレーションを削除（上書き保存の場合）
+            if (replaceExistingEntities && topicId) {
+              try {
+                // 既存のリレーションを削除
+                const existingRelations = await getRelationsByTopicId(topicEmbeddingId);
+                for (const relation of existingRelations) {
+                  try {
+                    await deleteRelation(relation.id);
+                    devLog(`✅ 既存のリレーションを削除しました: ${relation.id}`);
+                  } catch (error: any) {
+                    devWarn(`⚠️ リレーション削除エラー（続行します）: ${relation.id}`, error);
+                  }
+                }
+                
+                // 既存のエンティティを削除（同じトピック内のもののみ）
+                const allEntities = meetingNote?.companyId
+                  ? await getEntitiesByCompanyId(meetingNote.companyId)
+                  : await getEntitiesByOrganizationId(organizationId);
+                const entitiesInTopic = allEntities.filter(e => {
+                  if (!e.metadata || typeof e.metadata !== 'object') return false;
+                  return 'topicId' in e.metadata && e.metadata.topicId === topicId;
+                });
+                
+                for (const entity of entitiesInTopic) {
+                  try {
+                    await deleteEntity(entity.id);
+                    devLog(`✅ 既存のエンティティを削除しました: ${entity.id}`);
+                  } catch (error: any) {
+                    devWarn(`⚠️ エンティティ削除エラー（続行します）: ${entity.id}`, error);
+                  }
+                }
+              } catch (error: any) {
+                devWarn('⚠️ 既存データの削除エラー（続行します）:', error);
+              }
+            }
+            
+            // エンティティを保存
+            const entitiesToSave = pendingEntities && pendingEntities.length > 0 ? pendingEntities : topicEntities;
+            const pendingIdToCreatedIdMap = new Map<string, string>();
+            
+            if (entitiesToSave && entitiesToSave.length > 0) {
+              devLog('💾 エンティティ保存を開始:', entitiesToSave.length, '件');
+              
+              // 既存のエンティティを取得（重複チェック用）
+              const allEntities = meetingNote?.companyId
+                ? await getEntitiesByCompanyId(meetingNote.companyId)
+                : await getEntitiesByOrganizationId(organizationId);
+              
+              // 同じトピック内で既に存在するエンティティをフィルタリング
+              const existingEntitiesInTopic = allEntities.filter(e => {
+                if (!e.metadata || typeof e.metadata !== 'object') return false;
+                return 'topicId' in e.metadata && e.metadata.topicId === topicId;
+              });
+              
+              // 名前 + topicIdの組み合わせで重複チェック
+              const existingEntityKeys = new Set(
+                existingEntitiesInTopic.map(e => `${e.name.toLowerCase()}_${topicId}`)
+              );
+              
+              // 重複しないエンティティのみを作成
+              const entitiesToCreate = entitiesToSave.filter(entity => {
+                const key = `${entity.name.toLowerCase()}_${topicId}`;
+                return !existingEntityKeys.has(key);
+              });
+              
+              devLog(`📊 エンティティ保存対象: ${entitiesToCreate.length}件（重複除外: ${entitiesToSave.length - entitiesToCreate.length}件）`);
+              
+              for (const entity of entitiesToCreate) {
+                try {
+                  const pendingId = entity.id;
+                  
+                  // metadataにtopicIdを確実に設定
+                  const entityMetadata = {
+                    ...(entity.metadata || {}),
+                    topicId: topicId,
+                  };
+                  
+                  // organizationIdとcompanyIdを確実に設定
+                  const companyId = entity.companyId || meetingNote?.companyId || undefined;
+                  const orgId = companyId 
+                    ? (entity.organizationId || organizationId || undefined)
+                    : (entity.organizationId || organizationId);
+                  
+                  if (!orgId && !companyId) {
+                    throw new Error('organizationIdまたはcompanyIdが設定されていません');
+                  }
+                  
+                  const createdEntity = await createEntity({
+                    name: entity.name,
+                    type: entity.type,
+                    aliases: entity.aliases || [],
+                    metadata: entityMetadata,
+                    organizationId: orgId,
+                    companyId: companyId,
+                  });
+                  
+                  pendingIdToCreatedIdMap.set(pendingId, createdEntity.id);
+                  devLog(`✅ エンティティ作成成功: ${entity.name} (${createdEntity.id})`);
+                } catch (error: any) {
+                  console.error('❌ エンティティ作成エラー:', {
+                    entityName: entity.name,
+                    error: error?.message || error,
+                  });
+                  throw new Error(`エンティティ「${entity.name}」の作成に失敗しました: ${error?.message || error}`);
+                }
+              }
+              
+              // 既存のエンティティもマッピングに追加
+              existingEntitiesInTopic.forEach(entity => {
+                const entityToMatch = entitiesToSave.find(e => 
+                  e.name.toLowerCase() === entity.name.toLowerCase() &&
+                  e.metadata && typeof e.metadata === 'object' &&
+                  'topicId' in e.metadata && e.metadata.topicId === topicId
+                );
+                if (entityToMatch) {
+                  pendingIdToCreatedIdMap.set(entityToMatch.id, entity.id);
+                }
+              });
+            }
+            
+            // リレーションを保存
+            const relationsToSave = pendingRelations && pendingRelations.length > 0 ? pendingRelations : topicRelations;
+            
+            if (relationsToSave && relationsToSave.length > 0) {
+              devLog('💾 リレーション保存を開始:', relationsToSave.length, '件');
+              
+              // エンティティ名からIDのマッピングを取得
+              const allEntities = meetingNote?.companyId
+                ? await getEntitiesByCompanyId(meetingNote.companyId)
+                : await getEntitiesByOrganizationId(organizationId);
+              const entitiesInTopic = allEntities.filter(e => {
+                if (!e.metadata || typeof e.metadata !== 'object') return false;
+                return 'topicId' in e.metadata && e.metadata.topicId === topicId;
+              });
+              
+              const entityNameToIdMap = new Map<string, string>();
+              entitiesInTopic.forEach(entity => {
+                entityNameToIdMap.set(entity.name.toLowerCase(), entity.id);
+              });
+              
+              for (const relation of relationsToSave) {
+                try {
+                  if (!relation.sourceEntityId || !relation.targetEntityId) {
+                    devWarn('⚠️ リレーションにsourceEntityIdまたはtargetEntityIdがありません:', relation);
+                    continue;
+                  }
+                  
+                  const sourceId = pendingIdToCreatedIdMap.get(relation.sourceEntityId) || relation.sourceEntityId;
+                  const targetId = pendingIdToCreatedIdMap.get(relation.targetEntityId) || relation.targetEntityId;
+                  
+                  // sourceIdとtargetIdが既にデータベースに存在するか確認
+                  const sourceEntityExists = entitiesInTopic.some(e => e.id === sourceId);
+                  const targetEntityExists = entitiesInTopic.some(e => e.id === targetId);
+                  
+                  if (!sourceEntityExists || !targetEntityExists) {
+                    // フォールバック: エンティティ名からIDを取得
+                    const sourceEntity = entitiesToSave?.find(e => e.id === relation.sourceEntityId);
+                    const targetEntity = entitiesToSave?.find(e => e.id === relation.targetEntityId);
+                    
+                    if (sourceEntity && targetEntity) {
+                      const fallbackSourceId = entityNameToIdMap.get(sourceEntity.name.toLowerCase());
+                      const fallbackTargetId = entityNameToIdMap.get(targetEntity.name.toLowerCase());
+                      
+                      if (fallbackSourceId && fallbackTargetId) {
+                        const companyId = relation.companyId || meetingNote?.companyId || undefined;
+                        const orgId = companyId 
+                          ? (relation.organizationId || organizationId || undefined)
+                          : (relation.organizationId || organizationId);
+                        
+                        if (!orgId && !companyId) {
+                          throw new Error('organizationIdまたはcompanyIdが設定されていません');
+                        }
+                        
+                        await createRelation({
+                          sourceEntityId: fallbackSourceId,
+                          targetEntityId: fallbackTargetId,
+                          relationType: relation.relationType,
+                          description: relation.description,
+                          topicId: topicEmbeddingId,
+                          organizationId: orgId,
+                          companyId: companyId,
+                        });
+                        devLog(`✅ リレーション作成成功（フォールバック）: ${relation.relationType}`);
+                        continue;
+                      }
+                    }
+                    
+                    devWarn('⚠️ リレーション作成スキップ: エンティティIDが見つかりません', {
+                      sourcePendingId: relation.sourceEntityId,
+                      targetPendingId: relation.targetEntityId,
+                    });
+                    continue;
+                  }
+                  
+                  // リレーションを作成
+                  const companyId = relation.companyId || meetingNote?.companyId || undefined;
+                  const orgId = companyId 
+                    ? (relation.organizationId || organizationId || undefined)
+                    : (relation.organizationId || organizationId);
+                  
+                  if (!orgId && !companyId) {
+                    throw new Error('organizationIdまたはcompanyIdが設定されていません');
+                  }
+                  
+                  await createRelation({
+                    topicId: topicEmbeddingId,
+                    sourceEntityId: sourceId,
+                    targetEntityId: targetId,
+                    relationType: relation.relationType,
+                    description: relation.description,
+                    confidence: relation.confidence,
+                    metadata: relation.metadata,
+                    organizationId: orgId,
+                    companyId: companyId,
+                  });
+                  
+                  devLog(`✅ リレーション作成成功: ${relation.relationType}`);
+                } catch (error: any) {
+                  console.error('❌ リレーション作成エラー:', {
+                    relationType: relation.relationType,
+                    error: error?.message || error,
+                  });
+                  throw new Error(`リレーション「${relation.relationType}」の作成に失敗しました: ${error?.message || error}`);
+                }
+              }
+            }
+            
+            // 状態を更新
+            setMonthContents(updatedContents);
+            setHasUnsavedChanges(false);
+            setSavingStatus('saved');
+            
+            // モーダルを閉じる
+            setShowTopicModal(false);
+            setEditingTopicItemId(null);
+            setEditingTopicId(null);
+            setTopicTitle('');
+            setTopicContent('');
+            setTopicSemanticCategory('');
+            setTopicKeywords('');
+            setTopicSummary('');
+            setTopicImportance('');
+            setPendingMetadata(null);
+            setPendingEntities(null);
+            setPendingRelations(null);
+            setTopicEntities([]);
+            setTopicRelations([]);
+            setReplaceExistingEntities(false);
+            
+            setTimeout(() => setSavingStatus('idle'), 2000);
+            devLog('✅ トピック保存完了（エンティティ・リレーション含む）');
+          } catch (error: any) {
+            console.error('❌ トピック保存エラー:', error);
+            alert(`トピックの保存に失敗しました: ${error?.message || '不明なエラー'}`);
+            setSavingStatus('idle');
+          }
         }}
         setTopicTitle={setTopicTitle}
         setTopicContent={setTopicContent}

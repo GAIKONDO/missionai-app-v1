@@ -774,6 +774,8 @@ export default function EmbeddingRegenerationModal({
                     // 停止されていない場合のみ完了ステータスを設定
                     if (!isCancelledRef.current) {
                       setRegenerationProgress(prev => ({ ...prev, status: 'completed' }));
+                      // 完了ステータスを設定した後、グローバル状態も更新
+                      completeRegeneration();
                     }
                   } catch (error: any) {
                     console.error('埋め込み再生成エラー:', error);
@@ -789,6 +791,12 @@ export default function EmbeddingRegenerationModal({
                         },
                       ],
                     }));
+                    // エラー時も完了ステータスを設定した場合はグローバル状態を更新
+                    if (!isCancelledRef.current) {
+                      completeRegeneration();
+                    } else {
+                      cancelRegeneration();
+                    }
                   } finally {
                     setIsRegeneratingEmbeddings(false);
                   }
