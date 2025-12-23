@@ -3,17 +3,32 @@
 import React, { useState, useCallback } from 'react';
 import { CollapsibleSection } from '../../common/CollapsibleSection';
 // テーブル詳細コンポーネント
+// ユーザー管理系
+import UsersTable from '../../tables/UsersTable';
+import ApprovalRequestsTable from '../../tables/ApprovalRequestsTable';
+// 組織管理系
 import OrganizationsTable from '../../tables/OrganizationsTable';
 import OrganizationMembersTable from '../../tables/OrganizationMembersTable';
 import OrganizationContentsTable from '../../tables/OrganizationContentsTable';
-import MeetingNotesTable from '../../tables/MeetingNotesTable';
-import TopicsTable from '../../tables/TopicsTable';
+// 事業会社系
+import CompaniesTable from '../../tables/CompaniesTable';
+import CompanyContentsTable from '../../tables/CompanyContentsTable';
+import OrganizationCompanyDisplayTable from '../../tables/OrganizationCompanyDisplayTable';
+// ナレッジグラフ系
 import EntitiesTable from '../../tables/EntitiesTable';
 import RelationsTable from '../../tables/RelationsTable';
+import TopicsTable from '../../tables/TopicsTable';
+// 議事録・施策系
+import MeetingNotesTable from '../../tables/MeetingNotesTable';
 import FocusInitiativesTable from '../../tables/FocusInitiativesTable';
 import ThemesTable from '../../tables/ThemesTable';
+import ThemeHierarchyConfigsTable from '../../tables/ThemeHierarchyConfigsTable';
+// システム設計ドキュメント系
 import DesignDocSectionsTable from '../../tables/DesignDocSectionsTable';
 import DesignDocSectionRelationsTable from '../../tables/DesignDocSectionRelationsTable';
+// その他
+import AiSettingsTable from '../../tables/AiSettingsTable';
+import BackupHistoryTable from '../../tables/BackupHistoryTable';
 
 /**
  * テーブル詳細セクション
@@ -26,17 +41,32 @@ export function TableDetailsSection() {
   }, []);
 
   const tableList = [
-    { number: '①', name: 'organizations', id: 'table-organizations', japanese: '組織', component: OrganizationsTable },
-    { number: '②', name: 'organizationMembers', id: 'table-organization-members', japanese: '組織メンバー', component: OrganizationMembersTable },
-    { number: '③', name: 'organizationContents', id: 'table-organization-contents', japanese: '組織コンテンツ', component: OrganizationContentsTable },
-    { number: '④', name: 'meetingNotes', id: 'table-meeting-notes', japanese: '議事録', component: MeetingNotesTable },
-    { number: '⑤', name: 'topics', id: 'table-topics', japanese: 'トピック', component: TopicsTable },
-    { number: '⑥', name: 'entities', id: 'table-entities', japanese: 'エンティティ', component: EntitiesTable },
-    { number: '⑦', name: 'relations', id: 'table-relations', japanese: 'リレーション', component: RelationsTable },
-    { number: '⑧', name: 'focusInitiatives', id: 'table-focus-initiatives', japanese: '注力施策', component: FocusInitiativesTable },
-    { number: '⑨', name: 'themes', id: 'table-themes', japanese: 'テーマ', component: ThemesTable },
-    { number: '⑩', name: 'designDocSections', id: 'table-design-doc-sections', japanese: 'システム設計ドキュメントセクション', component: DesignDocSectionsTable },
-    { number: '⑪', name: 'designDocSectionRelations', id: 'table-design-doc-section-relations', japanese: '設計ドキュメントセクションリレーション', component: DesignDocSectionRelationsTable },
+    // ユーザー管理系
+    { number: '①', name: 'users', id: 'table-users', japanese: 'ユーザー', component: UsersTable },
+    { number: '②', name: 'approvalRequests', id: 'table-approval-requests', japanese: '承認リクエスト', component: ApprovalRequestsTable },
+    // 組織管理系
+    { number: '③', name: 'organizations', id: 'table-organizations', japanese: '組織', component: OrganizationsTable },
+    { number: '④', name: 'organizationMembers', id: 'table-organization-members', japanese: '組織メンバー', component: OrganizationMembersTable },
+    { number: '⑤', name: 'organizationContents', id: 'table-organization-contents', japanese: '組織コンテンツ', component: OrganizationContentsTable },
+    // 事業会社系
+    { number: '⑥', name: 'companies', id: 'table-companies', japanese: '事業会社', component: CompaniesTable },
+    { number: '⑦', name: 'companyContents', id: 'table-company-contents', japanese: '事業会社コンテンツ', component: CompanyContentsTable },
+    { number: '⑧', name: 'organizationCompanyDisplay', id: 'table-organization-company-display', japanese: '組織・事業会社表示', component: OrganizationCompanyDisplayTable },
+    // ナレッジグラフ系
+    { number: '⑨', name: 'entities', id: 'table-entities', japanese: 'エンティティ', component: EntitiesTable },
+    { number: '⑩', name: 'relations', id: 'table-relations', japanese: 'リレーション', component: RelationsTable },
+    { number: '⑪', name: 'topics', id: 'table-topics', japanese: 'トピック', component: TopicsTable },
+    // 議事録・施策系
+    { number: '⑫', name: 'meetingNotes', id: 'table-meeting-notes', japanese: '議事録', component: MeetingNotesTable },
+    { number: '⑬', name: 'focusInitiatives', id: 'table-focus-initiatives', japanese: '注力施策', component: FocusInitiativesTable },
+    { number: '⑭', name: 'themes', id: 'table-themes', japanese: 'テーマ', component: ThemesTable },
+    { number: '⑮', name: 'themeHierarchyConfigs', id: 'table-theme-hierarchy-configs', japanese: 'テーマ階層設定', component: ThemeHierarchyConfigsTable },
+    // システム設計ドキュメント系
+    { number: '⑯', name: 'designDocSections', id: 'table-design-doc-sections', japanese: 'システム設計ドキュメントセクション', component: DesignDocSectionsTable },
+    { number: '⑰', name: 'designDocSectionRelations', id: 'table-design-doc-section-relations', japanese: '設計ドキュメントセクションリレーション', component: DesignDocSectionRelationsTable },
+    // その他
+    { number: '⑱', name: 'aiSettings', id: 'table-ai-settings', japanese: 'AI設定', component: AiSettingsTable },
+    { number: '⑲', name: 'backupHistory', id: 'table-backup-history', japanese: 'バックアップ履歴', component: BackupHistoryTable },
   ];
 
   return (

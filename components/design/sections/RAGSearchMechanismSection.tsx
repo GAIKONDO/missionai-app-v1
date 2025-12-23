@@ -1,9 +1,8 @@
 'use client';
 
 import React from 'react';
+import { RAGOverviewSection } from './rag-search/RAGOverviewSection';
 import { RAGAlgorithmSection } from './rag-search/RAGAlgorithmSection';
-import { RAGDataFlowSection } from './rag-search/RAGDataFlowSection';
-import { ChromaDBCollectionSection } from './rag-search/ChromaDBCollectionSection';
 
 /**
  * RAG検索の仕組みセクション
@@ -12,9 +11,8 @@ import { ChromaDBCollectionSection } from './rag-search/ChromaDBCollectionSectio
 export function RAGSearchMechanismSection() {
   return (
     <div>
+      <RAGOverviewSection />
       <RAGAlgorithmSection />
-      <RAGDataFlowSection />
-      <ChromaDBCollectionSection />
     </div>
   );
 }

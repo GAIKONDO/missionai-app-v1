@@ -67,9 +67,14 @@ async function callLLMAPI(
     const requestBody: any = {
       model: model,
       messages,
-      max_tokens: 2000,
-      temperature: 0.7,
     };
+
+    if (model.startsWith('gpt-5')) {
+      requestBody.max_completion_tokens = 2000;
+    } else {
+      requestBody.max_tokens = 2000;
+      requestBody.temperature = 0.7;
+    }
 
     const response = await fetch(apiUrl, {
       method: 'POST',

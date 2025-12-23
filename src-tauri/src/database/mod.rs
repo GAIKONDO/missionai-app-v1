@@ -3,7 +3,6 @@ mod store;
 mod ai_settings;
 mod backup;
 mod export;
-mod container;
 mod organization;
 mod vector_search;
 mod design_doc;
@@ -189,24 +188,6 @@ impl Database {
 
             Ok(())
         })();
-
-        // ページコンテナテーブル（新規追加）
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS pageContainers (
-                id TEXT PRIMARY KEY,
-                pageId TEXT NOT NULL,
-                planId TEXT NOT NULL,
-                planType TEXT NOT NULL,
-                containerType TEXT NOT NULL,
-                containerData TEXT NOT NULL,
-                position INTEGER DEFAULT 0,
-                userId TEXT NOT NULL,
-                createdAt TEXT NOT NULL,
-                updatedAt TEXT NOT NULL,
-                FOREIGN KEY (userId) REFERENCES users(id)
-            )",
-            [],
-        )?;
 
         // 承認リクエストテーブル
         conn.execute(
@@ -1246,8 +1227,6 @@ impl Database {
 
         // インデックスを作成
         conn.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)", [])?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_pageContainers_pageId ON pageContainers(pageId)", [])?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_pageContainers_planId ON pageContainers(planId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_organizationContents_organizationId ON organizationContents(organizationId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_focusInitiatives_organizationId ON focusInitiatives(organizationId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_focusInitiatives_companyId ON focusInitiatives(companyId)", [])?;
@@ -1288,7 +1267,6 @@ impl Database {
         // 複合インデックス: organizationId + chromaSynced（RAG検索のパフォーマンス向上）
         conn.execute("CREATE INDEX IF NOT EXISTS idx_meetingNotes_org_chroma ON meetingNotes(organizationId, chromaSynced)", [])?;
         // 注意: companiesテーブルとorganizationCompanyDisplayテーブルは削除されました（organizationsテーブルに統合済み）
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_pageContainers_userId ON pageContainers(userId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_organizations_parentId ON organizations(parentId)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_organizations_level ON organizations(level)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_organizations_levelName ON organizations(levelName)", [])?;

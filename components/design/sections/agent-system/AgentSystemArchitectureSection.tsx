@@ -11,7 +11,7 @@ export function AgentSystemArchitectureSection() {
   return (
     <CollapsibleSection 
       title="Agentシステムアーキテクチャ" 
-      defaultExpanded={true}
+      defaultExpanded={false}
       id="agent-system-architecture-section"
     >
       <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>

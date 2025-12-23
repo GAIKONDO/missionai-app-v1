@@ -45,7 +45,7 @@ export default function CompanyContentsTable() {
   return (
     <TableDetailCard
       id="table-company-contents"
-      number="⑨"
+      number="⑦"
       tableName="companyContents"
       tableNameJapanese="事業会社コンテンツ"
       color="#32CD32"

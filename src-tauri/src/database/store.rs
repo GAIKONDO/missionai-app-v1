@@ -7,7 +7,6 @@ use uuid::Uuid;
 // 許可されたテーブル名のホワイトリスト（SQLインジェクション対策）
 const ALLOWED_TABLES: &[&str] = &[
     "users",
-    "pageContainers",
     "approvalRequests",
     "aiSettings",
     "backupHistory",
@@ -204,9 +203,7 @@ pub fn set_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Value>
     let mut row_data = data.clone();
     
     // userIdが必須のテーブルで、userIdが提供されていない場合は現在のユーザーIDを設定
-    let user_id_required_tables = vec![
-        "pageContainers"
-    ];
+    let user_id_required_tables: Vec<&str> = vec![];
     if user_id_required_tables.contains(&collection_name) && !row_data.contains_key("userId") {
         if let Some(user) = get_current_user() {
             eprintln!("✅ [set_doc] ユーザーIDを自動設定: {}", user.uid);
@@ -243,7 +240,6 @@ pub fn set_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Value>
         "initiativeIds", // テーマの注力施策IDリスト
         "themeIds", // 注力施策のテーマIDリスト
         "topicIds", // 注力施策のトピックIDリスト
-        "containerData", // ページコンテナのデータ
         "levels", // テーマ階層設定のレベル配列
     ];
     
@@ -253,7 +249,7 @@ pub fn set_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Value>
         "titleBorderEnabled", "keyVisualHeight", "keyVisualScale",
         "keyVisualLogoSize", "titlePositionX", "titlePositionY",
         "titleFontSize", "fileSize", "sequenceNumber",
-        "position", // ページコンテナの位置
+        "position",
     ];
     
     // JSONフィールドを文字列化（既に文字列の場合はそのまま）
@@ -541,7 +537,6 @@ pub fn update_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Val
         "initiativeIds", // テーマの注力施策IDリスト
         "themeIds", // 注力施策のテーマIDリスト
         "topicIds", // 注力施策のトピックIDリスト
-        "containerData", // ページコンテナのデータ
         "levels", // テーマ階層設定のレベル配列
     ];
     
@@ -551,7 +546,7 @@ pub fn update_doc(collection_name: &str, doc_id: &str, data: HashMap<String, Val
         "titleBorderEnabled", "keyVisualHeight", "keyVisualScale",
         "keyVisualLogoSize", "titlePositionX", "titlePositionY",
         "titleFontSize", "fileSize", "sequenceNumber",
-        "position", // ページコンテナの位置
+        "position",
     ];
     
     // JSONフィールドを文字列化（既に文字列の場合はそのまま）

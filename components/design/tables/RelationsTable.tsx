@@ -105,7 +105,7 @@ export default function RelationsTable() {
   return (
     <TableDetailCard
       id="table-relations"
-      number="⑦"
+      number="⑩"
       tableName="relations"
       tableNameJapanese="リレーション"
       color="#BD10E0"

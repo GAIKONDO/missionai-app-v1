@@ -51,8 +51,12 @@ impl ChromaDBServer {
         }
 
         // chromaコマンドを探す（優先順位: chroma > chromadb）
-        let chroma_cmd = Self::find_chroma_command()?;
-        eprintln!("   ChromaDBコマンド: {}", chroma_cmd);
+        let (chroma_cmd, use_python_module) = Self::find_chroma_command()?;
+        if use_python_module {
+            eprintln!("   ChromaDBコマンド: {} -m chromadb.cli", chroma_cmd);
+        } else {
+            eprintln!("   ChromaDBコマンド: {}", chroma_cmd);
+        }
 
         // ポートが使用されているかチェック
         let port_in_use = Self::check_port_in_use(port).await;
@@ -68,7 +72,11 @@ impl ChromaDBServer {
         }
 
         // ChromaDBサーバーを起動
-        let mut child = TokioCommand::new(&chroma_cmd)
+        let mut command = TokioCommand::new(&chroma_cmd);
+        if use_python_module {
+            command.arg("-m").arg("chromadb.cli");
+        }
+        let mut child = command
             .arg("run")
             .arg("--host")
             .arg("localhost")
@@ -80,8 +88,13 @@ impl ChromaDBServer {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| {
+                let cmd_str = if use_python_module {
+                    format!("{} -m chromadb.cli", chroma_cmd)
+                } else {
+                    chroma_cmd.clone()
+                };
                 let error_msg = format!("ChromaDBサーバーの起動に失敗しました: {}\nコマンド: {} run --host localhost --port {} --path {}", 
-                    e, chroma_cmd, port, data_dir.display());
+                    e, cmd_str, port, data_dir.display());
                 eprintln!("❌ {}", error_msg);
                 error_msg
             })?;
@@ -218,7 +231,8 @@ impl ChromaDBServer {
     }
 
     /// chromaコマンドを探す
-    fn find_chroma_command() -> Result<String, String> {
+    /// 戻り値: (コマンドパス, Pythonモジュールとして実行するかどうか)
+    fn find_chroma_command() -> Result<(String, bool), String> {
         // chromaコマンドを探す（優先順位: chroma > chromadb）
         let candidates = vec!["chroma", "chromadb"];
         
@@ -230,7 +244,7 @@ impl ChromaDBServer {
             if let Ok(output) = output {
                 if output.status.success() {
                     eprintln!("   chromaコマンドを検出: {}", cmd);
-                    return Ok(cmd.to_string());
+                    return Ok((cmd.to_string(), false));
                 }
             }
         }
@@ -245,8 +259,7 @@ impl ChromaDBServer {
         if let Ok(output) = output {
             if output.status.success() {
                 eprintln!("   chromaコマンドが見つかりません。python -m chromadb.cli を使用します");
-                // python -m chromadb.cli は使えないので、エラーを返す
-                return Err("chromaコマンドが見つかりません。`pip3 install chromadb`でインストールしてください。".to_string());
+                return Ok((python_path, true));
             }
         }
         

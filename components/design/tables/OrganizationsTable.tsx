@@ -57,7 +57,7 @@ export default function OrganizationsTable() {
   return (
     <TableDetailCard
       id="table-organizations"
-      number="①"
+      number="③"
       tableName="organizations"
       tableNameJapanese="組織"
       color="#4A90E2"

@@ -12,7 +12,6 @@ import { DatabaseOverviewCard } from './DatabaseOverviewCard';
 import { SQLiteSchemaCard } from './SQLiteSchemaCard';
 import { ChromaDBSchemaCard } from './ChromaDBSchemaCard';
 import { DataFlowCard } from './DataFlowCard';
-import { PageStructureCard } from './PageStructureCard';
 import { RAGSearchMechanismCard } from './RAGSearchMechanismCard';
 import { OrchestrationMCPLLMCard } from './OrchestrationMCPLLMCard';
 import { AgentSystemCard } from './AgentSystemCard';
@@ -57,12 +56,6 @@ export const cardComponents: CardComponent[] = [
     title: 'データフロー', 
     description: 'データの保存・取得の流れ', 
     component: DataFlowCard 
-  },
-  { 
-    id: 'page-structure', 
-    title: 'ページ構造', 
-    description: 'ページ間のリンク関係とID管理', 
-    component: PageStructureCard 
   },
   { 
     id: 'rag-search-mechanism', 

@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { TauriOverviewSection } from './app-architecture/TauriOverviewSection';
 import { ArchitectureDiagramSection } from './app-architecture/ArchitectureDiagramSection';
 import { TechStackSection } from './app-architecture/TechStackSection';
 
@@ -11,6 +12,7 @@ import { TechStackSection } from './app-architecture/TechStackSection';
 export function AppArchitectureSection() {
   return (
     <div>
+      <TauriOverviewSection />
       <ArchitectureDiagramSection />
       <TechStackSection />
     </div>

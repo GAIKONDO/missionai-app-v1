@@ -193,21 +193,28 @@ ${formatInstruction}
           throw new Error('OpenAI APIキーが設定されていません。設定ページ（/settings）でAPIキーを設定してください。');
         }
         
+        const requestBody: any = {
+          model: aiSelectedModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+        };
+
+        if (aiSelectedModel.startsWith('gpt-5')) {
+          requestBody.max_completion_tokens = aiSummaryLength;
+        } else {
+          requestBody.max_tokens = aiSummaryLength;
+          requestBody.temperature = 0.7;
+        }
+
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiKey}`,
           },
-          body: JSON.stringify({
-            model: aiSelectedModel,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt }
-            ],
-            max_tokens: aiSummaryLength,
-            temperature: 0.7,
-          }),
+          body: JSON.stringify(requestBody),
         });
         
         if (!response.ok) {

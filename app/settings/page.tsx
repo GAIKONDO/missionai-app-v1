@@ -13,9 +13,11 @@ import VectorDatabaseSettings from './components/VectorDatabaseSettings';
 import EnvironmentVariablesInfo from './components/EnvironmentVariablesInfo';
 import CsvImportSection from './components/CsvImportSection';
 import CsvImportPreviewModal from './components/CsvImportPreviewModal';
+import { LayerStructureOverviewSection } from '@/components/design/sections/orchestration-mcp-llm/LayerStructureOverviewSection';
+import { ArchitectureDiagramSection } from '@/components/design/sections/orchestration-mcp-llm/ArchitectureDiagramSection';
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('api-keys');
+  const [activeTab, setActiveTab] = useState<SettingsTab>('architecture');
   const [embeddingProvider, setEmbeddingProvider] = useState<EmbeddingProvider>('openai');
   const [ollamaApiUrl, setOllamaApiUrl] = useState<string>('http://localhost:11434/api/embeddings');
   const [ollamaModel, setOllamaModel] = useState<string>('nomic-embed-text');
@@ -261,6 +263,13 @@ export default function SettingsPage() {
         </h1>
 
         <SettingsTabBar activeTab={activeTab} onTabChange={setActiveTab} />
+
+        {activeTab === 'architecture' && (
+          <div style={{ marginTop: '24px' }}>
+            <LayerStructureOverviewSection />
+            <ArchitectureDiagramSection />
+          </div>
+        )}
 
         {activeTab === 'api-keys' && (
           <ApiKeySettings

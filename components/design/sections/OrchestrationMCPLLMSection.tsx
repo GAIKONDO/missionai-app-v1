@@ -1,7 +1,8 @@
 'use client';
 
 import React from 'react';
-import { OverallArchitectureSection } from './orchestration-mcp-llm/OverallArchitectureSection';
+import { LayerStructureOverviewSection } from './orchestration-mcp-llm/LayerStructureOverviewSection';
+import { ArchitectureDiagramSection } from './orchestration-mcp-llm/ArchitectureDiagramSection';
 import { RAGOrchestrationLayerSection } from './orchestration-mcp-llm/RAGOrchestrationLayerSection';
 import { MCPIntegrationSection } from './orchestration-mcp-llm/MCPIntegrationSection';
 import { MCPServerBenefitsSection } from './orchestration-mcp-llm/MCPServerBenefitsSection';
@@ -15,7 +16,8 @@ import { DataFlowDetailsSection } from './orchestration-mcp-llm/DataFlowDetailsS
 export function OrchestrationMCPLLMSection() {
   return (
     <div>
-      <OverallArchitectureSection />
+      <LayerStructureOverviewSection />
+      <ArchitectureDiagramSection />
       <RAGOrchestrationLayerSection />
       <MCPIntegrationSection />
       <MCPServerBenefitsSection />

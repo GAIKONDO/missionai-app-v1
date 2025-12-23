@@ -33,7 +33,7 @@ export default function DesignDocSectionRelationsTable() {
   return (
     <TableDetailCard
       id="table-design-doc-section-relations"
-      number="⑭"
+      number="⑰"
       tableName="designDocSectionRelations"
       tableNameJapanese="設計ドキュメントセクションリレーション"
       color="#A8A8A8"

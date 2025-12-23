@@ -57,7 +57,7 @@ export default function FocusInitiativesTable() {
   return (
     <TableDetailCard
       id="table-focus-initiatives"
-      number="⑩"
+      number="⑬"
       tableName="focusInitiatives"
       tableNameJapanese="注力施策"
       color="#FF6B6B"

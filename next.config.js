@@ -2,6 +2,7 @@
 const nextConfig = {
   output: 'export',
   distDir: 'out',
+  assetPrefix: '',
   images: {
     unoptimized: true,
   },

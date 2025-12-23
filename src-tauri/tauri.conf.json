@@ -17,8 +17,7 @@
         "height": 900,
         "resizable": true,
         "fullscreen": false,
-        "devtools": true,
-        "url": "http://localhost:3010"
+        "devtools": true
       }
     ],
     "security": {

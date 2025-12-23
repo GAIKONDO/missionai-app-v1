@@ -124,19 +124,8 @@ export function RAGSearchTab() {
           }));
           setOrganizations(orgs);
           
-          // 組織が選択されていない場合、最初の実組織を自動選択（virtual-rootを除外）
-          if (orgs.length > 0 && !searchFiltersHook.selectedOrganizationId) {
-            // virtual-rootを除外して実組織のみを取得
-            const realOrgs = orgs.filter(org => org.id !== 'virtual-root');
-            if (realOrgs.length > 0) {
-              console.log('[RAGSearchTab] 組織が選択されていないため、最初の実組織を自動選択:', realOrgs[0].id);
-              searchFiltersHook.setSelectedOrganizationId(realOrgs[0].id);
-            } else {
-              console.log('[RAGSearchTab] 実組織が見つかりませんでした。全組織横断検索を実行します。');
-              // 実組織がない場合は、organizationIdを未指定にして全組織横断検索を実行
-              searchFiltersHook.setSelectedOrganizationId('');
-            }
-          }
+          // デフォルトでは全ての組織（選択なし）で検索
+          // 組織の自動選択は行わない
         }
       } catch (error) {
         console.error('組織データの読み込みエラー:', error);

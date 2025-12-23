@@ -11,7 +11,7 @@ export function RAGAlgorithmSection() {
   return (
     <CollapsibleSection 
       title="RAG検索のアルゴリズム" 
-      defaultExpanded={true}
+      defaultExpanded={false}
       id="rag-algorithm-section"
     >
       <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>
@@ -29,7 +29,7 @@ export function RAGAlgorithmSection() {
       <ZoomableMermaidDiagram
         diagramId="rag-algorithm-diagram"
         mermaidCode={`flowchart TD
-    A[ユーザークエリ<br/>例: トヨタのプロジェクト] --> B[埋め込みAPI<br/>OpenAI text-embedding-3-small]
+    A[ユーザークエリ<br/>例: 伊藤忠商事のプロジェクト] --> B[埋め込みAPI<br/>OpenAI text-embedding-3-small]
     B --> C[クエリベクトル<br/>1536次元]
     
     C --> D1[ChromaDB<br/>エンティティ検索]

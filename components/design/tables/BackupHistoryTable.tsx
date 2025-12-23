@@ -27,7 +27,7 @@ export default function BackupHistoryTable() {
   return (
     <TableDetailCard
       id="table-backup-history"
-      number=""
+      number="⑲"
       tableName="backupHistory"
       tableNameJapanese="バックアップ履歴"
       color="#4682B4"

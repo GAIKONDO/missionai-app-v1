@@ -39,7 +39,7 @@ export default function OrganizationContentsTable() {
   return (
     <TableDetailCard
       id="table-organization-contents"
-      number="③"
+      number="⑤"
       tableName="organizationContents"
       tableNameJapanese="組織コンテンツ"
       color="#6B8E23"

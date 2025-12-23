@@ -93,7 +93,7 @@ export default function EntitiesTable() {
   return (
     <TableDetailCard
       id="table-entities"
-      number="⑥"
+      number="⑨"
       tableName="entities"
       tableNameJapanese="エンティティ"
       color="#F5A623"

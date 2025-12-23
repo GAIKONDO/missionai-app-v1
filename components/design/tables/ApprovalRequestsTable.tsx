@@ -27,7 +27,7 @@ export default function ApprovalRequestsTable() {
   return (
     <TableDetailCard
       id="table-approval-requests"
-      number=""
+      number="②"
       tableName="approvalRequests"
       tableNameJapanese="承認リクエスト"
       color="#708090"

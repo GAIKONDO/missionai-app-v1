@@ -1,6 +1,6 @@
 'use client';
 
-export type SettingsTab = 'api-keys' | 'embeddings' | 'sqlite' | 'vector-db' | 'import' | 'env';
+export type SettingsTab = 'architecture' | 'api-keys' | 'embeddings' | 'sqlite' | 'vector-db' | 'import' | 'env';
 
 interface SettingsTabBarProps {
   activeTab: SettingsTab;
@@ -9,6 +9,7 @@ interface SettingsTabBarProps {
 
 export function SettingsTabBar({ activeTab, onTabChange }: SettingsTabBarProps) {
   const tabs = [
+    { id: 'architecture' as const, label: '全体構成' },
     { id: 'api-keys' as const, label: 'APIキー設定' },
     { id: 'embeddings' as const, label: '埋め込み生成' },
     { id: 'sqlite' as const, label: 'SQLite' },

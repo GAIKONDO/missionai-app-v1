@@ -33,7 +33,7 @@ export default function OrganizationCompanyDisplayTable() {
   return (
     <TableDetailCard
       id="table-organization-company-display"
-      number="⑫"
+      number="⑧"
       tableName="organizationCompanyDisplay"
       tableNameJapanese="組織・事業会社表示"
       color="#9370DB"

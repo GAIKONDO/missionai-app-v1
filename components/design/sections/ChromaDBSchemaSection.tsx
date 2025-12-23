@@ -1,10 +1,10 @@
 'use client';
 
 import React from 'react';
+import { ChromaDBOverviewSection } from './chromadb-schema/ChromaDBOverviewSection';
 import { CollectionStructureDiagramSection } from './chromadb-schema/CollectionStructureDiagramSection';
 import { CollectionDetailsSection } from './chromadb-schema/CollectionDetailsSection';
 import { NamingConventionSection } from './chromadb-schema/NamingConventionSection';
-import { IDLinkageSection } from './chromadb-schema/IDLinkageSection';
 
 /**
  * ChromaDBスキーマセクション
@@ -13,10 +13,10 @@ import { IDLinkageSection } from './chromadb-schema/IDLinkageSection';
 export function ChromaDBSchemaSection() {
   return (
     <div>
+      <ChromaDBOverviewSection />
       <CollectionStructureDiagramSection />
       <CollectionDetailsSection />
       <NamingConventionSection />
-      <IDLinkageSection />
     </div>
   );
 }

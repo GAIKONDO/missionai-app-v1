@@ -117,7 +117,7 @@ export default function TopicsTable() {
   return (
     <TableDetailCard
       id="table-topics"
-      number="⑤"
+      number="⑪"
       tableName="topics"
       tableNameJapanese="トピック"
       color="#7ED321"

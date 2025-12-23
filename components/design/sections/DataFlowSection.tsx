@@ -3,7 +3,6 @@
 import React from 'react';
 import { DataSaveFlowSection } from './data-flow/DataSaveFlowSection';
 import { RAGSearchFlowSection } from './data-flow/RAGSearchFlowSection';
-import { DataUpdateFlowSection } from './data-flow/DataUpdateFlowSection';
 import { DataDeleteFlowSection } from './data-flow/DataDeleteFlowSection';
 
 /**
@@ -15,7 +14,6 @@ export function DataFlowSection() {
     <div>
       <DataSaveFlowSection />
       <RAGSearchFlowSection />
-      <DataUpdateFlowSection />
       <DataDeleteFlowSection />
     </div>
   );

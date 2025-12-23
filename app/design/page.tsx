@@ -11,10 +11,10 @@ import { DatabaseOverviewSection } from '@/components/design/sections/DatabaseOv
 import { SQLiteSchemaSection } from '@/components/design/sections/SQLiteSchemaSection';
 import { ChromaDBSchemaSection } from '@/components/design/sections/ChromaDBSchemaSection';
 import { DataFlowSection } from '@/components/design/sections/DataFlowSection';
-import { PageStructureSection } from '@/components/design/sections/PageStructureSection';
 import { RAGSearchMechanismSection } from '@/components/design/sections/RAGSearchMechanismSection';
 import { OrchestrationMCPLLMSection } from '@/components/design/sections/OrchestrationMCPLLMSection';
 import { AgentSystemSection } from '@/components/design/sections/AgentSystemSection';
+import { DesignSectionProvider } from '@/components/design/common/DesignSectionContext';
 
 export default function DesignPage() {
   const [viewMode, setViewMode] = useState<'sections' | 'search' | 'ai'>('sections');
@@ -149,6 +149,7 @@ export default function DesignPage() {
             {/* アクティブなセクションの内容を表示 */}
             {activeSection && (
               <div
+                key={activeSection}
                 ref={sectionContentRef}
                 style={{
                   padding: '32px',
@@ -163,17 +164,18 @@ export default function DesignPage() {
                     {cardComponents.find(c => c.id === activeSection)?.title || 'セクション'}
                   </h2>
                 </div>
-                <div style={{ color: 'var(--color-text-light)', lineHeight: '1.8' }}>
-                  {activeSection === 'app-architecture' && <AppArchitectureSection />}
-                  {activeSection === 'database-overview' && <DatabaseOverviewSection />}
-                  {activeSection === 'sqlite-schema' && <SQLiteSchemaSection />}
-                  {activeSection === 'chromadb-schema' && <ChromaDBSchemaSection />}
-                  {activeSection === 'data-flow' && <DataFlowSection />}
-                  {activeSection === 'page-structure' && <PageStructureSection />}
-                  {activeSection === 'rag-search-mechanism' && <RAGSearchMechanismSection />}
-                  {activeSection === 'orchestration-mcp-llm' && <OrchestrationMCPLLMSection />}
-                  {activeSection === 'agent-system' && <AgentSystemSection />}
-                </div>
+                <DesignSectionProvider activeSection={activeSection}>
+                  <div style={{ color: 'var(--color-text-light)', lineHeight: '1.8' }}>
+                    {activeSection === 'app-architecture' && <AppArchitectureSection key={activeSection} />}
+                    {activeSection === 'database-overview' && <DatabaseOverviewSection key={activeSection} />}
+                    {activeSection === 'sqlite-schema' && <SQLiteSchemaSection key={activeSection} />}
+                    {activeSection === 'chromadb-schema' && <ChromaDBSchemaSection key={activeSection} />}
+                    {activeSection === 'data-flow' && <DataFlowSection key={activeSection} />}
+                    {activeSection === 'rag-search-mechanism' && <RAGSearchMechanismSection key={activeSection} />}
+                    {activeSection === 'orchestration-mcp-llm' && <OrchestrationMCPLLMSection key={activeSection} />}
+                    {activeSection === 'agent-system' && <AgentSystemSection key={activeSection} />}
+                  </div>
+                </DesignSectionProvider>
               </div>
             )}
           </>

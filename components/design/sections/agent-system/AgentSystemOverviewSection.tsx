@@ -10,7 +10,7 @@ export function AgentSystemOverviewSection() {
   return (
     <CollapsibleSection 
       title="Agentシステム概要" 
-      defaultExpanded={true}
+      defaultExpanded={false}
       id="agent-system-overview-section"
     >
       <div style={{ marginBottom: '16px', padding: '16px', backgroundColor: 'var(--color-background)', borderRadius: '8px', border: '1px solid var(--color-border-color)' }}>

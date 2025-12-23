@@ -2,8 +2,7 @@
 
 import React from 'react';
 import { OverviewDiagramSection } from './database-overview/OverviewDiagramSection';
-import { DataSaveFlowSection } from './database-overview/DataSaveFlowSection';
-import { RAGSearchFlowSection } from './database-overview/RAGSearchFlowSection';
+import { RoleAssignmentSection } from './database-overview/RoleAssignmentSection';
 import { MetadataGenerationSection } from './database-overview/MetadataGenerationSection';
 
 /**
@@ -14,8 +13,7 @@ export function DatabaseOverviewSection() {
   return (
     <div>
       <OverviewDiagramSection />
-      <DataSaveFlowSection />
-      <RAGSearchFlowSection />
+      <RoleAssignmentSection />
       <MetadataGenerationSection />
     </div>
   );

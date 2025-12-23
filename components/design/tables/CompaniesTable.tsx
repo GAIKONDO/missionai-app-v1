@@ -45,7 +45,7 @@ export default function CompaniesTable() {
   return (
     <TableDetailCard
       id="table-companies"
-      number="⑧"
+      number="⑥"
       tableName="companies"
       tableNameJapanese="事業会社"
       color="#50C878"

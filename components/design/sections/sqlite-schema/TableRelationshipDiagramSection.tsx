@@ -27,14 +27,14 @@ export function TableRelationshipDiagramSection() {
     organizations ||--o{ relations : "belongs_to"
     organizations ||--o{ focusInitiatives : "has"
     
-    meetingNotes ||--o{ topics : "has"
-    topics ||--o{ entities : "has"
+    meetingNotes ||--o{ topics : "contains"
+    
     topics ||--o{ relations : "has"
     
     entities ||--o{ relations : "source"
     entities ||--o{ relations : "target"
     
-    themes ||--o{ focusInitiatives : "has"
+    themes ||--o{ focusInitiatives : "references"
     
     designDocSections ||--o{ designDocSectionRelations : "source"
     designDocSections ||--o{ designDocSectionRelations : "target"

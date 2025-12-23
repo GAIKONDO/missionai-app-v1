@@ -1,8 +1,6 @@
 'use client';
 
 import React, { useEffect } from 'react';
-import { usePathname, useParams } from 'next/navigation';
-import ContainerEditModal from './ContainerEditModal';
 import type { AIAssistantPanelProps } from './AIAssistantPanel/types';
 import { useAIAssistant } from './AIAssistantPanel/hooks/useAIAssistant';
 import { useModelSelector } from './AIAssistantPanel/hooks/useModelSelector';
@@ -16,9 +14,6 @@ import { ResizeHandle } from './AIAssistantPanel/components/ResizeHandle';
 import { panelStyles } from './AIAssistantPanel/styles';
 
 export default function AIAssistantPanel({ isOpen, onClose, initialQuery }: AIAssistantPanelProps) {
-  const pathname = usePathname();
-  const params = useParams();
-  
   // フックを使用
   const { panelWidth, isResizing, handleResizeStart } = usePanelResize();
   const modelSelector = useModelSelector();
@@ -39,10 +34,6 @@ export default function AIAssistantPanel({ isOpen, onClose, initialQuery }: AIAs
       }, 100);
     }
   }, [isOpen, aiAssistant.inputRef]);
-  
-  // コンテナコードエディタモーダルの状態
-  const [isCodeEditorOpen, setIsCodeEditorOpen] = React.useState(false);
-  const [editingContainerId, setEditingContainerId] = React.useState<string | null>(null);
 
   return (
     <>
@@ -124,27 +115,6 @@ export default function AIAssistantPanel({ isOpen, onClose, initialQuery }: AIAs
 
       {/* スタイル */}
       <style jsx>{panelStyles}</style>
-
-      {/* コンテナ編集モーダル */}
-      {editingContainerId && (
-        <ContainerEditModal
-          isOpen={isCodeEditorOpen}
-          containerId={editingContainerId}
-          planId={(params?.planId || params?.conceptId) as string}
-          subMenuId={pathname.split('/').pop() || 'overview'}
-          onClose={() => {
-            setIsCodeEditorOpen(false);
-            setEditingContainerId(null);
-          }}
-          onSaved={() => {
-            setTimeout(() => {
-              window.location.reload();
-            }, 500);
-          }}
-          modelType={modelSelector.modelType}
-          selectedModel={modelSelector.selectedModel}
-        />
-      )}
     </>
   );
 }

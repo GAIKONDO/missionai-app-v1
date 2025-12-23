@@ -19,7 +19,7 @@ export function RAGDataFlowSection() {
         <div style={{ marginBottom: '20px' }}>
           <h5 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '8px', color: 'var(--color-text)' }}>1. クエリ → 埋め込みAPI</h5>
           <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
-            <li><strong>入力:</strong> クエリテキスト（例: "トヨタのプロジェクト"）</li>
+            <li><strong>入力:</strong> クエリテキスト（例: "伊藤忠商事のプロジェクト"）</li>
             <li><strong>出力:</strong> 1536次元の浮動小数点配列（例: [0.123, -0.456, ...]）</li>
             <li><strong>API:</strong> OpenAI Embeddings API（text-embedding-3-smallモデル）</li>
           </ul>
@@ -41,7 +41,7 @@ export function RAGDataFlowSection() {
             <li><strong>入力:</strong> エンティティID、リレーションID、トピックIDの配列</li>
             <li><strong>処理:</strong> バッチでIDを指定して詳細情報を取得（N+1問題を回避）</li>
             <li><strong>出力:</strong> エンティティ/リレーション/トピックの完全なオブジェクト</li>
-            <li><strong>例:</strong> <code>{'{'}id: "entity_123", name: "トヨタ自動車", type: "組織", metadata: {'{'}...{'}'}{'}'}</code></li>
+            <li><strong>例:</strong> <code>{'{'}id: "entity_123", name: "伊藤忠商事", type: "組織", metadata: {'{'}...{'}'}{'}'}</code></li>
           </ul>
         </div>
 

@@ -7,7 +7,7 @@ const columns: ColumnDefinition[] = [
     name: 'id',
     description: '主キー',
     pages: '/（ログイン機能）',
-    relatedTables: 'pageContainers.userId, approvalRequests.userId',
+    relatedTables: 'approvalRequests.userId',
   },
   {
     name: 'email',
@@ -39,7 +39,7 @@ export default function UsersTable() {
   return (
     <TableDetailCard
       id="table-users"
-      number=""
+      number="①"
       tableName="users"
       tableNameJapanese="ユーザー"
       color="#808080"

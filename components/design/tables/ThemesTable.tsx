@@ -39,7 +39,7 @@ export default function ThemesTable() {
   return (
     <TableDetailCard
       id="table-themes"
-      number="⑪"
+      number="⑭"
       tableName="themes"
       tableNameJapanese="テーマ"
       color="#4ECDC4"

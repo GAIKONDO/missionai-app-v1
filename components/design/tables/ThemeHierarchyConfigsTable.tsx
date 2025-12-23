@@ -27,7 +27,7 @@ export default function ThemeHierarchyConfigsTable() {
   return (
     <TableDetailCard
       id="table-theme-hierarchy-configs"
-      number=""
+      number="⑮"
       tableName="themeHierarchyConfigs"
       tableNameJapanese="テーマ階層設定"
       color="#8B7355"

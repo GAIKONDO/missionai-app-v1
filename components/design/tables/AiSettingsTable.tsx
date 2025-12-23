@@ -33,7 +33,7 @@ export default function AiSettingsTable() {
   return (
     <TableDetailCard
       id="table-ai-settings"
-      number=""
+      number="⑱"
       tableName="aiSettings"
       tableNameJapanese="AI設定"
       color="#5F9EA0"

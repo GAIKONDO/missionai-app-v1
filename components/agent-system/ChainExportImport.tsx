@@ -131,16 +131,30 @@ export function ChainExportImport({ chain, onImport }: ChainExportImportProps) {
       <button
         onClick={handleExport}
         style={{
-          padding: '6px 12px',
+          padding: '10px 16px',
           background: 'var(--color-surface)',
           border: '1px solid var(--color-border-color)',
-          borderRadius: '4px',
+          borderRadius: '8px',
           cursor: 'pointer',
-          fontSize: '14px',
+          fontSize: '13px',
           color: 'var(--color-text)',
+          fontWeight: 500,
+          transition: 'all 0.2s',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px'
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = 'var(--color-background)';
+          e.currentTarget.style.borderColor = 'var(--color-primary)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'var(--color-surface)';
+          e.currentTarget.style.borderColor = 'var(--color-border-color)';
         }}
       >
-        📤 エクスポート
+        <span>📤</span>
+        エクスポート
       </button>
       <button
         onClick={() => {
@@ -148,16 +162,30 @@ export function ChainExportImport({ chain, onImport }: ChainExportImportProps) {
           setImportError(null);
         }}
         style={{
-          padding: '6px 12px',
+          padding: '10px 16px',
           background: 'var(--color-surface)',
           border: '1px solid var(--color-border-color)',
-          borderRadius: '4px',
+          borderRadius: '8px',
           cursor: 'pointer',
-          fontSize: '14px',
+          fontSize: '13px',
           color: 'var(--color-text)',
+          fontWeight: 500,
+          transition: 'all 0.2s',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px'
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = 'var(--color-background)';
+          e.currentTarget.style.borderColor = 'var(--color-primary)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'var(--color-surface)';
+          e.currentTarget.style.borderColor = 'var(--color-border-color)';
         }}
       >
-        📥 インポート
+        <span>📥</span>
+        インポート
       </button>
       <input
         ref={fileInputRef}
@@ -176,30 +204,52 @@ export function ChainExportImport({ chain, onImport }: ChainExportImportProps) {
             left: 0,
             right: 0,
             bottom: 0,
-            background: 'rgba(0, 0, 0, 0.5)',
+            background: 'rgba(0, 0, 0, 0.6)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 1000,
+            backdropFilter: 'blur(4px)',
           }}
           onClick={() => setShowExportModal(false)}
         >
           <div
             style={{
-              background: 'var(--color-background)',
-              borderRadius: '8px',
-              padding: '24px',
+              background: 'var(--color-surface)',
+              borderRadius: '12px',
+              padding: '32px',
               maxWidth: '800px',
               maxHeight: '80vh',
               overflow: 'auto',
               width: '90%',
+              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h3 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--color-text)' }}>
-                チェーンをエクスポート
-              </h3>
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              marginBottom: '24px',
+              paddingBottom: '16px',
+              borderBottom: '1px solid var(--color-border-color)'
+            }}>
+              <div>
+                <h3 style={{ 
+                  fontSize: '20px', 
+                  fontWeight: 600, 
+                  color: 'var(--color-text)',
+                  marginBottom: '4px'
+                }}>
+                  チェーンをエクスポート
+                </h3>
+                <p style={{ 
+                  fontSize: '14px', 
+                  color: 'var(--color-text-secondary)'
+                }}>
+                  JSON形式でチェーンデータをエクスポートします
+                </p>
+              </div>
               <button
                 onClick={() => setShowExportModal(false)}
                 style={{
@@ -208,26 +258,43 @@ export function ChainExportImport({ chain, onImport }: ChainExportImportProps) {
                   fontSize: '24px',
                   cursor: 'pointer',
                   color: 'var(--color-text-secondary)',
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '6px',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--color-background)';
+                  e.currentTarget.style.color = 'var(--color-text)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.color = 'var(--color-text-secondary)';
                 }}
               >
                 ×
               </button>
             </div>
 
-            <div style={{ marginBottom: '16px' }}>
+            <div style={{ marginBottom: '20px' }}>
               <textarea
                 value={exportData}
                 readOnly
                 style={{
                   width: '100%',
                   minHeight: '300px',
-                  padding: '12px',
+                  padding: '16px',
                   border: '1px solid var(--color-border-color)',
-                  borderRadius: '6px',
-                  fontSize: '12px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
                   fontFamily: 'monospace',
-                  background: 'var(--color-surface)',
+                  background: 'var(--color-background)',
                   color: 'var(--color-text)',
+                  lineHeight: '1.6',
+                  resize: 'vertical'
                 }}
               />
             </div>
@@ -236,28 +303,58 @@ export function ChainExportImport({ chain, onImport }: ChainExportImportProps) {
               <button
                 onClick={handleCopyToClipboard}
                 style={{
-                  padding: '8px 16px',
+                  padding: '10px 20px',
                   background: 'var(--color-surface)',
                   border: '1px solid var(--color-border-color)',
-                  borderRadius: '6px',
+                  borderRadius: '8px',
                   cursor: 'pointer',
                   color: 'var(--color-text)',
+                  fontWeight: 500,
+                  fontSize: '14px',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--color-background)';
+                  e.currentTarget.style.borderColor = 'var(--color-primary)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'var(--color-surface)';
+                  e.currentTarget.style.borderColor = 'var(--color-border-color)';
                 }}
               >
+                <span>📋</span>
                 クリップボードにコピー
               </button>
               <button
                 onClick={handleDownload}
                 style={{
-                  padding: '8px 16px',
-                  background: 'var(--color-primary)',
+                  padding: '10px 20px',
+                  background: 'linear-gradient(135deg, var(--color-primary) 0%, #2563eb 100%)',
                   color: 'white',
                   border: 'none',
-                  borderRadius: '6px',
+                  borderRadius: '8px',
                   cursor: 'pointer',
                   fontWeight: 500,
+                  fontSize: '14px',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 2px 4px rgba(31, 41, 51, 0.1)'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-1px)';
+                  e.currentTarget.style.boxShadow = '0 4px 8px rgba(31, 41, 51, 0.15)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '0 2px 4px rgba(31, 41, 51, 0.1)';
                 }}
               >
+                <span>💾</span>
                 ファイルをダウンロード
               </button>
             </div>
@@ -274,30 +371,52 @@ export function ChainExportImport({ chain, onImport }: ChainExportImportProps) {
             left: 0,
             right: 0,
             bottom: 0,
-            background: 'rgba(0, 0, 0, 0.5)',
+            background: 'rgba(0, 0, 0, 0.6)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 1000,
+            backdropFilter: 'blur(4px)',
           }}
           onClick={() => setShowImportModal(false)}
         >
           <div
             style={{
-              background: 'var(--color-background)',
-              borderRadius: '8px',
-              padding: '24px',
+              background: 'var(--color-surface)',
+              borderRadius: '12px',
+              padding: '32px',
               maxWidth: '800px',
               maxHeight: '80vh',
               overflow: 'auto',
               width: '90%',
+              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h3 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--color-text)' }}>
-                チェーンをインポート
-              </h3>
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              marginBottom: '24px',
+              paddingBottom: '16px',
+              borderBottom: '1px solid var(--color-border-color)'
+            }}>
+              <div>
+                <h3 style={{ 
+                  fontSize: '20px', 
+                  fontWeight: 600, 
+                  color: 'var(--color-text)',
+                  marginBottom: '4px'
+                }}>
+                  チェーンをインポート
+                </h3>
+                <p style={{ 
+                  fontSize: '14px', 
+                  color: 'var(--color-text-secondary)'
+                }}>
+                  JSONファイルまたはJSONデータをインポートします
+                </p>
+              </div>
               <button
                 onClick={() => setShowImportModal(false)}
                 style={{
@@ -306,25 +425,55 @@ export function ChainExportImport({ chain, onImport }: ChainExportImportProps) {
                   fontSize: '24px',
                   cursor: 'pointer',
                   color: 'var(--color-text-secondary)',
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '6px',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--color-background)';
+                  e.currentTarget.style.color = 'var(--color-text)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.color = 'var(--color-text-secondary)';
                 }}
               >
                 ×
               </button>
             </div>
 
-            <div style={{ marginBottom: '16px' }}>
+            <div style={{ marginBottom: '20px' }}>
               <button
                 onClick={() => fileInputRef.current?.click()}
                 style={{
-                  padding: '8px 16px',
+                  padding: '10px 20px',
                   background: 'var(--color-surface)',
                   border: '1px solid var(--color-border-color)',
-                  borderRadius: '6px',
+                  borderRadius: '8px',
                   cursor: 'pointer',
                   color: 'var(--color-text)',
                   marginBottom: '12px',
+                  fontWeight: 500,
+                  fontSize: '14px',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--color-background)';
+                  e.currentTarget.style.borderColor = 'var(--color-primary)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'var(--color-surface)';
+                  e.currentTarget.style.borderColor = 'var(--color-border-color)';
                 }}
               >
+                <span>📁</span>
                 ファイルを選択
               </button>
               <textarea
@@ -337,20 +486,44 @@ export function ChainExportImport({ chain, onImport }: ChainExportImportProps) {
                 style={{
                   width: '100%',
                   minHeight: '300px',
-                  padding: '12px',
+                  padding: '16px',
                   border: '1px solid var(--color-border-color)',
-                  borderRadius: '6px',
-                  fontSize: '12px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
                   fontFamily: 'monospace',
-                  background: 'var(--color-surface)',
+                  background: 'var(--color-background)',
                   color: 'var(--color-text)',
+                  lineHeight: '1.6',
+                  resize: 'vertical',
+                  transition: 'all 0.2s'
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--color-primary)';
+                  e.currentTarget.style.boxShadow = '0 0 0 3px rgba(31, 41, 51, 0.1)';
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--color-border-color)';
+                  e.currentTarget.style.boxShadow = 'none';
                 }}
               />
             </div>
 
             {importError && (
-              <div style={{ marginBottom: '16px', padding: '12px', background: '#ffebee', borderRadius: '4px' }}>
-                <p style={{ margin: 0, fontSize: '14px', color: '#c62828' }}>{importError}</p>
+              <div style={{ 
+                marginBottom: '20px', 
+                padding: '12px 16px', 
+                background: '#fee2e2', 
+                borderRadius: '8px',
+                border: '1px solid #fca5a5'
+              }}>
+                <p style={{ 
+                  margin: 0, 
+                  fontSize: '14px', 
+                  color: '#dc2626',
+                  fontWeight: 500
+                }}>
+                  {importError}
+                </p>
               </div>
             )}
 
@@ -362,12 +535,23 @@ export function ChainExportImport({ chain, onImport }: ChainExportImportProps) {
                   setImportError(null);
                 }}
                 style={{
-                  padding: '8px 16px',
+                  padding: '10px 20px',
                   background: 'var(--color-surface)',
                   border: '1px solid var(--color-border-color)',
-                  borderRadius: '6px',
+                  borderRadius: '8px',
                   cursor: 'pointer',
                   color: 'var(--color-text)',
+                  fontWeight: 500,
+                  fontSize: '14px',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--color-background)';
+                  e.currentTarget.style.borderColor = 'var(--color-primary)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'var(--color-surface)';
+                  e.currentTarget.style.borderColor = 'var(--color-border-color)';
                 }}
               >
                 キャンセル
@@ -376,13 +560,31 @@ export function ChainExportImport({ chain, onImport }: ChainExportImportProps) {
                 onClick={handleImport}
                 disabled={!importData.trim()}
                 style={{
-                  padding: '8px 16px',
-                  background: importData.trim() ? 'var(--color-primary)' : 'var(--color-surface)',
+                  padding: '10px 20px',
+                  background: importData.trim() 
+                    ? 'linear-gradient(135deg, var(--color-primary) 0%, #2563eb 100%)' 
+                    : 'var(--color-surface)',
                   color: importData.trim() ? 'white' : 'var(--color-text-secondary)',
                   border: 'none',
-                  borderRadius: '6px',
+                  borderRadius: '8px',
                   cursor: importData.trim() ? 'pointer' : 'not-allowed',
                   fontWeight: 500,
+                  fontSize: '14px',
+                  transition: 'all 0.2s',
+                  boxShadow: importData.trim() ? '0 2px 4px rgba(31, 41, 51, 0.1)' : 'none',
+                  opacity: importData.trim() ? 1 : 0.6
+                }}
+                onMouseEnter={(e) => {
+                  if (importData.trim()) {
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                    e.currentTarget.style.boxShadow = '0 4px 8px rgba(31, 41, 51, 0.15)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = importData.trim() 
+                    ? '0 2px 4px rgba(31, 41, 51, 0.1)' 
+                    : 'none';
                 }}
               >
                 インポート

@@ -63,7 +63,7 @@ export default function MeetingNotesTable() {
   return (
     <TableDetailCard
       id="table-meeting-notes"
-      number="④"
+      number="⑫"
       tableName="meetingNotes"
       tableNameJapanese="議事録"
       color="#E53935"

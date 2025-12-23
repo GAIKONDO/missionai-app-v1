@@ -25,6 +25,14 @@ async function callGPTAPI(
     // Ollama API呼び出し
     const apiUrl = process.env.NEXT_PUBLIC_OLLAMA_API_URL || 'http://localhost:11434/api/chat';
     try {
+      // エンティティ・リレーション抽出の場合はより長いレスポンスが必要
+      // システムプロンプトにJSON形式が含まれているかチェック
+      const isJsonExtraction = messages.some(msg => 
+        msg.content.includes('JSON形式') || 
+        msg.content.includes('JSON形式で返してください') ||
+        msg.content.includes('結果はJSON形式')
+      );
+      
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -37,7 +45,7 @@ async function callGPTAPI(
           stream: false,
           options: {
             temperature: 0.7,
-            num_predict: 500,
+            num_predict: isJsonExtraction ? 4000 : 500, // JSON抽出の場合は長めに設定
           },
         }),
       });
@@ -81,18 +89,33 @@ async function callGPTAPI(
     }
 
     try {
+      // エンティティ・リレーション抽出の場合はより長いレスポンスが必要
+      // システムプロンプトにJSON形式が含まれているかチェック
+      const isJsonExtraction = messages.some(msg => 
+        msg.content.includes('JSON形式') || 
+        msg.content.includes('JSON形式で返してください') ||
+        msg.content.includes('結果はJSON形式')
+      );
+
+      const requestBody: any = {
+        model,
+        messages,
+      };
+
+      if (model.startsWith('gpt-5')) {
+        requestBody.max_completion_tokens = isJsonExtraction ? 4000 : 2000; // JSON抽出の場合は長めに設定
+      } else {
+        requestBody.max_tokens = isJsonExtraction ? 4000 : 2000; // JSON抽出の場合は長めに設定
+        requestBody.temperature = 0.7;
+      }
+
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          model,
-          messages,
-          temperature: 0.7,
-          max_tokens: 2000, // リレーション抽出のために増やす
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
@@ -367,7 +390,44 @@ export async function extractEntities(
   content: string,
   model: string = 'gpt-4o-mini'
 ): Promise<Entity[]> {
-  const systemPrompt = `あなたはテキストからエンティティ（登場人物・モノ）を抽出する専門家です。
+  // ローカルモデルかGPT-5シリーズかどうかを判定
+  const isLocalModel = model.startsWith('qwen') || 
+                       model.startsWith('llama') || 
+                       model.startsWith('mistral') ||
+                       model.includes(':latest') ||
+                       model.includes(':instruct');
+  const isGPT5 = model.startsWith('gpt-5');
+
+  const systemPrompt = (isLocalModel || isGPT5)
+    ? `あなたはテキストからエンティティ（登場人物・モノ）を抽出する専門家です。
+以下のテキストから、以下のタイプのエンティティを抽出してください：
+
+- person: 人（顧客、社員、担当者など）
+- company: 会社（トヨタ、CTC、OpenAIなど）
+- product: 製品（ChatGPT、GPU、ERPなど）
+- project: プロジェクト
+- organization: 組織（部署、チームなど）
+- location: 場所
+- technology: 技術・ツール
+- other: その他
+
+**重要: 結果は必ずJSON形式の配列で返してください。説明文やマークダウンは一切不要です。JSONのみを返してください。**
+
+出力形式（この形式を厳密に守ること）:
+[
+  {
+    "name": "エンティティ名",
+    "type": "エンティティタイプ",
+    "aliases": ["別名1", "別名2"],
+    "metadata": {
+      "role": "役割（オプション）",
+      "department": "部署（オプション）"
+    }
+  }
+]
+
+JSON以外の文字は一切含めないでください。`
+    : `あなたはテキストからエンティティ（登場人物・モノ）を抽出する専門家です。
 以下のテキストから、以下のタイプのエンティティを抽出してください：
 
 - person: 人（顧客、社員、担当者など）
@@ -560,7 +620,49 @@ export async function extractRelations(
 
   const entityList = entities.map(e => `- ${e.name} (${e.type})`).join('\n');
 
-  const systemPrompt = `あなたはテキストからエンティティ間の関係性を抽出する専門家です。
+  // ローカルモデルかGPT-5シリーズかどうかを判定
+  const isLocalModel = model.startsWith('qwen') || 
+                       model.startsWith('llama') || 
+                       model.startsWith('mistral') ||
+                       model.includes(':latest') ||
+                       model.includes(':instruct');
+  const isGPT5 = model.startsWith('gpt-5');
+
+  const systemPrompt = (isLocalModel || isGPT5)
+    ? `あなたはテキストからエンティティ間の関係性を抽出する専門家です。
+以下のエンティティリストとテキストから、エンティティ間の関係性を抽出してください。
+
+**リレーションタイプ:**
+- subsidiary: 「AはBの子会社」
+- uses: 「CはDを導入」
+- invests: 「EはFに出資」
+- employs: 「GはHを雇用」
+- partners: 「IはJと提携」
+- competes: 「KはLと競合」
+- supplies: 「MはNに供給」
+- owns: 「OはPを所有」
+- located-in: 「QはRに所在」
+- works-for: 「SはTで働く」
+- manages: 「UはVを管理」
+- reports-to: 「WはXに報告」
+- related-to: 「YはZに関連」（汎用的な関係）
+- other: その他
+
+**重要: 結果は必ずJSON形式の配列で返してください。説明文やマークダウンは一切不要です。JSONのみを返してください。必ず完全なJSONを返してください（途中で切れないようにしてください）。**
+
+出力形式（この形式を厳密に守ること）:
+[
+  {
+    "sourceEntityName": "起点エンティティ名",
+    "targetEntityName": "終点エンティティ名",
+    "relationType": "リレーションタイプ",
+    "description": "自然言語での説明（例: AはBの子会社）",
+    "confidence": 0.9
+  }
+]
+
+JSON以外の文字は一切含めないでください。配列は必ず ] で閉じ、各オブジェクトは必ず } で閉じてください。`
+    : `あなたはテキストからエンティティ間の関係性を抽出する専門家です。
 以下のエンティティリストとテキストから、エンティティ間の関係性を抽出してください。
 
 **リレーションタイプ:**

@@ -117,7 +117,7 @@ export default function OrganizationMembersTable() {
   return (
     <TableDetailCard
       id="table-organization-members"
-      number="②"
+      number="④"
       tableName="organizationMembers"
       tableNameJapanese="組織メンバー"
       color="#9C27B0"
